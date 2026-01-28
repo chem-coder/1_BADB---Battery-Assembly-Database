@@ -1,0 +1,45 @@
+details {
+	width: 100%;
+	border-bottom: solid 1px black;
+}
+
+.autosave-message {
+	text-align: right;
+	color: darkcyan;
+}
+
+.autosave-message--saving {
+	color: #999999;
+}
+
+form {}
+
+.visually-hidden {
+	/* The following is a screen-reader appropriate equivalent of "display: none;" */
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.etrode-row--used input,
+.etrode-row--used select,
+.etrode-row--used span,
+.electrode-used {
+  opacity: 0.5;
+}
+
+.stack-hint {
+  margin: 0.25rem 0 0.5rem 0;
+  font-style: italic;
+}
+
+.stack-main[hidden] {
+  display: none;
+}
+
