@@ -27,16 +27,16 @@ pool.query('SELECT 1')
 
 // Routes
 app.post('/api/users', async (req, res) => {
-  const { user_name } = req.body;
+  const { name } = req.body;
 
-  if (!user_name) {
+  if (!name) {
     return res.status(400).json({ error: 'Имя пользователя обязательно'});
   }
 
   try {
     const result = await pool.query(
-      'INSERT INTO users (user_name) VALUES ($1) RETURNING *',
-      [user_name]
+      'INSERT INTO users (name) VALUES ($1) RETURNING *',
+      [name]
     );
     
     res.status(201).json(result.rows[0]);
@@ -54,7 +54,7 @@ app.post('/api/users', async (req, res) => {
 app.get('/api/users', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT user_id, user_name, active FROM users ORDER BY user_name');
+      'SELECT user_id, name, active FROM users ORDER BY name');
 
     res.json(result.rows);
   } catch (err) {
@@ -64,16 +64,16 @@ app.get('/api/users', async (req, res) => {
 });
 app.put('/api/users/:id', async (req, res) => {
   const { id } = req.params;
-  const { user_name, active } = req.body;
+  const { name, active } = req.body;
 
-  if (!user_name || typeof active !== 'boolean') {
+  if (!name || typeof active !== 'boolean') {
     return res.status(400).json({ error: 'Некорректные данные' });    // 'Имя пользователя и статус активности обязательны'
   }
 
   try {
     const result = await pool.query(
-      'UPDATE users SET user_name = $1, active = $2 WHERE user_id = $3 RETURNING *',
-      [user_name, active, id]
+      'UPDATE users SET name = $1, active = $2 WHERE user_id = $3 RETURNING *',
+      [name, active, id]
     );
 
     if (result.rowCount === 0) {
