@@ -62,7 +62,33 @@ app.get('/api/users', async (req, res) => {
     res.status(500).json({ error: 'Ошибка сервера'});
   }
 });
-// app.put('/api/users/:id', ...);
+app.put('/api/users/:id', async (req, res) => {
+  const { id } = req.params;
+  const { user_name, active } = req.body;
+
+  if (!user_name || typeof active !== 'boolean') {
+    return res.status(400).json({ error: 'Некорректные данные' });    // 'Имя пользователя и статус активности обязательны'
+  }
+
+  try {
+    const result = await pool.query(
+      'UPDATE users SET user_name = $1, active = $2 WHERE user_id = $3 RETURNING *',
+      [user_name, active, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Пользователь с таким именем уже существует' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
 
 app.delete('/api/users/:id', async (req, res) => {
   const { id } = req.params;
