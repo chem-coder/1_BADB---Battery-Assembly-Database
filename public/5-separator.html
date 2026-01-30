@@ -331,6 +331,7 @@
 
           const editBtn = document.createElement('button');
           editBtn.textContent = '✏️';
+          editBtn.title = 'Редактировать';          
           editBtn.onclick = () => {
             mode = 'edit';
             currentId = sep.sep_id;
@@ -361,8 +362,17 @@
             updateDepletedState();
           };
 
+          const duplicateBtn = document.createElement('button');
+          duplicateBtn.textContent = '📄';
+          duplicateBtn.title = 'Дублировать';
+
+          duplicateBtn.onclick = () => {
+            duplicateSeparator(sep);
+          };
+
           const deleteBtn = document.createElement('button');
           deleteBtn.textContent = '🗑';
+          deleteBtn.title = 'Удалить';
           deleteBtn.onclick = async () => {
             if (!confirm(`Удалить сепаратор "${sep.name}"?`)) return;
 
@@ -376,6 +386,7 @@
           };
 
           actions.appendChild(editBtn);
+          actions.appendChild(duplicateBtn);
           actions.appendChild(deleteBtn);
 
           li.appendChild(info);
@@ -384,6 +395,38 @@
           separatorsList.appendChild(li);
         });
       }
+
+      function duplicateSeparator(sep) {
+        mode = 'create';
+        currentId = null;
+
+        showForm();
+
+        // title + name
+        const copyName = sep.name + ' (копия)';
+        title.textContent = copyName;
+        nameInput.value = copyName;
+
+        // fill fields
+        form.elements['supplier'].value = sep.supplier || '';
+        form.elements['brand'].value = sep.brand || '';
+        form.elements['batch'].value = sep.batch || '';
+        form.elements['comments'].value = sep.comments || '';
+        form.elements['status'].value = sep.status || 'available';
+
+        // structure
+        if (sep.structure_id) {
+          document.getElementById('separator-structure-id').value = sep.structure_id;
+        }
+
+        // IMPORTANT: reset things that must be new
+        createdBySelect.value = '';
+        form.elements['file_path'].value = '';
+        depletedInput.value = '';
+
+        updateDepletedState();
+      }
+
       // -------- Loaders --------
       async function loadSeparators() {
         const separators = await fetchSeparators();
