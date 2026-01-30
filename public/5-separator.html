@@ -69,6 +69,10 @@
         cursor: not-allowed;
       }
 
+      .required-missing {
+        border: 2px solid #b00020 !important;
+        background-color: #fff5f5;
+      }
     </style>
   </head>
 
@@ -104,6 +108,9 @@
         <select id="separator-created-by" name="created_by" required>
           <option value="">— выбрать пользователя —</option>
         </select>
+        <a href="reference/users.html" target="_blank" class="ref-link">
+          Управление пользователями
+        </a>
       </fieldset>
 
       <fieldset id="separator-intro">
@@ -137,6 +144,9 @@
           <option value="">— выбрать —</option>
           <!-- options later loaded from DB -->
         </select>
+        <a href="reference/separator-structures.html" target="_blank" class="ref-link">
+          Управление структурами
+        </a>
       </fieldset>
 
       <fieldset id="separator-properties">
@@ -253,6 +263,9 @@
 
         const select = document.getElementById('separator-structure-id');
 
+        // CLEAR existing options first
+        select.innerHTML = '<option value="">— выбрать —</option>';
+
         structures.forEach(s => {
           const opt = document.createElement('option');
           opt.value = s.sep_str_id;
@@ -260,6 +273,33 @@
           select.appendChild(opt);
         });
       }
+
+      async function updateSeparator(id, data) {
+        const res = await fetch(`/api/separators/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка обновления');
+        }
+
+        return res.json();
+      }
+
+      async function deleteSeparator(id) {
+        const res = await fetch(`/api/separators/${id}`, {
+          method: 'DELETE'
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Ошибка удаления');
+        }
+      }
+
 
       const separatorsList = document.getElementById('separatorsList');
       // -------- Rendering --------
@@ -292,11 +332,51 @@
           const editBtn = document.createElement('button');
           editBtn.textContent = '✏️';
           editBtn.onclick = () => {
-            // next step: load into form + mode='edit'
-            console.log('EDIT', sep.sep_id);
+            mode = 'edit';
+            currentId = sep.sep_id;
+
+            // show form
+            showForm();
+
+            // title + name
+            title.textContent = sep.name;
+            nameInput.value = sep.name;
+
+            // fill fields we have
+            form.elements['supplier'].value = sep.supplier || '';
+            form.elements['brand'].value = sep.brand || '';
+            form.elements['batch'].value = sep.batch || '';
+            form.elements['comments'].value = sep.comments || '';
+            form.elements['status'].value = sep.status || 'available';
+
+            // structure + user (if present in list)
+            if (sep.structure_id) {
+              document.getElementById('separator-structure-id').value = sep.structure_id;
+            }
+
+            if (sep.created_by) {
+              createdBySelect.value = sep.created_by;
+            }
+
+            updateDepletedState();
+          };
+
+          const deleteBtn = document.createElement('button');
+          deleteBtn.textContent = '🗑';
+          deleteBtn.onclick = async () => {
+            if (!confirm(`Удалить сепаратор "${sep.name}"?`)) return;
+
+            try {
+              await deleteSeparator(sep.sep_id);
+              showStatus('Сепаратор удалён');
+              loadSeparators();
+            } catch (err) {
+              showStatus(err.message, true);
+            }
           };
 
           actions.appendChild(editBtn);
+          actions.appendChild(deleteBtn);
 
           li.appendChild(info);
           li.appendChild(actions);
@@ -345,12 +425,14 @@
         }, 1000);
       }
 
-
       /* ---------- users dropdown ---------- */
 
       async function loadUsers() {
         const res = await fetch('/api/users');
         const users = await res.json();
+
+        // CLEAR existing options first
+        createdBySelect.innerHTML = '<option value="">— выбрать пользователя —</option>';
 
         users
           .filter(u => u.active)
@@ -377,6 +459,18 @@
 
       statusSelect.addEventListener('change', updateDepletedState);
 
+      /* ---------- refresh reference dropdowns on focus ---------- */
+
+      const structureSelect = document.getElementById('separator-structure-id');
+
+      structureSelect.addEventListener('focus', () => {
+        loadStructures();
+      });
+
+      createdBySelect.addEventListener('focus', () => {
+        loadUsers();
+      });
+
       /* ---------- create flow ---------- */
 
       addInput.addEventListener('keydown', (e) => {
@@ -399,10 +493,40 @@
       });
 
       /* ---------- save ---------- */
+      function validateRequiredFields() {
+        let missing = [];
+
+        // clear previous highlights
+        createdBySelect.classList.remove('required-missing');
+        structureSelect.classList.remove('required-missing');
+
+        if (!createdBySelect.value) {
+          missing.push('Кто добавил');
+          createdBySelect.classList.add('required-missing');
+        }
+
+        if (!structureSelect.value) {
+          missing.push('Тип структуры');
+          structureSelect.classList.add('required-missing');
+        }
+
+        if (missing.length) {
+          showStatus(
+            'Заполните обязательные поля: ' + missing.join(', '),
+            true
+          );
+          return false;
+        }
+
+        return true;
+      }
+
 
       saveBtn.addEventListener('click', async () => {
         if (!mode) return;
-
+        
+        if (!validateRequiredFields()) return;
+        
         const data = formDataToObject(form);
         data.name = title.textContent;
 
@@ -410,6 +534,11 @@
           if (mode === 'create') {
             await createSeparator(data);
             showStatus('Сепаратор сохранён');
+          }
+
+          if (mode === 'edit') {
+            await updateSeparator(currentId, data);
+            showStatus('Изменения сохранены');
           }
 
           resetForm();

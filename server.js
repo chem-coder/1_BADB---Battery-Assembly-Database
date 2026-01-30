@@ -25,9 +25,10 @@ pool.query('SELECT 1')
   .then(() => console.log('Postgres connected'))
   .catch(err => console.error('Postgres connection error', err));
 
-// Routes
 
-// api/users
+// ~~~~~ ROUTES ~~~~~
+
+// api/users CREATE
 app.post('/api/users', async (req, res) => {
   const { name } = req.body;
 
@@ -53,6 +54,7 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
+// api/users READ
 app.get('/api/users', async (req, res) => {
   try {
     const result = await pool.query(
@@ -65,6 +67,7 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// api/users/:id UPDATE
 app.put('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   const { name, active } = req.body;
@@ -93,6 +96,7 @@ app.put('/api/users/:id', async (req, res) => {
   }
 });
 
+// api/users/:id DELETE
 app.delete('/api/users/:id', async (req, res) => {
   const { id } = req.params;
 
@@ -105,14 +109,13 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
-// api/separators
+// api/separators CREATE
 app.post('/api/separators', async (req, res) => {
   const {
     name,
     supplier,
     brand,
     batch,
-    structure_id,
     air_perm,
     air_perm_units,
     thickness_um,
@@ -120,9 +123,15 @@ app.post('/api/separators', async (req, res) => {
     comments,
     status = 'available',
     depleted_at,
-    file_path,
-    created_by
+    file_path
   } = req.body;
+
+  const structure_id = Number(req.body.structure_id);
+  const created_by  = Number(req.body.created_by);
+
+  if (!Number.isInteger(structure_id) || !Number.isInteger(created_by)) {
+    return res.status(400).json({ error: 'Некорректные идентификаторы' });
+  }
 
   if (!name || !structure_id || !created_by) {
     return res.status(400).json({ error: 'Обязательные поля отсутствуют' });
@@ -154,10 +163,10 @@ app.post('/api/separators', async (req, res) => {
       RETURNING sep_id
       `,
       [
-        name,
-        supplier,
-        brand,
-        batch,
+        name.trim(),
+        supplier || null,
+        brand || null,
+        batch || null,
         structure_id,
         air_perm || null,
         air_perm_units || null,
@@ -178,18 +187,27 @@ app.post('/api/separators', async (req, res) => {
   }
 });
 
-// api/separators (list)
+// api/separators READ
 app.get('/api/separators', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
         sep_id,
         name,
-        status,
         supplier,
-        brand
+        brand,
+        batch,
+        structure_id,
+        air_perm,
+        air_perm_units,
+        thickness_um,
+        porosity,
+        comments,
+        status,
+        depleted_at,
+        created_by
       FROM separators
-      ORDER BY name
+      ORDER BY name;
     `);
 
     res.json(result.rows);
@@ -199,12 +217,222 @@ app.get('/api/separators', async (req, res) => {
   }
 });
 
+// api/separators/:id UPDATE
+// api/separators/:id UPDATE
+app.put('/api/separators/:id', async (req, res) => {
+  const { id } = req.params;
+
+  const {
+    name,
+    supplier,
+    brand,
+    batch,
+    air_perm,
+    air_perm_units,
+    thickness_um,
+    porosity,
+    comments,
+    status,
+    depleted_at,
+    file_path
+  } = req.body;
+
+  const structure_id = Number(req.body.structure_id);
+
+  // ---- validation ----
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'Название сепаратора обязательно' });
+  }
+
+  if (!Number.isInteger(structure_id)) {
+    return res.status(400).json({ error: 'Некорректная структура' });
+  }
+
+  const cleanName = name.trim();
+
+  const cleanDepletedAt =
+    status === 'available' ? null : (depleted_at || null);
+
+  try {
+    const result = await pool.query(
+      `
+      UPDATE separators
+      SET
+        name = $1,
+        supplier = $2,
+        brand = $3,
+        batch = $4,
+        structure_id = $5,
+        air_perm = $6,
+        air_perm_units = $7,
+        thickness_um = $8,
+        porosity = $9,
+        comments = $10,
+        status = $11,
+        depleted_at = $12,
+        file_path = $13
+      WHERE sep_id = $14
+      RETURNING *
+      `,
+      [
+        cleanName,
+        supplier || null,
+        brand || null,
+        batch || null,
+        structure_id,
+        air_perm || null,
+        air_perm_units || null,
+        thickness_um || null,
+        porosity || null,
+        comments || null,
+        status || 'available',
+        cleanDepletedAt,
+        file_path || null,
+        id
+      ]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Сепаратор не найден' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// api/separators/:id DELETE
+app.delete('/api/separators/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      'DELETE FROM separators WHERE sep_id = $1',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Сепаратор не найден' });
+    }
+
+    res.status(204).end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
 // api/structures
+
+// api/structures (create)
+app.post('/api/structures', async (req, res) => {
+  const { name, comments } = req.body;
+
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'Название структуры обязательно' });
+  }
+  
+  const cleanName = name.trim();
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO separator_structure (name, comments)
+      VALUES ($1, $2)
+      RETURNING sep_str_id, name, comments
+      `,
+      [cleanName, comments || null]
+    );
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      // unique violation on name
+      return res.status(409).json({ error: 'Такая структура уже существует' });
+    }
+
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// api/structures (list)
 app.get('/api/structures', async (req, res) => {
-  const result = await pool.query(
-    'SELECT sep_str_id, name FROM separator_structure ORDER BY name'
-  );
-  res.json(result.rows);
+  try {
+    const result = await pool.query(
+      'SELECT sep_str_id, name, comments FROM separator_structure ORDER BY name'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// api/structures/:id (update)
+app.put('/api/structures/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, comments } = req.body;
+
+  if (!name) {
+    return res.status(400).json({ error: 'Название структуры обязательно' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      UPDATE separator_structure
+      SET name = $1,
+          comments = $2
+      WHERE sep_str_id = $3
+      RETURNING sep_str_id, name, comments
+      `,
+      [name.trim(), comments || null, id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Структура не найдена' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Такая структура уже существует' });
+    }
+
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// api/structures/:id (delete)
+app.delete('/api/structures/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const result = await pool.query(
+      'DELETE FROM separator_structure WHERE sep_str_id = $1',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Структура не найдена' });
+    }
+
+    res.status(204).end();
+  } catch (err) {
+    if (err.code === '23503') {
+      // foreign key violation
+      return res.status(409).json({
+        error: 'Нельзя удалить структуру, которая используется в сепараторах'
+      });
+    }
+
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
 });
 
 

@@ -43,3 +43,33 @@ form {}
   display: none;
 }
 
+/* ---------- Reference / helper links ---------- */
+
+.ref-links {
+  margin-top: 0.25rem;
+  text-align: right;
+}
+
+.ref-link {
+  display: inline-block;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.6rem;
+  margin-left: 0.25rem;
+
+  color: #444;
+  background-color: #f3f3f3;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.ref-link:hover {
+  background-color: #eaeaea;
+  color: #000;
+}
+
+.ref-link:active {
+  background-color: #ddd;
+}
