@@ -225,6 +225,90 @@
 
       let mode = null; // 'create' | 'edit'
       let currentId = null;
+      
+      // -------- API helpers --------
+      async function fetchSeparators() {
+        const res = await fetch('/api/separators');
+        return res.json();
+      }
+
+      async function createSeparator(data) {
+        const res = await fetch('/api/separators', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Ошибка сохранения');
+        }
+
+        return res.json();
+      }
+
+      async function loadStructures() {
+        const res = await fetch('/api/structures');
+        const structures = await res.json();
+
+        const select = document.getElementById('separator-structure-id');
+
+        structures.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.sep_str_id;
+          opt.textContent = s.name;
+          select.appendChild(opt);
+        });
+      }
+
+      const separatorsList = document.getElementById('separatorsList');
+      // -------- Rendering --------
+      function renderSeparators(separators) {
+        separatorsList.innerHTML = '';
+
+        separators.forEach(sep => {
+          const li = document.createElement('li');
+          li.className = 'user-row';
+
+          const info = document.createElement('div');
+          info.className = 'user-info';
+
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = sep.name;
+
+          const statusSpan = document.createElement('span');
+          statusSpan.className = 'status';
+          statusSpan.textContent =
+            sep.status === 'available' ? 'в наличии' :
+            sep.status === 'used' ? 'израсходован' :
+            'списан';
+
+          info.appendChild(nameSpan);
+          info.appendChild(statusSpan);
+
+          const actions = document.createElement('div');
+          actions.className = 'actions';
+
+          const editBtn = document.createElement('button');
+          editBtn.textContent = '✏️';
+          editBtn.onclick = () => {
+            // next step: load into form + mode='edit'
+            console.log('EDIT', sep.sep_id);
+          };
+
+          actions.appendChild(editBtn);
+
+          li.appendChild(info);
+          li.appendChild(actions);
+
+          separatorsList.appendChild(li);
+        });
+      }
+      // -------- Loaders --------
+      async function loadSeparators() {
+        const separators = await fetchSeparators();
+        renderSeparators(separators);
+      }
 
       /* ---------- helpers ---------- */
 
@@ -322,15 +406,18 @@
         const data = formDataToObject(form);
         data.name = title.textContent;
 
-        console.log('SAVE MODE:', mode);
-        console.log('PAYLOAD:', data);
-        showStatus('Сепаратор сохранён');
+        try {
+          if (mode === 'create') {
+            await createSeparator(data);
+            showStatus('Сепаратор сохранён');
+          }
 
-        // later:
-        // if (mode === 'create') POST /api/separators
-        // if (mode === 'edit')   PUT  /api/separators/:id
+          resetForm();
+          loadSeparators();   // refresh list
+        } catch (err) {
+          showStatus(err.message, true);
+        }
 
-        resetForm();
       });
 
       /* ---------- clear ---------- */
@@ -368,6 +455,9 @@
       hideForm();
       updateDepletedState();
       loadUsers();
+      loadStructures();
+      loadSeparators();
+
     </script>
   </body>
 </html>

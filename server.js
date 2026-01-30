@@ -178,6 +178,28 @@ app.post('/api/separators', async (req, res) => {
   }
 });
 
+// api/separators (list)
+app.get('/api/separators', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        sep_id,
+        name,
+        status,
+        supplier,
+        brand
+      FROM separators
+      ORDER BY name
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// api/structures
 app.get('/api/structures', async (req, res) => {
   const result = await pool.query(
     'SELECT sep_str_id, name FROM separator_structure ORDER BY name'
