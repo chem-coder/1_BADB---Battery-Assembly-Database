@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="ru">
   <head>
-    <meta charset="utf-8" />
+    <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0" />
@@ -17,9 +17,7 @@
         </a>
     </header>
 
-    <!--Clicking "Enter" creates a new Project record. It is not saved to the database yet. Instead, clicking ENTER 
-    shows the form that is HIDDEN by default. the HIDDEN form becomes UNHIDDEN, and the NAME of the new project is 
-    filled from the input field. -->
+    <!-- Enter opens the form and copies the name into it -->
     <input
       id="project-name"
       type="text" 
@@ -30,9 +28,10 @@
       required
     />
     
-    <!--The form is HIDDEN until someone enters a new PROJECT in the input field.
-    The form will also be UNHIDDEN when the user chooses to EDIT one of the project records listed below.-->
+    <!-- Form hidden by default; shown on create/edit -->
     <form name="project-form" autocomplete="off" hidden>
+
+      <!-- FormData ignores fields without `name` -->
 
       <fieldset id="project-meta">
         <legend>Метаданные</legend>
@@ -47,9 +46,8 @@
       </fieldset>
 
       <fieldset id="project-details">
-        <!--N O T E: form fields must have a "name" attribute to be included in the FormData object. Otherwise, they're skipped: the "id" property doesn't count. */-->
-        
-        <!--Inside this field goes the NAME of the project that was input in the id="project-name" field, so it gets filled when ENTER is clicked "up there"-->
+
+        <!-- Name copied here on create / "Enter" -->
         <input
           type="text"
           name="name"
@@ -58,7 +56,6 @@
           hidden
         />
         <h2></h2>
-
 
         <label for="project-lead-id">Руководитель</label>
         <select id="project-lead-id" name="lead_id">
@@ -105,15 +102,18 @@
     <ul id="projectsList" class="users-list"></ul>
 
     <script>
-      // State and Helpers
+
+      // -------- State and helpers --------
+      
       const addInput = document.getElementById('project-name');
       const nameInput = document.getElementById('project-name-input');
       const form = document.forms['project-form'];
       const title = form.querySelector('h2');
       const saveBtn = document.getElementById('saveBtn');
       const clearBtn = document.getElementById('clearBtn');
-      const projectsList = document.getElementById('projectsList');
       const createdBySelect = document.getElementById('project-created-by');
+
+      const projectsList = document.getElementById('projectsList');
       const statusSelect = form.querySelector('select[name="status"]');
       const leadSelect = document.getElementById('project-lead-id');
 
@@ -142,7 +142,9 @@
         return Object.fromEntries(new FormData(form));
       }
       
+
       // -------- API helpers --------
+      
       async function fetchProjects() {
         const res = await fetch('/api/projects');
         return res.json();
@@ -189,7 +191,9 @@
         }
       }
 
+
       // -------- Rendering --------
+
       function renderProjects(projects) {
         projectsList.innerHTML = '';
 
@@ -231,9 +235,7 @@
             title.textContent = proj.name;
             nameInput.value = proj.name;
 
-            // fill fields we have
-            // N O T E: some fields may be NULL in DB, so we provide defaults
-            // add form.elements listed in the form in this document:
+            // Populate form with DB values (apply defaults for NULLs)
             form.elements['lead_id'].value = proj.lead_id || '';
             form.elements['start_date'].value = proj.start_date ? proj.start_date.slice(0,10) : '';
             form.elements['due_date'].value = proj.due_date ? proj.due_date.slice(0,10) : '';
@@ -291,7 +293,7 @@
         title.textContent = copyName;
         nameInput.value = copyName;
 
-        // fill fields
+        // Populate form with DB values (apply defaults for NULLs)
         form.elements['lead_id'].value = proj.lead_id || '';
         form.elements['start_date'].value = proj.start_date ? proj.start_date.slice(0,10) : '';
         form.elements['due_date'].value = proj.due_date ? proj.due_date.slice(0,10) : '';
@@ -303,7 +305,8 @@
         leadSelect.value = '';
       }      
 
-      /* ---------- Status Helper ---------- */
+
+      // -------- Status helper --------
 
       const statusBox = document.querySelector('.status-feedback');
 
@@ -316,8 +319,10 @@
         }, 1000);
       }
 
-      /* ---------- users dropdown ---------- */
 
+      // -------- Reference dropdowns --------
+
+      // Refresh user options without losing current selections
       async function loadUsers() {
         const prevCreated = createdBySelect.value;
         const prevLead = leadSelect.value;
@@ -339,17 +344,19 @@
         leadSelect.value = prevLead;
       }
 
-      /* ---------- refresh reference dropdowns on focus ---------- */
-
+      // Refresh reference dropdowns on focus
       leadSelect.addEventListener('focus', loadUsers);
       createdBySelect.addEventListener('focus', loadUsers);
 
-      /* ---------- Events---------- */
+
+      // -------- Events --------
 
       addInput.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
 
         e.preventDefault();
+
+        if (!form.hidden) return;   // prevent double-create
 
         const name = addInput.value.trim();
         if (!name) return;
@@ -416,7 +423,7 @@
       clearBtn.addEventListener('click', resetForm);
   
       /* ------ name: editable ------ */
-
+      
       title.addEventListener('click', () => {
         nameInput.hidden = false;
         title.hidden = true;
@@ -439,7 +446,8 @@
         nameInput.hidden = true;
       });
 
-      /* ---------- init ---------- */
+
+      // -------- Init --------
       
       async function loadProjects() {
         const projects = await fetchProjects();

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
   <head>
-    <meta charset="utf-8" />
+    <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0" />
@@ -12,27 +12,26 @@
   <body data-page="separators">
     <header>
       <h1>Сепараторы</h1>
-        <a href="../index.html" ><svg viewBox="0 0 24 24" width="24" height="24">
-          <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z"fill="currentColor"/></svg>
-        </a>
+      <a href="../index.html"><svg viewBox="0 0 24 24" width="24" height="24">
+        <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z" fill="currentColor"/></svg>
+      </a>
     </header>
 
-    <!--Clicking "Enter" creates a new Separator record. It is not saved to the database yet. Instead, clicking ENTER 
-    shows the form that is HIDDEN by default. the HIDDEN form becomes UNHIDDEN, and the NAME of the new separator is 
-    filled from the input field. -->
+    <!-- Enter opens the form and copies the name into it -->
     <input
-      id="separator-name"
-      type="text" 
       name="name"
+      id="separator-name"
+      type="text"
       class="add-user"
       placeholder="+ Добавить сепаратор"
       autocomplete="off"
       required
     />
     
-    <!--The form is HIDDEN until someone enters a new SEPARATOR in the input field.
-    The form will also be UNHIDDEN when the user chooses to EDIT one of the separator records listed below.-->
+    <!-- Form hidden by default; shown on create/edit -->
     <form name="separator-form" autocomplete="on" hidden>
+
+      <!-- FormData ignores fields without `name` -->
 
       <fieldset id="separator-meta">
         <legend>Метаданные</legend>
@@ -47,9 +46,8 @@
       </fieldset>
 
       <fieldset id="separator-intro">
-        <!--N O T E: form fields must have a "name" attribute to be included in the FormData object. Otherwise, they're skipped: the "id" property doesn't count. */-->
-        
-        <!--Inside this field goes the NAME of the separator that was input in the id="separator-name" field, so it gets filled when ENTER is clicked "up there"-->
+
+        <!-- Name copied here on create / "Enter" -->
         <input
           type="text"
           name="name"
@@ -156,6 +154,9 @@
     <ul id="separatorsList" class="users-list"></ul>
 
     <script>
+
+      // -------- State and helpers --------
+      
       const addInput = document.getElementById('separator-name');
       const nameInput = document.getElementById('separator-name-input');
       const form = document.forms['separator-form'];
@@ -163,13 +164,41 @@
       const saveBtn = document.getElementById('saveBtn');
       const clearBtn = document.getElementById('clearBtn');
       const createdBySelect = document.getElementById('separator-created-by');
+
+      const separatorsList = document.getElementById('separatorsList');
       const statusSelect = form.querySelector('select[name="status"]');
       const depletedInput = form.querySelector('input[name="depleted_at"]');
+      const depletedWrapper = document.getElementById('depleted-wrapper');
+      const structureSelect = document.getElementById('separator-structure-id');
 
       let mode = null; // 'create' | 'edit'
       let currentId = null;
+
+      function showForm() {
+        form.hidden = false;
+        addInput.disabled = true;
+      }
+
+      function hideForm() {
+        form.hidden = true;
+        addInput.disabled = false;
+      }
+
+      function resetForm() {
+        form.reset();
+        title.textContent = '';
+        mode = null;
+        currentId = null;
+        hideForm();
+      }
+
+      function formDataToObject(form) {
+        return Object.fromEntries(new FormData(form));
+      }
       
+
       // -------- API helpers --------
+
       async function fetchSeparators() {
         const res = await fetch('/api/separators');
         return res.json();
@@ -234,7 +263,6 @@
       }
 
 
-      const separatorsList = document.getElementById('separatorsList');
       // -------- Rendering --------
       function renderSeparators(separators) {
         separatorsList.innerHTML = '';
@@ -360,35 +388,22 @@
         updateDepletedState();
       }
 
-      // -------- Loaders --------
-      async function loadSeparators() {
-        const separators = await fetchSeparators();
-        renderSeparators(separators);
+      // ---------- Depleted Separator logic ----------
+
+      function updateDepletedState() {
+        if (statusSelect.value === 'available') {
+          depletedWrapper.hidden = true;
+          depletedInput.value = '';
+        } else {
+          depletedWrapper.hidden = false;
+        }
       }
 
-      /* ---------- helpers ---------- */
+      statusSelect.addEventListener('change', updateDepletedState);
 
-      function showForm() {
-        form.hidden = false;
-        addInput.disabled = true;
-      }
 
-      function hideForm() {
-        form.hidden = true;
-        addInput.disabled = false;
-      }
 
-      function resetForm() {
-        form.reset();
-        title.textContent = '';
-        mode = null;
-        currentId = null;
-        hideForm();
-      }
-
-      function formDataToObject(form) {
-        return Object.fromEntries(new FormData(form));
-      }
+      // -------- Status helper --------
 
       const statusBox = document.querySelector('.status-feedback');
 
@@ -401,7 +416,8 @@
         }, 1000);
       }
 
-      /* ---------- users dropdown ---------- */
+      
+      // -------- Reference dropdowns --------
 
       async function loadUsers() {
         const res = await fetch('/api/users');
@@ -420,39 +436,19 @@
           });
       }
 
-      /* ---------- status logic ---------- */
+      // Refresh reference dropdowns on focus
+      structureSelect.addEventListener('focus', loadStructures);
+      createdBySelect.addEventListener('focus', loadUsers);
+      
 
-      const depletedWrapper = document.getElementById('depleted-wrapper');
-
-      function updateDepletedState() {
-        if (statusSelect.value === 'available') {
-          depletedWrapper.hidden = true;
-          depletedInput.value = '';
-        } else {
-          depletedWrapper.hidden = false;
-        }
-      }
-
-      statusSelect.addEventListener('change', updateDepletedState);
-
-      /* ---------- refresh reference dropdowns on focus ---------- */
-
-      const structureSelect = document.getElementById('separator-structure-id');
-
-      structureSelect.addEventListener('focus', () => {
-        loadStructures();
-      });
-
-      createdBySelect.addEventListener('focus', () => {
-        loadUsers();
-      });
-
-      /* ---------- create flow ---------- */
-
+      // -------- Events --------
+      
       addInput.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter') return;
 
         e.preventDefault();
+
+        if (!form.hidden) return;   // prevent double-create
 
         const name = addInput.value.trim();
         if (!name) return;
@@ -468,7 +464,6 @@
         addInput.value = '';
       });
 
-      /* ---------- save ---------- */
       function validateRequiredFields() {
         let missing = [];
 
@@ -497,7 +492,6 @@
         return true;
       }
 
-
       saveBtn.addEventListener('click', async () => {
         if (!mode) return;
         
@@ -525,11 +519,7 @@
 
       });
 
-      /* ---------- clear ---------- */
-
-      clearBtn.addEventListener('click', () => {
-        resetForm();
-      });
+      clearBtn.addEventListener('click', resetForm);
 
       /* ------ name: editable ------ */
 
@@ -555,7 +545,13 @@
         nameInput.hidden = true;
       });
 
-      /* ---------- init ---------- */
+
+      // -------- Init --------
+
+      async function loadSeparators() {
+        const separators = await fetchSeparators();
+        renderSeparators(separators);
+      }
 
       hideForm();
       updateDepletedState();

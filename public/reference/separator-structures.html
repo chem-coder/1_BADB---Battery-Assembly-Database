@@ -3,43 +3,53 @@
   <head>
     <meta charset="UTF-8" />
     <meta
-        name="viewport" 
-        content="width=device-width, initial-scale=1.0" />
+      name="viewport" 
+      content="width=device-width, initial-scale=1.0" />
     <title>Структуры сепараторов</title>
     <link rel="stylesheet" type="text/css" href="reference-styles.css">
   </head>
 
-  <body>
+  <body data-page="separator-structures">
     <header>
-        <h1>Структуры сепараторов</h1>
-        <a href="../index.html"><svg viewBox="0 0 24 24" width="24" height="24">
+      <h1>Структуры сепараторов</h1>
+      <a href="../index.html"><svg viewBox="0 0 24 24" width="24" height="24">
         <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z" fill="currentColor"/></svg>
-        </a>
+      </a>
     </header>
 
+    <!-- Enter opens the form and copies the name into it -->
     <input
-        id="structure-name"
-        class="add-user"
-        placeholder="+ Добавить структуру (например: PP/PE/PP)"
-        autocomplete="off"
+      id="structure-name"
+      type="text" 
+      name="name"
+      class="add-user"
+      placeholder="+ Добавить структуру (например: PP/PE/PP)"
+      autocomplete="off"
+      required
     />
+    
+    <!-- Form hidden by default; shown on create/edit -->    
+    <form name="structure-form" id="structure-form" hidden>
 
-    <form id="structure-form" hidden>
-        <!-- hidden input for name (mirrors separators page) -->
-        <input type="text" id="structure-name-input" hidden />
+      <!-- FormData ignores fields without `name` -->
+    
+      <!-- hidden input for name (mirrors separators page) -->
+      <input type="text" name="name" id="structure-name-input" hidden />
 
-        <h2></h2>
+      <h2></h2>
 
-        <label for="structure-comments">Комментарии</label><br />
-        <textarea
-            id="structure-comments"
-            rows="3"
-            placeholder="Описание, детали, замечания"
-        ></textarea>
+      <label for="structure-comments">Комментарии</label><br />
+      <textarea
+        id="structure-comments"
+        name="structure_comments"
+        rows="3"
+        cols="50"
+        placeholder="Описание, детали, замечания"
+      ></textarea>
 
-        <br /><br />
-        <button type="button" id="saveBtn">Сохранить</button>
-        <button type="button" id="clearBtn">Отменить</button>
+      <br /><br />
+      <button type="button" id="saveBtn">Сохранить</button>
+      <button type="button" id="clearBtn">Отменить</button>
     </form>
 
     <div class="status-feedback" aria-live="polite"></div>
@@ -47,271 +57,277 @@
     <ul id="structuresList" class="users-list"></ul>
 
     <script>
-        const structuresList = document.getElementById('structuresList');
-        const addStructureInput = document.getElementById('addStructureInput');
-        const statusBox = document.querySelector('.status-feedback');
 
-        const addInput = document.getElementById('structure-name');
-        const form = document.getElementById('structure-form');
-        const title = form.querySelector('h2');
-        const nameInput = document.getElementById('structure-name-input');
-        const commentsInput = document.getElementById('structure-comments');
-        const saveBtn = document.getElementById('saveBtn');
-        const clearBtn = document.getElementById('clearBtn');
+      // -------- State and helpers --------
 
-        let mode = null;       // 'create' | 'edit'
-        let currentId = null;
+      const addInput = document.getElementById('structure-name');
+      const nameInput = document.getElementById('structure-name-input');
+      const form = document.getElementById('structure-form');
+      const title = form.querySelector('h2');
+      const saveBtn = document.getElementById('saveBtn');
+      const clearBtn = document.getElementById('clearBtn');
 
+      const structuresList = document.getElementById('structuresList');
+      const statusBox = document.querySelector('.status-feedback');
+      const commentsInput = document.getElementById('structure-comments');
 
-        function showStatus(msg, isError = false) {
-            statusBox.textContent = msg;
-            statusBox.style.color = isError ? '#b00020' : 'darkcyan';
-            setTimeout(() => { statusBox.textContent = ''; }, 1200);
-        }
+      let mode = null; // 'create' | 'edit'
+      let currentId = null;
 
-        // -------- API helpers --------
-        async function fetchStructures() {
-            const res = await fetch('/api/structures');
-            return res.json();
-        }
+      function showForm() {
+          form.hidden = false;
+          addInput.disabled = true;
+      }
 
-        async function createStructure(data) {
-            const res = await fetch('/api/structures', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
+      function hideForm() {
+          form.hidden = true;
+          addInput.disabled = false;
+      }
 
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || 'Ошибка добавления структуры');
-            }
+      function resetForm() {
+          form.reset();
+          title.textContent = '';
+          nameInput.value = '';
+          mode = null;
+          currentId = null;
+          hideForm();
+      }
 
-            return res.json();
-        }
+      function showStatus(msg, isError = false) {
+          statusBox.textContent = msg;
+          statusBox.style.color = isError ? '#b00020' : 'darkcyan';
+          setTimeout(() => { statusBox.textContent = ''; }, 1200);
+      }
 
-        async function updateStructure(id, data) {
-            const res = await fetch(`/api/structures/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
+      // -------- API helpers --------
 
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || 'Ошибка обновления структуры');
-            }
+      async function fetchStructures() {
+        const res = await fetch('/api/structures');
+        return res.json();
+      }
 
-            return res.json();
-            }
-
-            async function deleteStructure(id) {
-            const res = await fetch(`/api/structures/${id}`, { method: 'DELETE' });
-
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || 'Ошибка удаления структуры');
-            }
-        }
-
-        // -------- Show / hide form helpers --------
-        function showForm() {
-            form.hidden = false;
-            addInput.disabled = true;
-        }
-
-        function hideForm() {
-            form.hidden = true;
-            addInput.disabled = false;
-        }
-
-        function resetForm() {
-            form.reset();
-            title.textContent = '';
-            nameInput.value = '';
-            mode = null;
-            currentId = null;
-            hideForm();
-        }
-
-        // -------- Editable title --------
-        title.addEventListener('click', () => {
-            nameInput.hidden = false;
-            title.hidden = true;
-            nameInput.focus();
+      async function createStructure(data) {
+        const res = await fetch('/api/structures', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
         });
 
-        nameInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                nameInput.blur();
-            }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка добавления структуры');
+        }
+
+        return res.json();
+      }
+
+      async function updateStructure(id, data) {
+        const res = await fetch(`/api/structures/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
         });
 
-        nameInput.addEventListener('blur', () => {
-            const val = nameInput.value.trim();
-            if (!val) return;
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка обновления структуры');
+        }
 
-            title.textContent = val;
-            title.hidden = false;
-            nameInput.hidden = true;
-        });
+        return res.json();
+      }
 
-        // -------- Rendering --------
-        function renderStructures(structures) {
+      async function deleteStructure(id) {
+        const res = await fetch(`/api/structures/${id}`, { method: 'DELETE' });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка удаления структуры');
+        }
+      }
+
+
+      // -------- Editable title --------
+      title.addEventListener('click', () => {
+        nameInput.hidden = false;
+        title.hidden = true;
+        nameInput.focus();
+      });
+
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          nameInput.blur();
+        } 
+      });
+
+      nameInput.addEventListener('blur', () => {
+        const val = nameInput.value.trim();
+        if (!val) return;
+
+        title.textContent = val;
+        title.hidden = false;
+        nameInput.hidden = true;
+      });
+
+      
+      // -------- Rendering --------
+
+      function renderStructures(structures) {
         structuresList.innerHTML = '';
 
         structures
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .forEach(s => {
-            const li = document.createElement('li');
-            li.className = 'user-row';
+         .sort((a, b) => a.name.localeCompare(b.name))
+         .forEach(s => {
+          const li = document.createElement('li');
+          li.className = 'user-row';
 
-            const info = document.createElement('div');
-            info.className = 'user-info';
+          const info = document.createElement('div');
+          info.className = 'user-info';
 
-            const nameSpan = document.createElement('div');
-            nameSpan.textContent = s.name;
+          const nameSpan = document.createElement('div');
+          nameSpan.textContent = s.name;
 
-            info.appendChild(nameSpan);
+          info.appendChild(nameSpan);
 
-            if (s.comments) {
-                const commentsDiv = document.createElement('div');
-                commentsDiv.style.fontSize = '0.85rem';
-                commentsDiv.style.color = '#666';
-                commentsDiv.textContent = s.comments;
-                info.appendChild(commentsDiv);
-            }
+          if (s.comments) {
+            const commentsDiv = document.createElement('div');
+            commentsDiv.style.fontSize = '0.85rem';
+            commentsDiv.style.color = '#666';
+            commentsDiv.textContent = s.comments;
+            info.appendChild(commentsDiv);  
+          }
 
+          const actions = document.createElement('div');
+          actions.className = 'actions';
 
-            const actions = document.createElement('div');
-            actions.className = 'actions';
+          const editBtn = document.createElement('button');
+          editBtn.textContent = '✏️';
+          editBtn.onclick = () => enterEditMode(li, s);
 
-            const editBtn = document.createElement('button');
-            editBtn.textContent = '✏️';
-            editBtn.onclick = () => enterEditMode(li, s);
-
-            const deleteBtn = document.createElement('button');
-            deleteBtn.textContent = '🗑';
-            deleteBtn.onclick = async () => {
-                if (!confirm(`Удалить структуру "${s.name}"?`)) return;
-
-                try {
-                await deleteStructure(s.sep_str_id);
-                showStatus('Удалено');
-                loadStructures();
-                } catch (err) {
-                showStatus(err.message, true);
-                }
-            };
-
-            actions.appendChild(editBtn);
-            actions.appendChild(deleteBtn);
-
-            li.appendChild(info);
-            li.appendChild(actions);
-
-            structuresList.appendChild(li);
-            });
-        }
-
-        function enterEditMode(li, s) {
-            li.innerHTML = '';
-            li.className = 'user-row edit-row';
-
-            const wrapper = document.createElement('div');
-            wrapper.className = 'user-info';
-
-            const nameInput = document.createElement('input');
-            nameInput.value = s.name;
-
-            const commentsInput = document.createElement('textarea');
-            commentsInput.rows = 2;
-            commentsInput.placeholder = 'Комментарий (необязательно)';
-            commentsInput.value = s.comments || '';
-
-            wrapper.appendChild(nameInput);
-            wrapper.appendChild(commentsInput);
-            li.appendChild(wrapper);
-
-            nameInput.focus();
-
-            li.onkeydown = async (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-
-                const newName = nameInput.value.trim();
-                if (!newName) return;
-
-                try {
-                    await updateStructure(s.sep_str_id, {
-                    name: newName,
-                    comments: commentsInput.value.trim() || null
-                    });
-                    showStatus('Сохранено');
-                    loadStructures();
-                } catch (err) {
-                    showStatus(err.message, true);
-                }
-                }
-
-                if (e.key === 'Escape') {
-                loadStructures();
-                }
-            };
-        }
-
-        // -------- Events --------
-        addInput.addEventListener('keydown', (e) => {
-            if (e.key !== 'Enter') return;
-
-            e.preventDefault();
-
-            const name = addInput.value.trim();
-            if (!name) return;
-
-            mode = 'create';
-            currentId = null;
-
-            nameInput.value = name;
-            title.textContent = name;
-
-            showForm();
-            addInput.value = '';
-        });
-
-        saveBtn.addEventListener('click', async () => {
-            if (!mode) return;
-
-            const payload = {
-                name: title.textContent,
-                comments: commentsInput.value.trim() || null
-            };
+          const deleteBtn = document.createElement('button');
+          deleteBtn.textContent = '🗑';
+          deleteBtn.onclick = async () => {
+            if (!confirm(`Удалить структуру "${s.name}"?`)) return;
 
             try {
-                if (mode === 'create') {
-                await createStructure(payload);
-                showStatus('Структура сохранена');
-                }
-
-                resetForm();
-                loadStructures();
+              await deleteStructure(s.sep_str_id);
+              showStatus('Удалено');
+              loadStructures();
             } catch (err) {
-                showStatus(err.message, true);
+              showStatus(err.message, true);
             }
-        });
+          };
 
-        clearBtn.addEventListener('click', () => {
-            resetForm();
-        });
+          actions.appendChild(editBtn);
+          actions.appendChild(deleteBtn);
 
-        async function loadStructures() {
-            const structures = await fetchStructures();
-            renderStructures(structures);
+          li.appendChild(info);
+          li.appendChild(actions);
+
+          structuresList.appendChild(li);
+        });
+      }
+
+      function enterEditMode(li, s) {
+        li.innerHTML = '';
+        li.className = 'user-row edit-row';
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'user-info';
+
+        const nameInput = document.createElement('input');
+        nameInput.value = s.name;
+
+        const commentsInput = document.createElement('textarea');
+        commentsInput.rows = 2;
+        commentsInput.placeholder = 'Комментарий (необязательно)';
+        commentsInput.value = s.comments || '';
+
+        wrapper.appendChild(nameInput);
+        wrapper.appendChild(commentsInput);
+        li.appendChild(wrapper);
+
+        nameInput.focus();
+
+        li.onkeydown = async (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+
+            const newName = nameInput.value.trim();
+            if (!newName) return;
+
+            try {
+              await updateStructure(s.sep_str_id, {
+                name: newName,
+                comments: commentsInput.value.trim() || null
+              });
+              showStatus('Сохранено');
+              loadStructures();
+            } catch (err) {
+              showStatus(err.message, true);
+            }
+          }
+
+          if (e.key === 'Escape') {
+            loadStructures();
+          }
+        };
+      }
+
+      // -------- Events --------
+
+      addInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+
+        e.preventDefault();
+
+        if (!form.hidden) return;
+
+        const name = addInput.value.trim();
+        if (!name) return;
+
+        mode = 'create';
+        currentId = null;
+
+        nameInput.value = name;
+        title.textContent = name;
+
+        showForm();
+        addInput.value = '';
+      });
+
+      saveBtn.addEventListener('click', async () => {
+        if (!mode) return;
+
+        const payload = {
+          name: title.textContent,
+          comments: commentsInput.value.trim() || null
+        };
+
+        try {
+          if (mode === 'create') {
+            await createStructure(payload);
+            showStatus('Структура сохранена');
+          }
+          resetForm();
+          loadStructures();
+        } catch (err) {
+            showStatus(err.message, true);
         }
+      });
 
-        hideForm();
-        loadStructures();
+      clearBtn.addEventListener('click', resetForm);
+
+      
+      // -------- Init --------
+      
+      async function loadStructures() {
+        const structures = await fetchStructures();
+        renderStructures(structures);
+      }
+
+      hideForm();
+      loadStructures();
 
     </script>
   </body>

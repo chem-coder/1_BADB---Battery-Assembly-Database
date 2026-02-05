@@ -7,10 +7,10 @@
       content="width=device-width, initial-scale=1.0" 
     />
     <title>Пользователи</title>
-    <link rel="stylesheet" type="text/css" href="reference-styles.css" />
+    <link rel="stylesheet" type="text/css" href="reference-styles.css">
   </head>
 
-  <body>
+  <body data-page="users">
     <header>
       <h1>Пользователи</h1>
       <a href="../index.html"><svg viewBox="0 0 24 24" width="24" height="24">
@@ -28,8 +28,12 @@
     <ul id="usersList" class="users-list"></ul>
 
     <script>
+
+      // -------- State and helpers --------
+
       const usersList = document.getElementById('usersList');
       const addUserInput = document.getElementById('addUserInput');
+
 
       // -------- API helpers --------
 
@@ -39,27 +43,48 @@
       }
 
       async function createUser(name) {
-        return fetch('/api/users', {
+        const res = await fetch('/api/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name: name })
         });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Ошибка сохранения');
+        }
+
+        return res.json();
       }
 
       async function updateUser(id, data) {
-        return fetch(`/api/users/${id}`, {
+        const res = await fetch(`/api/users/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
         });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка обновления');
+        }
+
+        return res.json();
       }
 
       async function deleteUser(id) {
-        return fetch(`/api/users/${id}`, { method: 'DELETE' });
+        const res = await fetch(`/api/users/${id}`, {
+          method: 'DELETE'
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Ошибка удаления');
+        }
       }
 
-      // -------- Rendering --------
 
+      // -------- Rendering --------
       function renderUsers(users) {
         usersList.innerHTML = '';
 
@@ -87,14 +112,21 @@
 
             const editBtn = document.createElement('button');
             editBtn.textContent = '✏️';
+            editBtn.title = 'Редактировать';
             editBtn.onclick = () => enterEditMode(li, user);
 
             const deleteBtn = document.createElement('button');
             deleteBtn.textContent = '🗑';
+            deleteBtn.title = 'Удалить';
             deleteBtn.onclick = async () => {
-              if (confirm('Вы уверены?')) {
+              if (!confirm('Вы уверены?')) return;
+
+              try {
                 await deleteUser(user.user_id);
+                showStatus('Пользователь удалён');
                 loadUsers();
+              } catch (err) {
+                showStatus(err.message, true);
               }
             };
 
@@ -105,7 +137,7 @@
             li.appendChild(actions);
 
             usersList.appendChild(li);
-          });
+        });
       }
 
       function enterEditMode(li, user) {
@@ -129,11 +161,18 @@
 
         li.onkeydown = async (e) => {
           if (e.key === 'Enter') {
-            await updateUser(user.user_id, {
-              name: nameInput.value.trim(),
-              active: statusSelect.value === 'true'
-            });
-            loadUsers();
+            e.preventDefault();
+
+            try {
+              await updateUser(user.user_id, {
+                name: nameInput.value.trim(),
+                active: statusSelect.value === 'true'
+              });
+              loadUsers();
+            } catch (err) {
+              showStatus(err.message, true);
+            }
+            return;
           }
 
           if (e.key === 'Escape') {
@@ -142,18 +181,28 @@
         };
       }
 
+
       // -------- Events --------
 
       addUserInput.addEventListener('keydown', async (e) => {
-        if (e.key === 'Enter') {
-          const name = addUserInput.value.trim();
-          if (!name) return;
+        if (e.key !== 'Enter') return;
 
+        e.preventDefault();
+
+        const name = addUserInput.value.trim();
+        if (!name) return;
+
+        try {
           await createUser(name);
           addUserInput.value = '';
           loadUsers();
+        } catch (err) {
+          showStatus(err.message, true);
         }
       });
+
+
+      // -------- Init --------
 
       async function loadUsers() {
         const users = await fetchUsers();
