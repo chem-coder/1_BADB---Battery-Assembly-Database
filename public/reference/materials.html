@@ -8,6 +8,36 @@
     />
     <title>Materials</title>
     <link rel="stylesheet" type="text/css" href="reference-styles.css">
+    
+    <style>
+      details > summary {
+        list-style: none; /* remove default marker */
+        cursor: pointer;
+        position: relative;
+      }
+
+      details > summary::before {
+        content: "▸";
+        display: inline-block;
+        margin-right: 0.5rem;
+        transition: transform 0.15s ease;
+        color: #666;
+      }
+
+      details[open] > summary::before {
+        transform: rotate(90deg);
+      }
+
+      details[open] > summary {
+        background-color: #f6f7f8;
+      }
+
+      .batch-row[data-status="depleted"],
+      .batch-row[data-status="scrap"] {
+        opacity: 0.6;
+      }
+
+    </style>
   </head>
 
   <body data-page="materials">
@@ -96,7 +126,7 @@
     
     <div class="status-feedback" aria-live="polite"></div>
     <ul id="materialsList" class="users-list"></ul>
-    
+
     <script>
 
       // -------- State and helpers --------
@@ -110,6 +140,12 @@
       const createdBySelect = document.getElementById('material-created-by');
 
       const materialsList = document.getElementById('materialsList');
+
+      const BATCH_STATUS_LABELS_RU = {
+        available: 'доступна',
+        depleted: 'израсходована',
+        scrap: 'списана'
+      };
 
       let mode = null;       // 'create' | 'edit'
       let currentId = null;
@@ -184,6 +220,53 @@
         }
       }
 
+      async function fetchBatches(materialId) {
+        const res = await fetch(`/api/materials/${materialId}/batches`);
+        if (!res.ok) throw new Error('Ошибка загрузки партий');
+        return res.json();
+      }
+
+      async function createBatch(materialId, data) {
+        const res = await fetch(`/api/materials/${materialId}/batches`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка сохранения партии');
+        }
+
+        return res.json();
+      }
+
+      async function updateBatchStatus(batchId, status) {
+        const res = await fetch(`/api/material-batches/${batchId}/status`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status })
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка обновления статуса');
+        }
+
+        return res.json();
+      }
+
+      async function deleteBatch(batchId) {
+        const res = await fetch(`/api/material-batches/${batchId}`, {
+          method: 'DELETE'
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка удаления партии');
+        }
+      }
+      
       
       // -------- Rendering --------    
 
@@ -192,7 +275,19 @@
 
         materials.forEach(m => {
           const li = document.createElement('li');
-          li.className = 'user-row';
+
+          const details = document.createElement('details');
+
+          /* ---------- SUMMARY (material row) ---------- */ 
+
+          const summary = document.createElement('summary');
+          summary.className = 'user-row';
+
+          summary.addEventListener('click', (e) => {
+            if (e.target.closest('button')) {
+              e.preventDefault();
+            }
+          });
 
           const info = document.createElement('div');
           info.className = 'user-info';
@@ -206,8 +301,16 @@
           const brandSpan = document.createElement('span');
           brandSpan.textContent = m.brand || '';
 
+          const ROLE_LABELS_RU = {
+            active: 'активный компонент',
+            binder: 'связующее вещество',
+            conductive_additive: 'проводящая добавка',
+            solvent: 'растворитель',
+            other: 'другое'
+          };
+
           const roleSpan = document.createElement('span');
-          roleSpan.textContent = `${m.default_role}`;
+          roleSpan.textContent = ROLE_LABELS_RU[m.default_role] || m.default_role;
 
           info.appendChild(nameSpan);
           info.appendChild(supplier);
@@ -220,11 +323,12 @@
           const editBtn = document.createElement('button');
           editBtn.textContent = '✏️';
           editBtn.title = 'Редактировать';
-          editBtn.onclick = () => {
+          editBtn.onclick = (e) => {
+            e.preventDefault(); // prevent details toggle
+            e.stopPropagation();
+  
             mode = 'edit';
             currentId = m.material_id;
-
-            // Show form
             showForm();
 
             // title + name
@@ -248,31 +352,315 @@
           const duplicateBtn = document.createElement('button');
           duplicateBtn.textContent = '📄';
           duplicateBtn.title = 'Дублировать';
-
-          duplicateBtn.onclick = () => {
+          duplicateBtn.onclick = (e) => {
+            e.preventDefault(); // prevent details toggle
+            e.stopPropagation();
             duplicateMaterial(m);
           };
           
           const deleteBtn = document.createElement('button');
           deleteBtn.textContent = '🗑';
-          deleteBtn.onclick = async () => {
+          deleteBtn.onclick = async (e) => {
+            e.preventDefault(); // prevent details toggle
+            e.stopPropagation();
+
             if (!confirm(`Удалить материал "${m.name}"?`)) return;
-            try {
-              await deleteMaterial(m.material_id);
-              showStatus('Материал удалён');
-              loadMaterials();
-            } catch (err) {
-              showStatus(err.message, true);
-            }
+            await deleteMaterial(m.material_id);
+            loadMaterials();
           };
 
           actions.appendChild(editBtn);
           actions.appendChild(duplicateBtn);
           actions.appendChild(deleteBtn);
 
-          li.appendChild(info);
-          li.appendChild(actions);
+          summary.appendChild(info);
+          summary.appendChild(actions);
 
+          /* ---------- DETAILS BODY (future batches) ---------- */
+
+          const detailsBody = document.createElement('div');
+          detailsBody.className = 'material-details';
+
+          // ---- batches list ----
+          const batchList = document.createElement('ul');
+          batchList.className = 'batch-list';
+
+          // ---- add batch button ----
+          const addBatchBtn = document.createElement('button');
+          addBatchBtn.type = 'button';
+          addBatchBtn.className = 'add-batch-btn';
+          addBatchBtn.textContent = '+ Добавить партию';
+
+          // ---- batch form (hidden for now) ----
+          const batchForm = document.createElement('form');
+          batchForm.className = 'batch-form';
+          batchForm.hidden = true;
+          batchForm.innerHTML = `
+            <input type="text" name="batch_code" placeholder="Код партии" required>
+            <input type="text" name="supplier_lot" placeholder="Партия поставщика">
+            <textarea name="comments" placeholder="Комментарии"></textarea>
+            <input
+              type="url"
+              name="passport_file"
+              placeholder="Ссылка на паспорт партии (необязательно)"
+            >
+
+            <div class="form-actions">
+              <button type="button" class="save-batch">Сохранить</button>
+              <button type="button" class="clear-batch">Очистить</button>
+            </div>
+          `;
+
+          // ---- + Add Batch button behavior ----
+          addBatchBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            batchForm.hidden = false;
+            addBatchBtn.hidden = true;
+          });
+
+          // ---- Clear / hide batch form ----
+          batchForm.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('clear-batch')) return;
+
+            e.preventDefault();
+            batchForm.reset?.();   // safe even if empty
+            batchForm.hidden = true;
+            addBatchBtn.hidden = false;
+          });
+
+          // ---- Save batch ----
+          batchForm.addEventListener('click', async (e) => {
+            if (!e.target.classList.contains('save-batch')) return;
+
+            e.preventDefault();
+
+            const formData = new FormData(batchForm);
+            const payload = Object.fromEntries(formData.entries());
+
+            if (!payload.batch_code || !payload.batch_code.trim()) {
+              alert('Код партии обязателен');
+              return;
+            }
+
+            try {
+              const newBatch = await createBatch(m.material_id, payload);
+
+              // remove "Партий пока нет"
+              const muted = batchList.querySelector('.muted');
+              if (muted) muted.remove();
+
+              // prepend new batch
+              const row = document.createElement('li');
+              row.className = 'batch-row';
+              row.dataset.status = newBatch.status;
+
+              const codeSpan = document.createElement('span');
+              codeSpan.textContent = newBatch.batch_code;
+
+              const lotSpan = document.createElement('span');
+              lotSpan.textContent = newBatch.supplier_lot || '';
+
+              const statusSpan = document.createElement('span');
+              statusSpan.textContent = BATCH_STATUS_LABELS_RU[newBatch.status] || newBatch.status;
+
+              row.appendChild(codeSpan);
+              row.appendChild(lotSpan);
+              row.appendChild(statusSpan);
+
+              // 📎 passport link (POST-created row)
+              if (newBatch.passport_file) {
+                const link = document.createElement('a');
+                link.href = newBatch.passport_file;
+                link.textContent = '📎 паспорт';
+                link.target = '_blank';
+                link.rel = 'noopener';
+                row.appendChild(link);
+              }
+
+              // ✅ INSERTED HERE: status change button (POST-created rows)
+              if (newBatch.status === 'available') {
+                const writeOffBtn = document.createElement('button');
+                writeOffBtn.type = 'button';
+                writeOffBtn.textContent = 'Списать';
+
+                writeOffBtn.onclick = async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+
+                  const ok = confirm(
+                      'Списать партию?\nЭто действие нельзя отменить.'
+                    );
+                  if (!ok) return;
+
+                  try {
+                    const updated = await updateBatchStatus(newBatch.material_batch_id, 'depleted');
+                    row.dataset.status = updated.status;
+                    statusSpan.textContent = BATCH_STATUS_LABELS_RU[updated.status] || updated.status;
+                    writeOffBtn.remove();
+                  } catch (err) {
+                    alert(err.message);
+                  }
+                };
+
+                row.appendChild(writeOffBtn);
+
+                // 🗑 Delete batch (POST-created)
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = '🗑';
+                deleteBtn.title = 'Удалить партию';
+
+                deleteBtn.onclick = async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+
+                  const ok = confirm(
+                    'Удалить партию?\nЭто действие нельзя отменить.'
+                  );
+                  if (!ok) return;
+
+                  try {
+                    await deleteBatch(newBatch.material_batch_id);
+                    row.remove();
+                  } catch (err) {
+                    alert(err.message);
+                  }
+                };
+
+                row.appendChild(deleteBtn);
+              }
+
+              batchList.prepend(row);
+              
+              // reset UI
+              batchForm.reset();
+              batchForm.hidden = true;
+              addBatchBtn.hidden = false;
+            } catch (err) {
+              alert(err.message);
+            }
+          });
+          
+          // assemble
+          detailsBody.appendChild(batchList);
+          detailsBody.appendChild(addBatchBtn);
+          detailsBody.appendChild(batchForm);
+
+          let batchesLoaded = false;
+
+          details.addEventListener('toggle', async () => {
+            if (!details.open || batchesLoaded) return;
+
+            try {
+              const batches = await fetchBatches(m.material_id);
+              batchList.innerHTML = '';
+
+              if (batches.length === 0) {
+                const empty = document.createElement('li');
+                empty.textContent = 'Партий пока нет';
+                empty.className = 'muted';
+                batchList.appendChild(empty);
+              } else {
+                batches.forEach(b => {
+                  const row = document.createElement('li');
+                  row.className = 'batch-row';
+                  row.dataset.status = b.status;
+
+                  const codeSpan = document.createElement('span');
+                  codeSpan.textContent = b.batch_code;
+
+                  const lotSpan = document.createElement('span');
+                  lotSpan.textContent = b.supplier_lot || '';
+
+                  const statusSpan = document.createElement('span');
+                  statusSpan.textContent = BATCH_STATUS_LABELS_RU[b.status] || b.status;
+
+                  const dateSpan = document.createElement('span');
+                  dateSpan.textContent = b.received_at ? b.received_at.slice(0, 10) : '';
+
+                  row.appendChild(codeSpan);
+                  row.appendChild(lotSpan);
+                  row.appendChild(statusSpan);
+                  row.appendChild(dateSpan);
+
+                  if (b.passport_file) {
+                    const link = document.createElement('a');
+                    link.href = b.passport_file;
+                    link.textContent = '📎 паспорт';
+                    link.target = '_blank';
+                    link.rel = 'noopener';
+
+                    row.appendChild(link);
+                  }
+
+                  // ✅ INSERTED HERE: status change button (GET rows)
+                  if (b.status === 'available') {
+                    const writeOffBtn = document.createElement('button');
+                    writeOffBtn.type = 'button';
+                    writeOffBtn.textContent = 'Списать';
+
+                    writeOffBtn.onclick = async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+
+                      const ok = confirm(
+                        'Списать партию?\nЭто действие нельзя отменить.'
+                      );
+                      if (!ok) return;
+
+                      try {
+                        const updated = await updateBatchStatus(b.material_batch_id, 'depleted');
+                        row.dataset.status = updated.status;
+                        statusSpan.textContent = BATCH_STATUS_LABELS_RU[updated.status] || updated.status;
+                        writeOffBtn.remove();
+                      } catch (err) {
+                        alert(err.message);
+                      }
+                    };
+
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.textContent = '🗑';
+                    deleteBtn.title = 'Удалить партию';
+
+                    deleteBtn.onclick = async (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+
+                      const ok = confirm(
+                        'Удалить партию?\nЭто действие нельзя отменить.'
+                      );
+                      if (!ok) return;
+
+                      try {
+                        await deleteBatch(b.material_batch_id);
+                        row.remove();
+                      } catch (err) {
+                        alert(err.message);
+                      }
+                    };
+
+                    row.appendChild(writeOffBtn);
+                    row.appendChild(deleteBtn);
+                  }
+
+                  batchList.appendChild(row);
+                });
+              }
+
+              batchesLoaded = true;
+            } catch (err) {
+              batchList.innerHTML = '<li class="error">Ошибка загрузки партий</li>';
+            }
+          });
+          
+
+          /* ---------- ASSEMBLY ---------- */
+
+          details.appendChild(summary);
+          details.appendChild(detailsBody);
+
+          li.appendChild(details);
           materialsList.appendChild(li);
         });
       }

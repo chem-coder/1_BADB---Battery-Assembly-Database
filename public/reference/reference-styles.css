@@ -1,7 +1,7 @@
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   margin: 2rem;
-  max-width: 600px;
+  max-width: 90%;
 }
 
 .add-user {

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Рецепты</title>
+  <link rel="stylesheet" type="text/css" href="styles.css" />
+  <script type="text/javascript" src="script.js" defer></script>
+</head>
+
+<body data-page="recipes">
+  <div class="container">
+    <header>
+      <h1>Рецепты</h1>
+
+      <nav class="menu">
+        <ul>
+          <li>
+            <a href="index.html" target="_blank" aria-label="Домой">
+              <svg viewBox="0 0 24 24" width="24" height="24">
+                <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z" fill="currentColor"/>
+              </svg>
+            </a>
+          </li>
+          <li><a href="materials.html" target="_blank">Материалы</a></li>
+          <li><a href="batches.html" target="_blank">Партии</a></li>
+          <li><a href="tapes.html" target="_blank">Ленты</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <!-- ========== Top context row ========== -->
+    <section class="panel" id="recipesContext">
+      <div class="row">
+        <div class="field">
+          <label for="projectSelect">Проект</label>
+          <select id="projectSelect" name="project_id" required>
+            <option value="">— выбрать проект —</option>
+            <!-- options loaded from DB -->
+          </select>
+        </div>
+
+        <div class="field">
+          <button id="newRecipeBtn" type="button">➕ Новый рецепт</button>
+        </div>
+
+        <div class="field" style="margin-left:auto;">
+          <label for="recipeSearch">Поиск</label>
+          <input id="recipeSearch" type="text" placeholder="название / вариант" autocomplete="off" />
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== Main split layout ========== -->
+    <main class="split">
+      <!-- ===== Left: Recipe list ===== -->
+      <section class="panel" id="recipesListPanel">
+        <div class="row">
+          <h2 style="margin:0;">Список рецептов</h2>
+
+          <div class="field" style="margin-left:auto;">
+            <label for="recipeSort">Сортировка</label>
+            <select id="recipeSort">
+              <option value="created_desc">сначала новые</option>
+              <option value="created_asc">сначала старые</option>
+              <option value="name_asc">по названию (A–Z)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table id="recipesTable" class="table">
+            <thead>
+              <tr>
+                <th>Название</th>
+                <th>Вариант</th>
+                <th>Роль</th>
+                <th>Создан</th>
+                <th style="width:140px;">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="recipesTbody">
+              <!-- rows injected by JS -->
+              <!--
+              <tr data-recipe-id="1">
+                <td>...</td><td>A</td><td>катод</td><td>2026-02-08</td>
+                <td>
+                  <button class="editRecipeBtn" type="button">✏️</button>
+                  <button class="dupRecipeBtn" type="button">📄</button>
+                </td>
+              </tr>
+              -->
+            </tbody>
+          </table>
+        </div>
+
+        <p id="recipesEmptyState" class="muted" style="display:none;">
+          Нет рецептов для выбранного проекта.
+        </p>
+      </section>
+
+      <!-- ===== Right: Recipe editor ===== -->
+      <section class="panel" id="recipeEditorPanel">
+        <div class="row">
+          <h2 id="editorTitle" style="margin:0;">Редактор рецепта</h2>
+          <span id="editorModeBadge" class="badge" style="display:none;"></span>
+        </div>
+
+        <!-- Hidden state holder -->
+        <input type="hidden" id="recipeId" value="" />
+
+        <fieldset id="recipeMeta">
+          <legend>Метаданные</legend>
+
+          <div class="row">
+            <div class="field">
+              <label for="recipeName">Название (обязательно)</label>
+              <input id="recipeName" type="text" required placeholder="например, NMC811 slurry" />
+            </div>
+
+            <div class="field">
+              <label for="recipeVariant">Вариант (опционально)</label>
+              <input id="recipeVariant" type="text" placeholder="A / B / low binder / v3" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="recipeRole">Роль</label>
+              <select id="recipeRole" required>
+                <option value="">— выбрать —</option>
+                <option value="cathode">катод</option>
+                <option value="anode">анод</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="recipeNotes">Заметки</label>
+              <textarea id="recipeNotes" rows="3" placeholder="кратко: что изменили и почему"></textarea>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset id="recipeLines">
+          <legend>Состав</legend>
+
+          <div class="table-wrap">
+            <table id="recipeLinesTable" class="table">
+              <thead>
+                <tr>
+                  <th>Материал</th>
+                  <th>Роль</th>
+                  <th>Режим</th>
+                  <th>Цель</th>
+                  <th style="width:60px;">🗑</th>
+                </tr>
+              </thead>
+              <tbody id="recipeLinesTbody">
+                <!-- rows injected by JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <div class="row">
+            <button id="addLineBtn" type="button">+ Добавить компонент</button>
+            <span class="muted" id="linesHint">
+              Материал — из базы. Роль — active/binder/solvent/additive. Режим — масса/объём.
+            </span>
+          </div>
+
+          <!-- Template for JS cloning (kept in DOM for convenience) -->
+          <template id="recipeLineRowTemplate">
+            <tr class="recipe-line-row" data-line-id="">
+              <td>
+                <select class="lineMaterialSelect" required>
+                  <option value="">— материал —</option>
+                  <!-- options loaded from DB -->
+                </select>
+              </td>
+
+              <td>
+                <select class="lineRoleSelect" required>
+                  <option value="">— роль —</option>
+                  <option value="active">active</option>
+                  <option value="binder">binder</option>
+                  <option value="solvent">solvent</option>
+                  <option value="additive">additive</option>
+                </select>
+              </td>
+
+              <td>
+                <select class="lineModeSelect" required>
+                  <option value="mass">масса (g)</option>
+                  <option value="volume">объём (ml)</option>
+                </select>
+              </td>
+
+              <td>
+                <input class="lineTargetInput" type="number" step="0.0001" min="0" required placeholder="0.0000" />
+              </td>
+
+              <td style="text-align:center;">
+                <button class="removeLineBtn" type="button" aria-label="Удалить строку">🗑</button>
+              </td>
+            </tr>
+          </template>
+        </fieldset>
+
+        <section class="row" id="editorActions">
+          <button id="saveRecipeBtn" type="button">Сохранить</button>
+          <button id="cancelEditBtn" type="button">Отмена</button>
+          <span id="saveStatus" class="muted" aria-live="polite"></span>
+        </section>
+
+        <section class="panel subtle" id="editorReadOnlyHint" style="display:none;">
+          <p class="muted" style="margin:0;">
+            Чтобы создать новый рецепт на основе этого, нажмите «📄 Дублировать» в списке слева.
+          </p>
+        </section>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
