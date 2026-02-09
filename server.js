@@ -1082,7 +1082,7 @@ app.post('/api/recipes/:id/duplicate', async (req, res) => {
       SELECT
         project_id,
         role,
-        name,
+        name || ' (copy)',
         variant_label,
         notes,
         $2

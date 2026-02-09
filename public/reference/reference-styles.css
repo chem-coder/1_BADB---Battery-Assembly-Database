@@ -4,6 +4,11 @@ body {
   max-width: 90%;
 }
 
+fieldset legend {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  color: lightskyblue;
+}
+
 .add-user {
   width: 100%;
   font-size: 1rem;
