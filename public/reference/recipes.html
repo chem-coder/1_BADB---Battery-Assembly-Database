@@ -130,52 +130,7 @@
           <span>V, мл</span>
         </div>
 
-        <div id="recipe-lines-rows">
-
-          <div class="recipe-line-row" data-index="0">
-
-            <!-- Material -->
-            <select class="material-select" data-field="material_id">
-              <option value="">Материал</option>
-            </select>
-
-            <!-- Role (default from material, editable) -->
-            <select class="role-select" data-field="recipe_role">
-              <option value="active">Активный материал</option>
-              <option value="binder">Связующее</option>
-              <option value="additive">Проводящая добавка</option>
-              <option value="solvent">Растворитель</option>
-            </select>
-
-            <!-- Measure mode -->
-            <div class="measure-mode">
-              <label>
-                <input type="radio" name="measure_mode_0" value="mass" checked>
-                m, г
-              </label>
-              <label>
-                <input type="radio" name="measure_mode_0" value="volume">
-                V, мл
-              </label>
-            </div>
-
-            <!-- Targets -->
-            <input
-              type="number"
-              step="0.0001"
-              placeholder="m, г"
-              data-field="target_mass_g"
-            >
-
-            <input
-              type="number"
-              step="0.001"
-              placeholder="V, мл"
-              data-field="target_volume_ml"
-              disabled
-            >
-          </div>
-        </div>
+        <div id="recipe-lines-rows"></div>
 
         <button type="button" id="add-recipe-line">Добавить компонент</button>        
       </fieldset>
@@ -232,7 +187,7 @@
 
         hideForm();
         clearRecipeLines();
-
+//        appendRecipeLineRow(0); // keep composition ready for next create
       }
 
       function formDataToObject(form) {
@@ -415,9 +370,7 @@
 
         // copy recipe lines
         fetchRecipeLines(recipe.tape_recipe_id)
-          .then(lines => {
-            renderRecipeLinesFromData(lines);
-          })
+          .then(lines => renderRecipeLinesFromData(lines))
           .catch(() => {
             showStatus('Ошибка загрузки состава рецепта', true);
           });
@@ -490,6 +443,46 @@
         return row;
       }
 
+      async function appendRecipeLineRow(index, preset = null) {
+        const container = document.getElementById('recipe-lines-rows');
+
+        const row = createRecipeLineRow(index);
+        container.appendChild(row);
+
+        // Always populate materials for every newly created row
+        await populateMaterialSelect(row);
+
+        // Optional: apply preset values (used for edit/duplicate)
+        if (preset) {
+          row.querySelector('[data-field="material_id"]').value = preset.material_id || '';
+
+          const roleSelect = row.querySelector('[data-field="recipe_role"]');
+          roleSelect.value = preset.recipe_role || 'active';
+
+          if (preset.lockRole) {
+            roleSelect.dataset.locked = 'true';
+          } else {
+            roleSelect.dataset.locked = 'false';
+          }
+
+          // set measure mode
+          const radio = row.querySelector(`input[type="radio"][value="${preset.measure_mode}"]`);
+          if (radio) radio.checked = true;
+
+          // apply mode toggle AFTER radio state is set
+          wireMeasureMode(row);
+
+          // set targets
+          if (preset.measure_mode === 'mass') {
+            row.querySelector('[data-field="target_mass_g"]').value = preset.target_mass_g ?? '';
+          } else if (preset.measure_mode === 'volume') {
+            row.querySelector('[data-field="target_volume_ml"]').value = preset.target_volume_ml ?? '';
+          }
+        }
+
+        return row;
+      }
+
       function collectRecipeLinesFromDOM() {
         const rows = document.querySelectorAll('.recipe-line-row');
         const lines = [];
@@ -550,6 +543,7 @@
         recipes.forEach(r => {
           const li = document.createElement('li');
           li.className = 'user-row';
+          li.dataset.recipeId = r.tape_recipe_id;
 
           const info = document.createElement('div');
           info.className = 'user-info';
@@ -636,48 +630,25 @@
         });
       }
 
-      function renderRecipeLinesFromData(lines) {
+      async function renderRecipeLinesFromData(lines) {
         if (!Array.isArray(lines)) return;
 
-        const container = document.getElementById('recipe-lines-rows');
-        container.innerHTML = '';
+        clearRecipeLines();
 
-        lines.forEach((line, index) => {
-          const row = createRecipeLineRow(index);
-          container.appendChild(row);
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
 
-          // set values
-          const materialSelect = row.querySelector('[data-field="material_id"]');
-
-          populateMaterialSelect(row).then(() => {
-            materialSelect.value = line.material_id;
+          await appendRecipeLineRow(i, {
+            material_id: line.material_id,
+            recipe_role: line.recipe_role,
+            measure_mode: line.measure_mode,
+            target_mass_g: line.target_mass_g,
+            target_volume_ml: line.target_volume_ml,
+            lockRole: true
           });
-
-          const roleSelect = row.querySelector('[data-field="recipe_role"]');
-          roleSelect.value = line.recipe_role;
-          roleSelect.dataset.locked = 'true';
-
-          // set measure mode
-          const radio = row.querySelector(
-            `input[type="radio"][value="${line.measure_mode}"]`
-          );
-          if (radio) {
-            radio.checked = true;
-          }
-
-          // apply mode toggle AFTER radio state is set
-          wireMeasureMode(row);
-
-          // set targets
-          if (line.measure_mode === 'mass') {
-            row.querySelector('[data-field="target_mass_g"]').value =
-              line.target_mass_g ?? '';
-          } else if (line.measure_mode === 'volume') {
-            row.querySelector('[data-field="target_volume_ml"]').value =
-              line.target_volume_ml ?? '';
-          }
-        });
+        }
       }
+
 
       // -------- Status helper --------
 
@@ -695,20 +666,13 @@
 
       // -------- Events --------
 
-      document.addEventListener('DOMContentLoaded', async () => {
-        const firstRow = document.querySelector('.recipe-line-row');
-        if (firstRow) {
-          await populateMaterialSelect(firstRow);
-        }
-      });
-
-      addRecipeLine.addEventListener ('click', (e) => {
+      addRecipeLine.addEventListener('click', async () => {
         const container = document.getElementById('recipe-lines-rows');
         const index = container.children.length;
-        container.appendChild(createRecipeLineRow(index));
+        await appendRecipeLineRow(index);
       });
 
-      addInput.addEventListener('keydown', (e) => {
+      addInput.addEventListener('keydown', async(e) => {
         if (e.key !== 'Enter') return;
 
         e.preventDefault();
@@ -725,15 +689,18 @@
 
         showForm();
         clearRecipeLines();
+        await appendRecipeLineRow(0);
 
         addInput.value = '';
       });
 
       function validateRequiredFields() {
         let missing = [];
+        const roleSelect = form.elements.role;
 
         projectSelect.classList.remove('required-missing');
         createdBySelect.classList.remove('required-missing');
+        roleSelect.classList.remove('required-missing');
 
         if (!projectSelect.value) {
           missing.push('Проект');
@@ -743,6 +710,11 @@
         if (!createdBySelect.value) {
           missing.push('Кто добавил');
           createdBySelect.classList.add('required-missing');
+        }
+        
+        if (!roleSelect.value) {
+          missing.push('Роль электрода');
+          roleSelect.classList.add('required-missing');
         }
 
         if (missing.length) {
@@ -793,12 +765,47 @@
         return true;
       }
 
+      function recipeNameVersionExists(name, variant, excludeId = null) {
+        const items = document.querySelectorAll('#recipesList .user-row');
+
+        for (const li of items) {
+          const spans = li.querySelectorAll('.user-info span');
+          const existingName = spans[0]?.textContent?.trim() || '';
+          const existingVariant = spans[2]?.textContent?.trim() || '';
+
+          const recipeId = li.dataset.recipeId
+            ? Number(li.dataset.recipeId)
+            : null;
+
+          if (excludeId && recipeId === excludeId) continue;
+
+          if (
+            existingName === name &&
+            (existingVariant || '') === (variant || '')
+          ) {
+            return true;
+          }
+        }
+        return false;
+      }
 
       saveBtn.addEventListener('click', async () => {
         if (!mode) return;
 
         if (!validateRequiredFields()) return;
         if (!validateRecipeLines()) return;
+  
+        const name = nameInput.value.trim();
+        const variant = (form.elements.variant_label.value || '').trim();
+        const excludeId = mode === 'edit' ? currentId : null;
+
+        if (recipeNameVersionExists(name, variant, excludeId)) {
+          alert(
+            'Рецепт с таким названием и версией уже существует. \n' +
+            'Пожалуйста, измените версию рецепта или его название.'
+          );
+          return; // HARD STOP — nothing is saved
+        }
 
         const data = {
           project_id: Number(form.elements.project_id.value),
@@ -812,6 +819,7 @@
 
         try {
           if (mode === 'create') {
+            console.log('POST /api/recipes payload:', data);
             await createRecipe(data);
             showStatus('Рецепт сохранён');
           } else if (mode === 'edit') {
