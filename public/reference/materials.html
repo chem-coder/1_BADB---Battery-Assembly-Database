@@ -32,8 +32,8 @@
         background-color: #f6f7f8;
       }
 
-      .batch-row[data-status="depleted"],
-      .batch-row[data-status="scrap"] {
+      .instance-row[data-status="depleted"],
+      .instance-row[data-status="scrap"] {
         opacity: 0.6;
       }
 
@@ -47,81 +47,32 @@
           <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z" fill="currentColor"/></svg>
       </a>    
     </header>
-    
-    <!-- Enter opens the form and copies the name into it -->
-    <input
-      id="material-name"
-      type="text"
-      name="name"
-      class="add-user"
-      placeholder="+ Добавить материал"
-      autocomplete="off"
-      required
-    />
 
-    <!-- Form hidden by default; shown on create/edit -->
-    <form name="material-form" autocomplete="off" hidden>
+    <form name="material-form" autocomplete="off" >
+      <section class="material-create">
+        <h2>Добавить материал</h2>
 
-      <!-- FormData ignores fields without `name` -->
-
-      <fieldset id="material-meta">
-        <legend>Метаданные</legend>
-
-        <label for="material-created-by">Кто добавил</label>
-        <select id="material-created-by" name="created_by" required>
-          <option value="">— выбрать пользователя —</option>
-        </select>
-        <a href="./users.html" target="_blank" class="ref-link">
-          Управление пользователями
-        </a>
-      </fieldset>
-
-      <fieldset id="material-details">
-        
-        <!-- Name copied here on create / "Enter" -->
         <input
           type="text"
-          name="name"
-          id="material-name-input"
+          id="new-material-name"
+          placeholder="Название материала"
           required
-          hidden
-        />
-        <h2></h2>
+        >
 
-        <label for="supplier">Поставщик</label>
-        <input type="text" name="supplier" id="supplier"><br>
-
-        <label for="brand">Бренд/Марка/Грейд</label>
-        <input type="text" name="brand" id="brand"><br>
-
-        <label for="default_role">Роль по умолчанию</label>
-        <select name="default_role">
-          <option value="active">активный компонент</option>
-          <option value="binder">связующее вещество</option>
+        <select id="new-material-role" required>
+          <option value="">— выбрать роль —</option>
+          <option value="cathode_active">катодный активный материал</option>
+          <option value="anode_active">анодный активный материал</option>
+          <option value="binder">связующее</option>
           <option value="conductive_additive">проводящая добавка</option>
           <option value="solvent">растворитель</option>
           <option value="other">другое</option>
-        </select><br>
+        </select>
 
-        <label for="exclude_from_composition">Исключать из расчёта состава?</label>
-        <select name="exclude_from_composition">
-          <option value="false">Нет</option>
-          <option value="true" default>Да</option>
-        </select><br>
-
-        <label for="material-comments">Комментарии </label><br>
-        <textarea
-          id="material-comments"
-          name="comments"
-          rows="3"
-          cols="50"
-          placeholder="Описание материала, комментарии, примечания и т.п."
-        ></textarea>
-      </fieldset>
-
-      <button id="saveBtn" type="button">Сохранить запись</button>
-      <button id="clearBtn" type="button">Очистить форму</button><br>
-
+        <button id="createMaterialBtn" type="button">
+          Добавить
+        </button>
+      </section>
     </form>
     
     <div class="status-feedback" aria-live="polite"></div>
@@ -131,52 +82,19 @@
 
       // -------- State and helpers --------
       
-      const addInput = document.getElementById('material-name');
-      const nameInput = document.getElementById('material-name-input');
-      const form = document.forms['material-form'];
-      const title = form.querySelector('h2');
-      const saveBtn = document.getElementById('saveBtn');
-      const clearBtn = document.getElementById('clearBtn');
-      const createdBySelect = document.getElementById('material-created-by');
+      const newNameInput = document.getElementById('new-material-name');
+      const newRoleSelect = document.getElementById('new-material-role');
+      const createMaterialBtn = document.getElementById('createMaterialBtn');
 
       const materialsList = document.getElementById('materialsList');
-
-      const BATCH_STATUS_LABELS_RU = {
-        available: 'доступна',
-        depleted: 'израсходована',
-        scrap: 'списана'
-      };
-
-      let mode = null;       // 'create' | 'edit'
-      let currentId = null;
-
-      function showForm() {
-        form.hidden = false;
-        addInput.disabled = true;
-      }
-
-      function hideForm() {
-        form.hidden = true;
-        addInput.disabled = false;
-      }
-
-      function resetForm() {
-        form.reset();
-        title.textContent = '';
-        mode = null;
-        currentId = null;
-        hideForm();
-      }
-
-      function formDataToObject(form) {
-        return Object.fromEntries(new FormData(form));
-      }
+      let editingMaterialId = null;
 
       
-      // -------- API helpers --------
+      // -------- API --------
 
       async function fetchMaterials() {
         const res = await fetch('/api/materials');
+        if (!res.ok) throw new Error('Ошибка загрузки материалов');
         return res.json();
       }
 
@@ -186,9 +104,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
         });
+
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Ошибка сохранения');
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка создания');
         }
 
         return res.json();
@@ -210,24 +129,24 @@
       }
 
       async function deleteMaterial(id) {
-        const res = await fetch(`/api/materials/${id}`, { 
-          method: 'DELETE' 
+        const res = await fetch(`/api/materials/${id}`, {
+          method: 'DELETE'
         });
-        
+
         if (!res.ok) {
-          const err = await res.json();
+          const err = await res.json().catch(() => ({}));
           throw new Error(err.error || 'Ошибка удаления');
         }
       }
 
-      async function fetchBatches(materialId) {
-        const res = await fetch(`/api/materials/${materialId}/batches`);
-        if (!res.ok) throw new Error('Ошибка загрузки партий');
+      async function fetchInstances(materialId) {
+        const res = await fetch(`/api/materials/${materialId}/instances`);
+        if (!res.ok) throw new Error('Ошибка загрузки экземпляров');
         return res.json();
       }
 
-      async function createBatch(materialId, data) {
-        const res = await fetch(`/api/materials/${materialId}/batches`, {
+      async function createInstance(materialId, data) {
+        const res = await fetch(`/api/materials/${materialId}/instances`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
@@ -235,592 +154,313 @@
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || 'Ошибка сохранения партии');
+          throw new Error(err.error || 'Ошибка создания экземпляра');
         }
 
         return res.json();
       }
 
-      async function updateBatchStatus(batchId, status) {
-        const res = await fetch(`/api/material-batches/${batchId}/status`, {
+      async function updateInstance(id, data) {
+        const res = await fetch(`/api/material-instances/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status })
+          body: JSON.stringify(data)
         });
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || 'Ошибка обновления статуса');
+          throw new Error(err.error || 'Ошибка обновления экземпляра');
         }
 
         return res.json();
       }
 
-      async function deleteBatch(batchId) {
-        const res = await fetch(`/api/material-batches/${batchId}`, {
+      async function deleteInstance(id) {
+        const res = await fetch(`/api/material-instances/${id}`, {
           method: 'DELETE'
         });
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || 'Ошибка удаления партии');
+          throw new Error(err.error || 'Ошибка удаления экземпляра');
         }
       }
-      
-      
-      // -------- Rendering --------    
+
+      createMaterialBtn.addEventListener('click', async () => {
+        const name = newNameInput.value.trim();
+        const role = newRoleSelect.value;
+
+        if (!name) {
+          alert('Название обязательно');
+          return;
+        }
+
+        if (!role) {
+          alert('Роль обязательна');
+          return;
+        }
+
+        try {
+          if (editingMaterialId) {
+            await updateMaterial(editingMaterialId, { name, role });
+            editingMaterialId = null;
+            createMaterialBtn.textContent = 'Добавить';
+          } else {
+            await createMaterial({ name, role });
+          }
+
+          newNameInput.value = '';
+          newRoleSelect.value = '';
+          loadMaterials();
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+
+      function buildInstanceRow(inst, materialId) {
+        const row = document.createElement('li');
+        row.className = 'instance-row';
+
+        const supplier = document.createElement('span');
+        supplier.textContent = inst.supplier || '';
+
+        const brand = document.createElement('span');
+        brand.textContent = inst.brand || '';
+
+        const batch = document.createElement('span');
+        batch.textContent = inst.batch || '';
+
+        row.appendChild(supplier);
+        row.appendChild(brand);
+        row.appendChild(batch);
+
+        if (inst.file_path) {
+          const link = document.createElement('a');
+          link.href = inst.file_path;
+          link.textContent = '📎 файл';
+          link.target = '_blank';
+          link.rel = 'noopener';
+          row.appendChild(link);
+        }
+
+        const actions = document.createElement('span');
+        actions.className = 'actions';
+
+        const editBtn = document.createElement('button');
+        editBtn.textContent = '✏️';
+        editBtn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+
+          try {
+            const updated = await updateInstance(inst.material_instance_id, {
+              supplier: supplierVal,
+              brand: brandVal,
+              batch: batchVal,
+              notes: inst.notes,
+              file_path: inst.file_path
+            });
+
+            row.replaceWith(buildInstanceRow(updated, materialId));
+          } catch (err) {
+            alert(err.message);
+          }
+        };
+
+        const duplicateBtn = document.createElement('button');
+        duplicateBtn.textContent = '📄';
+        duplicateBtn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+
+          try {
+            const copy = await createInstance(materialId, {
+              supplier: inst.supplier,
+              brand: inst.brand,
+              batch: inst.batch,
+              notes: inst.notes,
+              file_path: inst.file_path
+            });
+
+            row.parentElement.prepend(buildInstanceRow(copy, materialId));
+          } catch (err) {
+            alert(err.message);
+          }
+        };
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = '🗑';
+        deleteBtn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (!confirm('Удалить экземпляр?')) return;
+
+          try {
+            await deleteInstance(inst.material_instance_id);
+            row.remove();
+          } catch (err) {
+            alert(err.message);
+          }
+        };
+
+        actions.appendChild(editBtn);
+        actions.appendChild(duplicateBtn);
+        actions.appendChild(deleteBtn);
+
+        row.appendChild(actions);
+
+        return row;
+      }
 
       function renderMaterials(materials) {
         materialsList.innerHTML = '';
 
         materials.forEach(m => {
           const li = document.createElement('li');
-
           const details = document.createElement('details');
-
-          /* ---------- SUMMARY (material row) ---------- */ 
-
           const summary = document.createElement('summary');
-          summary.className = 'user-row';
 
-          summary.addEventListener('click', (e) => {
-            if (e.target.closest('button')) {
-              e.preventDefault();
-            }
-          });
-
-          const info = document.createElement('div');
-          info.className = 'user-info';
+          const info = document.createElement('span');
+          info.className = 'material-summary-info';
 
           const nameSpan = document.createElement('span');
           nameSpan.textContent = m.name;
+          nameSpan.style="display:inline-block; width:12vw;"
 
-          const supplier = document.createElement('span');
-          supplier.textContent = m.supplier || '';
-
-          const brandSpan = document.createElement('span');
-          brandSpan.textContent = m.brand || '';
-
-          const ROLE_LABELS_RU = {
-            active: 'активный компонент',
-            binder: 'связующее вещество',
+          const roleSpan = document.createElement('span');
+          const roleMap = {
+            cathode_active: 'катодный активный материал',
+            anode_active: 'анодный активный материал',
+            binder: 'связующее',
             conductive_additive: 'проводящая добавка',
             solvent: 'растворитель',
             other: 'другое'
           };
-
-          const roleSpan = document.createElement('span');
-          roleSpan.textContent = ROLE_LABELS_RU[m.default_role] || m.default_role;
+          roleSpan.textContent = roleMap[m.role] || m.role;
+          roleSpan.style="display:inline-block; width:25vw;"
 
           info.appendChild(nameSpan);
-          info.appendChild(supplier);
-          info.appendChild(brandSpan);
           info.appendChild(roleSpan);
 
-          const actions = document.createElement('div');
+          const actions = document.createElement('span');
           actions.className = 'actions';
 
           const editBtn = document.createElement('button');
           editBtn.textContent = '✏️';
-          editBtn.title = 'Редактировать';
           editBtn.onclick = (e) => {
-            e.preventDefault(); // prevent details toggle
+            e.preventDefault();
             e.stopPropagation();
-  
-            mode = 'edit';
-            currentId = m.material_id;
-            showForm();
 
-            // title + name
-            title.textContent = m.name;
-            nameInput.value = m.name;
-
-            // Populate form with DB values (apply defaults for NULLs)
-            form.elements['created_by'].value = m.created_by || '';
-            form.elements['supplier'].value = m.supplier || '';
-            form.elements['brand'].value = m.brand || '';
-            form.elements['default_role'].value = m.default_role || 'active';
-            form.elements['exclude_from_composition'].value = m.exclude_from_composition ? 'true' : 'false';
-            form.elements['comments'].value = m.comments || '';
-
-            // user (if present in list)
-            if (m.created_by) {
-              createdBySelect.value = m.created_by;
-            }
+            newNameInput.value = m.name;
+            newRoleSelect.value = m.role;
+            editingMaterialId = m.material_id;
+            createMaterialBtn.textContent = 'Сохранить';
+            newNameInput.focus();
           };
 
-          const duplicateBtn = document.createElement('button');
-          duplicateBtn.textContent = '📄';
-          duplicateBtn.title = 'Дублировать';
-          duplicateBtn.onclick = (e) => {
-            e.preventDefault(); // prevent details toggle
-            e.stopPropagation();
-            duplicateMaterial(m);
-          };
-          
+
           const deleteBtn = document.createElement('button');
           deleteBtn.textContent = '🗑';
           deleteBtn.onclick = async (e) => {
-            e.preventDefault(); // prevent details toggle
+            e.preventDefault();
             e.stopPropagation();
 
             if (!confirm(`Удалить материал "${m.name}"?`)) return;
-            await deleteMaterial(m.material_id);
-            loadMaterials();
+
+            try {
+              await deleteMaterial(m.material_id);
+              loadMaterials();
+            } catch (err) {
+              alert(err.message);
+            }
           };
 
           actions.appendChild(editBtn);
-          actions.appendChild(duplicateBtn);
           actions.appendChild(deleteBtn);
 
           summary.appendChild(info);
           summary.appendChild(actions);
 
-          /* ---------- DETAILS BODY (future batches) ---------- */
+          const body = document.createElement('div');
+          const instanceList = document.createElement('ul');
 
-          const detailsBody = document.createElement('div');
-          detailsBody.className = 'material-details';
+          const addBtn = document.createElement('button');
+          addBtn.textContent = '+ Добавить экземпляр';
+          addBtn.type = 'button';
 
-          // ---- batches list ----
-          const batchList = document.createElement('ul');
-          batchList.className = 'batch-list';
+          const form = document.createElement('form');
+          form.hidden = true;
 
-          // ---- add batch button ----
-          const addBatchBtn = document.createElement('button');
-          addBatchBtn.type = 'button';
-          addBatchBtn.className = 'add-batch-btn';
-          addBatchBtn.textContent = '+ Добавить партию';
-
-          // ---- batch form (hidden for now) ----
-          const batchForm = document.createElement('form');
-          batchForm.className = 'batch-form';
-          batchForm.hidden = true;
-          batchForm.innerHTML = `
-            <input type="text" name="batch_code" placeholder="Код партии" required>
-            <input type="text" name="supplier_lot" placeholder="Партия поставщика">
-            <textarea name="comments" placeholder="Комментарии"></textarea>
-            <input
-              type="url"
-              name="passport_file"
-              placeholder="Ссылка на паспорт партии (необязательно)"
-            >
-
-            <div class="form-actions">
-              <button type="button" class="save-batch">Сохранить</button>
-              <button type="button" class="clear-batch">Очистить</button>
-            </div>
+          form.innerHTML = `
+            <input type="text" name="supplier" placeholder="Поставщик">
+            <input type="text" name="brand" placeholder="Бренд">
+            <input type="text" name="batch" placeholder="Номер партии">
+            <input type="url" name="file_path" placeholder="Ссылка на файл">
+            <button type="button" class="save">Сохранить</button>
+            <button type="button" class="cancel">Отмена</button>
           `;
 
-          // ---- + Add Batch button behavior ----
-          addBatchBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+          addBtn.onclick = () => {
+            form.hidden = false;
+            addBtn.hidden = true;
+          };
 
-            batchForm.hidden = false;
-            addBatchBtn.hidden = true;
-          });
+          form.addEventListener('click', async (e) => {
+            if (e.target.classList.contains('cancel')) {
+              form.reset();
+              form.hidden = true;
+              addBtn.hidden = false;
+              return;
+            }
 
-          // ---- Clear / hide batch form ----
-          batchForm.addEventListener('click', (e) => {
-            if (!e.target.classList.contains('clear-batch')) return;
+            if (!e.target.classList.contains('save')) return;
 
-            e.preventDefault();
-            batchForm.reset?.();   // safe even if empty
-            batchForm.hidden = true;
-            addBatchBtn.hidden = false;
-          });
+            const data = Object.fromEntries(new FormData(form).entries());
 
-          // ---- Save batch ----
-          batchForm.addEventListener('click', async (e) => {
-            if (!e.target.classList.contains('save-batch')) return;
-
-            e.preventDefault();
-
-            const formData = new FormData(batchForm);
-            const payload = Object.fromEntries(formData.entries());
-
-            if (!payload.batch_code || !payload.batch_code.trim()) {
-              alert('Код партии обязателен');
+            if (!data.supplier && !data.brand && !data.batch) {
+              alert('Заполните хотя бы одно поле');
               return;
             }
 
             try {
-              const newBatch = await createBatch(m.material_id, payload);
-
-              // remove "Партий пока нет"
-              const muted = batchList.querySelector('.muted');
-              if (muted) muted.remove();
-
-              // prepend new batch
-              const row = document.createElement('li');
-              row.className = 'batch-row';
-              row.dataset.status = newBatch.status;
-
-              const codeSpan = document.createElement('span');
-              codeSpan.textContent = newBatch.batch_code;
-
-              const lotSpan = document.createElement('span');
-              lotSpan.textContent = newBatch.supplier_lot || '';
-
-              const statusSpan = document.createElement('span');
-              statusSpan.textContent = BATCH_STATUS_LABELS_RU[newBatch.status] || newBatch.status;
-
-              row.appendChild(codeSpan);
-              row.appendChild(lotSpan);
-              row.appendChild(statusSpan);
-
-              // 📎 passport link (POST-created row)
-              if (newBatch.passport_file) {
-                const link = document.createElement('a');
-                link.href = newBatch.passport_file;
-                link.textContent = '📎 паспорт';
-                link.target = '_blank';
-                link.rel = 'noopener';
-                row.appendChild(link);
-              }
-
-              // ✅ INSERTED HERE: status change button (POST-created rows)
-              if (newBatch.status === 'available') {
-                const writeOffBtn = document.createElement('button');
-                writeOffBtn.type = 'button';
-                writeOffBtn.textContent = 'Списать';
-
-                writeOffBtn.onclick = async (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-
-                  const ok = confirm(
-                      'Списать партию?\nЭто действие нельзя отменить.'
-                    );
-                  if (!ok) return;
-
-                  try {
-                    const updated = await updateBatchStatus(newBatch.material_batch_id, 'depleted');
-                    row.dataset.status = updated.status;
-                    statusSpan.textContent = BATCH_STATUS_LABELS_RU[updated.status] || updated.status;
-                    writeOffBtn.remove();
-                  } catch (err) {
-                    alert(err.message);
-                  }
-                };
-
-                row.appendChild(writeOffBtn);
-
-                // 🗑 Delete batch (POST-created)
-                const deleteBtn = document.createElement('button');
-                deleteBtn.textContent = '🗑';
-                deleteBtn.title = 'Удалить партию';
-
-                deleteBtn.onclick = async (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-
-                  const ok = confirm(
-                    'Удалить партию?\nЭто действие нельзя отменить.'
-                  );
-                  if (!ok) return;
-
-                  try {
-                    await deleteBatch(newBatch.material_batch_id);
-                    row.remove();
-                  } catch (err) {
-                    alert(err.message);
-                  }
-                };
-
-                row.appendChild(deleteBtn);
-              }
-
-              batchList.prepend(row);
-              
-              // reset UI
-              batchForm.reset();
-              batchForm.hidden = true;
-              addBatchBtn.hidden = false;
+              const inst = await createInstance(m.material_id, data);
+              instanceList.prepend(buildInstanceRow(inst, m.material_id));
+              form.reset();
+              form.hidden = true;
+              addBtn.hidden = false;
             } catch (err) {
               alert(err.message);
             }
           });
-          
-          // assemble
-          detailsBody.appendChild(batchList);
-          detailsBody.appendChild(addBatchBtn);
-          detailsBody.appendChild(batchForm);
-
-          let batchesLoaded = false;
 
           details.addEventListener('toggle', async () => {
-            if (!details.open || batchesLoaded) return;
+            if (!details.open) return;
 
-            try {
-              const batches = await fetchBatches(m.material_id);
-              batchList.innerHTML = '';
+            const instances = await fetchInstances(m.material_id);
+            instanceList.innerHTML = '';
 
-              if (batches.length === 0) {
-                const empty = document.createElement('li');
-                empty.textContent = 'Партий пока нет';
-                empty.className = 'muted';
-                batchList.appendChild(empty);
-              } else {
-                batches.forEach(b => {
-                  const row = document.createElement('li');
-                  row.className = 'batch-row';
-                  row.dataset.status = b.status;
-
-                  const codeSpan = document.createElement('span');
-                  codeSpan.textContent = b.batch_code;
-
-                  const lotSpan = document.createElement('span');
-                  lotSpan.textContent = b.supplier_lot || '';
-
-                  const statusSpan = document.createElement('span');
-                  statusSpan.textContent = BATCH_STATUS_LABELS_RU[b.status] || b.status;
-
-                  const dateSpan = document.createElement('span');
-                  dateSpan.textContent = b.received_at ? b.received_at.slice(0, 10) : '';
-
-                  row.appendChild(codeSpan);
-                  row.appendChild(lotSpan);
-                  row.appendChild(statusSpan);
-                  row.appendChild(dateSpan);
-
-                  if (b.passport_file) {
-                    const link = document.createElement('a');
-                    link.href = b.passport_file;
-                    link.textContent = '📎 паспорт';
-                    link.target = '_blank';
-                    link.rel = 'noopener';
-
-                    row.appendChild(link);
-                  }
-
-                  // ✅ INSERTED HERE: status change button (GET rows)
-                  if (b.status === 'available') {
-                    const writeOffBtn = document.createElement('button');
-                    writeOffBtn.type = 'button';
-                    writeOffBtn.textContent = 'Списать';
-
-                    writeOffBtn.onclick = async (e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-
-                      const ok = confirm(
-                        'Списать партию?\nЭто действие нельзя отменить.'
-                      );
-                      if (!ok) return;
-
-                      try {
-                        const updated = await updateBatchStatus(b.material_batch_id, 'depleted');
-                        row.dataset.status = updated.status;
-                        statusSpan.textContent = BATCH_STATUS_LABELS_RU[updated.status] || updated.status;
-                        writeOffBtn.remove();
-                      } catch (err) {
-                        alert(err.message);
-                      }
-                    };
-
-                    const deleteBtn = document.createElement('button');
-                    deleteBtn.textContent = '🗑';
-                    deleteBtn.title = 'Удалить партию';
-
-                    deleteBtn.onclick = async (e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-
-                      const ok = confirm(
-                        'Удалить партию?\nЭто действие нельзя отменить.'
-                      );
-                      if (!ok) return;
-
-                      try {
-                        await deleteBatch(b.material_batch_id);
-                        row.remove();
-                      } catch (err) {
-                        alert(err.message);
-                      }
-                    };
-
-                    row.appendChild(writeOffBtn);
-                    row.appendChild(deleteBtn);
-                  }
-
-                  batchList.appendChild(row);
-                });
-              }
-
-              batchesLoaded = true;
-            } catch (err) {
-              batchList.innerHTML = '<li class="error">Ошибка загрузки партий</li>';
+            if (!instances.length) {
+              const empty = document.createElement('li');
+              empty.textContent = 'Экземпляров пока нет';
+              instanceList.appendChild(empty);
+            } else {
+              instances.forEach(inst => {
+                instanceList.appendChild(buildInstanceRow(inst, m.material_id));
+              });
             }
           });
-          
 
-          /* ---------- ASSEMBLY ---------- */
+          body.appendChild(instanceList);
+          body.appendChild(addBtn);
+          body.appendChild(form);
 
           details.appendChild(summary);
-          details.appendChild(detailsBody);
-
+          details.appendChild(body);
           li.appendChild(details);
           materialsList.appendChild(li);
         });
       }
-
-      function duplicateMaterial(mat) {
-        mode = 'create';
-        currentId = null;
-
-        showForm();
-
-        // title + name
-        const copyName = mat.name + ' (копия)';
-        title.textContent = copyName;
-        nameInput.value = copyName;
-
-        // Populate form with DB values (apply defaults for NULLs)
-        form.elements['created_by'].value = mat.created_by || '';
-        form.elements['supplier'].value = mat.supplier || '';
-        form.elements['brand'].value = mat.brand || '';
-        form.elements['default_role'].value = mat.default_role || 'active';
-        form.elements['exclude_from_composition'].value = mat.exclude_from_composition ? 'true' : 'false';
-        form.elements['comments'].value = mat.comments || '';
-
-        // IMPORTANT: reset things that must be new
-        createdBySelect.value = '';
-      }  
-
-
-      // -------- Status helper --------
-
-      const statusBox = document.querySelector('.status-feedback');
-
-      function showStatus(msg, isError = false) {
-        statusBox.textContent = msg;
-        statusBox.style.color = isError ? '#b00020' : 'darkcyan';
-
-        setTimeout(() => {
-          statusBox.textContent = '';
-        }, 1000);
-      }
-
-
-      // -------- Reference dropdowns --------
-
-      async function loadUsers() {
-        const prevCreated = createdBySelect.value;
-
-        const res = await fetch('/api/users');
-        const users = await res.json();
-
-        createdBySelect.innerHTML = '<option value="">— выбрать пользователя —</option>';
-
-        users.filter(u => u.active).forEach(u => {
-          const o1 = new Option(u.name, u.user_id);
-          createdBySelect.add(o1);
-        });
-
-        createdBySelect.value = prevCreated;    
-      }
-
-      // Refresh reference dropdowns on focus
-      createdBySelect.addEventListener('focus', loadUsers);    
-
-
-      // -------- Events --------
-
-      addInput.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter') return;
-
-        e.preventDefault();
-
-        if (!form.hidden) return;   // prevent double-create
-
-        const name = addInput.value.trim();
-        if (!name) return;
-
-        mode = 'create';
-        currentId = null;
-
-        title.textContent = name;
-        nameInput.value = name;
-
-        showForm();
-
-        addInput.value = '';
-      });
-
-      function validateRequiredFields() {
-          let missing = [];
-
-          // clear previous highlights
-          createdBySelect.classList.remove('required-missing');
-
-          if (!createdBySelect.value) {
-            missing.push('Кто добавил');
-            createdBySelect.classList.add('required-missing');
-          }
-
-          if (missing.length) {
-            showStatus(
-              'Заполните обязательные поля: ' + missing.join(', '),
-              true
-            );
-            return false;
-          }
-
-          return true;
-        }
-
-      saveBtn.addEventListener('click', async () => {
-        if (!mode) return;
-
-        if (!validateRequiredFields()) return;
-
-        const data = formDataToObject(form);
-        data.name = title.textContent;
-
-        try {
-            if (mode === 'create') {
-              await createMaterial(data);
-              showStatus('Материал сохранён');
-            }
-
-            if (mode === 'edit') {
-              await updateMaterial(currentId, data);
-              showStatus('Изменения сохранены');
-            }
-
-            resetForm();
-            loadMaterials(); //refresh list
-          } catch (err) {
-            showStatus(err.message, true)
-          }
-      });
-
-      clearBtn.addEventListener('click', resetForm);
-
-      // ------ name: editable ------
-      title.addEventListener('click', () => {
-        nameInput.hidden = false;
-        title.hidden = true;
-        nameInput.focus();
-      });
-
-      nameInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          nameInput.blur();
-        }
-      });
-
-      nameInput.addEventListener('blur', () => {
-        const val = nameInput.value.trim();
-        if (!val) return;
-
-        title.textContent = val;
-        title.hidden = false;
-        nameInput.hidden = true;
-      });
-
 
       // -------- Init --------
 
@@ -829,8 +469,7 @@
         renderMaterials(materials);
       }
 
-      hideForm();
-      loadUsers();
+
       loadMaterials();
 
     </script>

@@ -99,11 +99,6 @@
       .measure-mode input {
         margin: 0;
       }
-
-      .line-notes {
-        width: 100%;
-        white-space: normal;
-      }
       
     </style>
   </head>
@@ -174,7 +169,7 @@
         </select>
 
         <label for="recipe-role">Роль электрода</label>
-        <select id="recipe-role" name="role" required>
+        <select id="recipe-role" name="role" required disabled>
           <option value="">— выбрать —</option>
           <option value="cathode">катод</option>
           <option value="anode">анод</option>
@@ -194,20 +189,20 @@
           <table class="recipe-table">
             <thead>
               <tr>
-                <th>Компонент</th>
-                <th>Марка</th>
-                <th>В %</th>
-                <th>% мас</th> <!-- % dry slurry (blank) -->
-                <th>Режим</th>
-                <th>m, г</th>
-                <th>V, мл</th>
-                <th>Удалить</th>
-                <th>Прим.</th>
+                <th>Функциональная роль</th>
+                <th>Материал</th>
+                <th>% в пасте</th>
+                <th>Заметки</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="recipe-lines-rows"></tbody>
           </table>
-        <button type="button" id="add-recipe-line">+ Добавить компонент</button>        
+        <button type="button" id="add-recipe-line">+ Добавить компонент</button>
+        <br>
+        <a href="materials.html" target="_blank" class="ref-link">
+          Управление материалами
+        </a>      
       </fieldset>
 
       <button id="saveBtn" type="button">Сохранить запись</button>
@@ -235,6 +230,7 @@
 
       let mode = null;       // 'create' | 'edit'
       let currentId = null;
+      let cachedMaterials = null;
       let recipeLines = [];
 
       function showForm() {
@@ -283,8 +279,11 @@
       }
 
       async function fetchMaterials() {
+        if (cachedMaterials) return cachedMaterials;
+
         const res = await fetch('/api/materials');
-        return res.json();
+        cachedMaterials = await res.json();
+        return cachedMaterials;
       }
 
       async function loadRecipes() {
@@ -393,100 +392,46 @@
         const select = row.querySelector('.material-select');
         if (!select) return;
 
+        const roleSelect = row.querySelector('.role-select');
+        const recipeRole = roleSelect.value;
+        const recipeHeaderRole = form.elements.role.value; // cathode / anode
+
         const materials = await fetchMaterials();
 
-        select.innerHTML = '<option value="">Материал</option>';
+        select.innerHTML = '<option value="">— выбрать —</option>';
 
         materials.forEach(m => {
+          let allowed = false;
+
+          if (recipeRole === 'binder' && m.role === 'binder') {
+            allowed = true;
+          }
+
+          if (recipeRole === 'additive' && m.role === 'conductive_additive') {
+            allowed = true;
+          }
+
+          if (recipeRole === 'solvent' && m.role === 'solvent') {
+            allowed = true;
+          }
+
+          if (
+            (recipeRole === 'cathode_active' && m.role === 'cathode_active') ||
+            (recipeRole === 'anode_active' && m.role === 'anode_active')
+          ) {
+            allowed = true;
+          }
+
+          if (!allowed) return;
+
           const opt = document.createElement('option');
           opt.value = m.material_id;
           opt.textContent = m.name;
-          opt.dataset.brand = m.brand || '';
-          opt.dataset.defaultRole = m.default_role || '';
-          opt.dataset.excludeDefault = m.exclude_from_composition ? 'true' : 'false';
           select.appendChild(opt);
         });
-
-        select.addEventListener('change', () => {
-          const brandSpan = row.querySelector('.brand-cell');
-          if (brandSpan) brandSpan.textContent = chosen?.dataset?.brand || '';
-
-          const roleSelect = row.querySelector('.role-select');
-          if (roleSelect?.dataset.locked === 'true') return;
-
-          const chosen = select.selectedOptions[0];
-          if (!chosen || !chosen.dataset.defaultRole) return;
-
-          const includeSel = row.querySelector('[data-field="include_in_pct"]');
-
-          if (includeSel && includeSel.value === '') {
-            includeSel.value =
-              chosen.dataset.excludeDefault === 'true' ? 'no' : 'yes';
-          }
-
-          const mapRole = (r) => {
-            if (r === 'conductive_additive') return 'additive';
-            return r;
-          };
-
-          roleSelect.value = mapRole(chosen.dataset.defaultRole);
-          recalcDryPercent();
-        });
       }
-
 
       // -------- Other helpers --------
-
-      function recalcDryPercent() {
-        const rows = document.querySelectorAll('.recipe-line-row');
-
-        let totalMass = 0;
-
-        rows.forEach(row => {
-          const mode = row.querySelector('input[type="radio"]:checked')?.value;
-          if (mode !== 'mass') return;
-
-          const m = Number(row.querySelector('[data-field="target_mass_g"]')?.value);
-          if (!m) return;
-
-          const includeSel = row.querySelector('[data-field="include_in_pct"]');
-          let include;
-
-          if (includeSel?.value === 'yes') include = true;
-          else if (includeSel?.value === 'no') include = false;
-          else {
-            const opt = row.querySelector('.material-select option:checked');
-            include = opt?.dataset?.excludeDefault !== 'true';
-          }
-
-          if (include) totalMass += m;
-        });
-
-        rows.forEach(row => {
-          const out = row.querySelector('[data-field="dry_percent"]');
-          if (!out) return;
-
-          const mode = row.querySelector('input[type="radio"]:checked')?.value;
-          const m = Number(row.querySelector('[data-field="target_mass_g"]')?.value);
-
-          if (mode !== 'mass' || !m || totalMass <= 0) {
-            out.value = '';
-            return;
-          }
-
-          const includeSel = row.querySelector('[data-field="include_in_pct"]');
-          let include;
-
-          if (includeSel?.value === 'yes') include = true;
-          else if (includeSel?.value === 'no') include = false;
-          else {
-            const opt = row.querySelector('.material-select option:checked');
-            include = opt?.dataset?.excludeDefault !== 'true';
-          }
-
-          out.value = include ? ((m / totalMass) * 100).toFixed(2) : '';
-        });
-      }
 
       function duplicateRecipeUI(recipe) {
         mode = 'create';
@@ -514,54 +459,17 @@
           });
       }
 
-      function wireMeasureMode(row) {
-        const radios = row.querySelectorAll('input[type="radio"]');
-        const massInput = row.querySelector('[data-field="target_mass_g"]');
-        const volInput  = row.querySelector('[data-field="target_volume_ml"]');
-
-        function update() {
-          const mode =
-            row.querySelector('input[type="radio"]:checked')?.value;
-
-          const includeSel =
-            row.querySelector('[data-field="include_in_pct"]');
-
-          if (mode === 'mass') {
-            massInput.disabled = false;
-            volInput.disabled = true;
-            volInput.value = '';
-
-            if (includeSel) includeSel.disabled = false;
-          }
-
-          if (mode === 'volume') {
-            volInput.disabled = false;
-            massInput.disabled = true;
-            massInput.value = '';
-
-            if (includeSel) {
-              includeSel.value = 'no';
-              includeSel.disabled = true;
-            }
-          }
-
-          recalcDryPercent();
-        }
-
-        radios.forEach(r => r.addEventListener('change', update));
-        update(); // initial state
-      }
-
       function createRecipeLineRow(index) {
         const row = document.createElement('tr');
         row.className = 'recipe-line-row';
-
         row.dataset.index = index;
 
         row.innerHTML = `
           <td>
-            <select class="role-select" data-field="recipe_role">
-              <option value="active">Активный</option>
+            <select class="role-select" data-field="recipe_role" required>
+              <option value="">— выбрать —</option>
+              <option value="cathode_active">катодный активный материал</option>
+              <option value="anode_active">анодный активный материал</option>
               <option value="binder">Связующее</option>
               <option value="additive">Добавка</option>
               <option value="solvent">Растворитель</option>
@@ -569,16 +477,8 @@
           </td>
 
           <td>
-            <select class="material-select" data-field="material_id">
-              <option value="">Материал</option>
-            </select>
-          </td>
-
-          <td>
-            <select class="include-select" data-field="include_in_pct">
-              <option value=""></option>
-              <option value="yes">Да</option>
-              <option value="no">Нет</option>
+            <select class="material-select" data-field="material_id" required>
+              <option value="">— выбрать —</option>
             </select>
           </td>
 
@@ -586,54 +486,27 @@
             <input
               type="number"
               step="0.01"
-              data-field="dry_percent"
-              class="dry-percent"
-              disabled
+              min="0"
+              max="100"
+              data-field="slurry_percent"
             >
-          </td> <!-- % dry slurry, intentionally empty -->
-
-          <td>
-            <div class="measure-mode">
-              <label>
-                <input type="radio" name="measure_mode_${index}" value="mass" checked>
-                m
-              </label>
-              <label>
-                <input type="radio" name="measure_mode_${index}" value="volume">
-                V
-              </label>
-            </div>
           </td>
 
           <td>
-            <input type="number" step="0.0001" data-field="target_mass_g">
-          </td>
-
-          <td>
-            <input type="number" step="0.001" data-field="target_volume_ml" disabled>
+            <input
+              type="text"
+              data-field="line_notes"
+              placeholder="Комментарий"
+            >
           </td>
 
           <td>
             <button type="button" class="delete-line">🗑</button>
           </td>
-
-          <td>
-            <input type="text" data-field="line_notes">
-          </td>
         `;
-        
-        // wire behaviors
-        wireMeasureMode(row);
-
-        row.querySelector('[data-field="target_mass_g"]')
-          ?.addEventListener('input', recalcDryPercent);
-
-        row.querySelector('[data-field="include_in_pct"]')
-          ?.addEventListener('change', recalcDryPercent);
 
         row.querySelector('.delete-line').addEventListener('click', () => {
           row.remove();
-          recalcDryPercent();
         });
 
         return row;
@@ -645,52 +518,43 @@
         const row = createRecipeLineRow(index);
         container.appendChild(row);
 
-        // Always populate materials for every newly created row
-        await populateMaterialSelect(row);
+        const roleSelect = row.querySelector('[data-field="recipe_role"]');
 
-        // Optional: apply preset values (used for edit/duplicate)
+        // Apply preset role first
         if (preset) {
-          row.querySelector('[data-field="material_id"]').value = preset.material_id || '';
-          row.querySelector('[data-field="line_notes"]').value = preset.line_notes ?? '';
-
-          const roleSelect = row.querySelector('[data-field="recipe_role"]');
-          roleSelect.value = preset.recipe_role || 'active';
-
-          const inc = row.querySelector('[data-field="include_in_pct"]');
-          if (inc) inc.value = preset.include_in_pct || '';
-
-          if (preset.lockRole) {
-            roleSelect.dataset.locked = 'true';
-          } else {
-            roleSelect.dataset.locked = 'false';
-          }
-
-          // set measure mode
-          const radio = row.querySelector(`input[type="radio"][value="${preset.measure_mode}"]`);
-          if (radio) radio.checked = true;
-
-          // apply mode toggle AFTER radio state is set
-          wireMeasureMode(row);
-
-          // set targets
-          if (preset.measure_mode === 'mass') {
-            row.querySelector('[data-field="target_mass_g"]').value = preset.target_mass_g ?? '';
-          } else if (preset.measure_mode === 'volume') {
-            row.querySelector('[data-field="target_volume_ml"]').value = preset.target_volume_ml ?? '';
-          }
-          const includeSel = row.querySelector('[data-field="include_in_pct"]');
-
-          // set include in pct based on preset, but if not explicitly set, infer from material's exclude_from_composition
-          if (includeSel && includeSel.value === '') {
-            const opt = row.querySelector('.material-select option:checked');
-            if (opt) {
-              includeSel.value =
-                opt.dataset.excludeDefault === 'true' ? 'no' : 'yes';
-            }
-          }
+          roleSelect.value = preset.recipe_role ?? '';
         }
 
-        recalcDryPercent();
+        // Attach role change listener
+        roleSelect.addEventListener('change', () => {
+          const selected = roleSelect.value;
+
+          if (selected === 'cathode_active') {
+            form.elements.role.value = 'cathode';
+          }
+
+          if (selected === 'anode_active') {
+            form.elements.role.value = 'anode';
+          }
+
+          populateMaterialSelect(row);
+        });
+
+        // Now populate materials based on role
+        await populateMaterialSelect(row);
+
+        // Apply preset material AFTER filtering
+        if (preset) {
+          row.querySelector('[data-field="material_id"]').value =
+            preset.material_id || '';
+
+          row.querySelector('[data-field="line_notes"]').value =
+            preset.line_notes ?? '';
+
+          row.querySelector('[data-field="slurry_percent"]').value =
+            preset.slurry_percent ?? '';
+        }
+
         return row;
       }
 
@@ -700,48 +564,29 @@
 
         rows.forEach(row => {
           const materialId = Number(
-            row.querySelector('[data-field="material_id"]')?.value
+            row.querySelector('[data-field="material_id"]').value
           );
 
           const recipeRole =
-            row.querySelector('[data-field="recipe_role"]')?.value || null;
+            row.querySelector('[data-field="recipe_role"]').value;
 
-          const mode =
-            row.querySelector('input[type="radio"]:checked')?.value;
+          const percentRaw =
+            row.querySelector('[data-field="slurry_percent"]').value;
 
-          const massInput =
-            row.querySelector('[data-field="target_mass_g"]');
+          const slurryPercent =
+            percentRaw === '' ? null : Number(percentRaw);
 
-          const volInput =
-            row.querySelector('[data-field="target_volume_ml"]');
 
-          const target_mass_g =
-            mode === 'mass' && massInput && massInput.value !== ''
-              ? Number(massInput.value)
-              : null;
+          const lineNotes =
+            row.querySelector('[data-field="line_notes"]').value || null;
 
-          const target_volume_ml =
-            mode === 'volume' && volInput && volInput.value !== ''
-              ? Number(volInput.value)
-              : null;
-
-          // skip completely empty rows
           if (!materialId) return;
 
           lines.push({
             material_id: materialId,
             recipe_role: recipeRole,
-            measure_mode: mode,
-            target_mass_g,
-            target_volume_ml,
-            include_in_pct:
-              row.querySelector('[data-field="include_in_pct"]')?.value === 'yes'
-                ? true
-                : row.querySelector('[data-field="include_in_pct"]')?.value === 'no'
-                  ? false
-                  : null,
-            line_notes:
-              row.querySelector('[data-field="line_notes"]')?.value || null
+            slurry_percent: slurryPercent,
+            line_notes: lineNotes
           });
         });
 
@@ -769,15 +614,36 @@
 
           const nameSpan = document.createElement('span');
           nameSpan.textContent = r.name;
+          nameSpan.style="display:inline-block; width:14vw;"
 
           const roleSpan = document.createElement('span');
           roleSpan.textContent = r.role === 'cathode' ? 'катод' : 'анод';
+          roleSpan.style="display:inline-block; width:7vw;"
 
+          // Percent span
+          const percentSpan = document.createElement('span');
+          percentSpan.style = "display:inline-block; width:1.5vw;";
+
+          if (r.active_percent !== null && r.active_percent !== undefined) {
+            percentSpan.textContent = `${r.active_percent}%`;
+          } else {
+            percentSpan.textContent = '';
+          }
+
+          // Active material span
+          const activeSpan = document.createElement('span');
+          activeSpan.style = "display:inline-block; width:10vw;";
+          activeSpan.textContent = r.active_material_name || '';
+
+          // Variant span
           const variantSpan = document.createElement('span');
+          variantSpan.style = "display:inline-block; width:20vw;";
           variantSpan.textContent = r.variant_label || '';
 
           info.appendChild(nameSpan);
           info.appendChild(roleSpan);
+          info.appendChild(percentSpan);
+          info.appendChild(activeSpan);
           info.appendChild(variantSpan);
 
           const actions = document.createElement('div');
@@ -857,19 +723,9 @@
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
 
-          await appendRecipeLineRow(i, {
-            material_id: line.material_id,
-            recipe_role: line.recipe_role,
-            measure_mode: line.measure_mode,
-            target_mass_g: line.target_mass_g,
-            target_volume_ml: line.target_volume_ml,
-            include_in_pct: line.include_in_pct,
-            line_notes: line.line_notes,
-            lockRole: true
-          });
+          await appendRecipeLineRow(i, line);
         }
       }
-
 
       // -------- Status helper --------
 
@@ -951,34 +807,43 @@
 
       function validateRecipeLines() {
         const rows = document.querySelectorAll('.recipe-line-row');
+
         if (rows.length === 0) {
           alert('Добавьте хотя бы один компонент');
           return false;
         }
 
         for (const row of rows) {
-          const materialId = row.querySelector('[data-field="material_id"]')?.value;
+          const materialId =
+            row.querySelector('[data-field="material_id"]')?.value;
+
+          const percent =
+            row.querySelector('[data-field="slurry_percent"]')?.value;
+
           if (!materialId) {
             alert('Выберите материал для каждого компонента');
             return false;
           }
 
-          const mode = row.querySelector('input[type="radio"]:checked')?.value;
-          const mass = row.querySelector('[data-field="target_mass_g"]')?.value;
-          const vol  = row.querySelector('[data-field="target_volume_ml"]')?.value;
+          const role =
+            row.querySelector('[data-field="recipe_role"]')?.value;
 
-          if (mode === 'mass') {
-            if (!mass || Number(mass) <= 0) {
-              alert('Для режима массы укажите m, г (> 0)');
+          if (role !== 'solvent') {
+            if (percent === '' || isNaN(Number(percent))) {
+              alert('Укажите корректный % для каждого компонента');
               return false;
             }
-          } else if (mode === 'volume') {
-            if (!vol || Number(vol) <= 0) {
-              alert('Для режима объёма укажите V, мл (> 0)');
+
+            const pct = Number(percent);
+            if (pct < 0 || pct > 100) {
+              alert('% должен быть в диапазоне 0–100');
               return false;
             }
-          } else {
-            alert('Выберите режим измерения (масса или объём)');
+          }
+
+          const pct = Number(percent);
+          if (pct < 0 || pct > 100) {
+            alert('% должен быть в диапазоне 0–100');
             return false;
           }
         }
@@ -1079,6 +944,10 @@
         title.textContent = val;
         title.hidden = false;
         nameInput.hidden = true;
+      });
+
+      window.addEventListener('focus', () => {
+        cachedMaterials = null;
       });
 
       // -------- Init --------

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ewbOZfwVtpa4vTY63EBe3LDmkE1OBqEDTZBzDyl3ieIeDgf3kqPh7J9NnhA4p9F
+\restrict EuNNpBgz8Dsn2xI4qRRqAmh32oYbNGJ6v0oIMnUSxuGWddMECDGoocPEJLooA7z
 
 -- Dumped from database version 16.11 (Postgres.app)
 -- Dumped by pg_dump version 16.11 (Postgres.app)
@@ -164,7 +164,7 @@ CREATE TABLE public.active_materials (
     role public.electrode_role NOT NULL,
     th_capacity_mah numeric,
     th_capacity_ma_g numeric,
-    created_at timestamp without time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
     material_instance_id integer NOT NULL
 );
 
@@ -202,7 +202,7 @@ CREATE TABLE public.batteries (
     project_id integer NOT NULL,
     form_factor text NOT NULL,
     created_by integer NOT NULL,
-    created_at timestamp without time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
     status public.battery_status DEFAULT 'assembled'::public.battery_status,
     notes text
 );
@@ -455,7 +455,7 @@ CREATE TABLE public.electrode_cut_batches (
     cut_batch_id integer NOT NULL,
     tape_id integer NOT NULL,
     created_by integer NOT NULL,
-    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
     comments text
 );
 
@@ -611,7 +611,7 @@ CREATE TABLE public.electrolytes (
     notes text,
     status public.electrolyte_status DEFAULT 'active'::public.electrolyte_status,
     created_by integer NOT NULL,
-    created_at timestamp without time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -647,7 +647,7 @@ CREATE TABLE public.foil_mass_measurements (
     foil_measurement_id integer NOT NULL,
     cut_batch_id integer NOT NULL,
     mass_g numeric NOT NULL,
-    created_at timestamp without time zone DEFAULT now(),
+    created_at timestamp with time zone DEFAULT now(),
     CONSTRAINT foil_mass_measurements_mass_g_check CHECK ((mass_g > (0)::numeric))
 );
 
@@ -722,7 +722,7 @@ CREATE TABLE public.material_instances (
     brand text,
     notes text,
     file_path text,
-    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
     batch text
 );
 
@@ -1020,7 +1020,7 @@ CREATE TABLE public.tape_process_steps (
     tape_id integer NOT NULL,
     operation_type_id integer NOT NULL,
     performed_by integer NOT NULL,
-    started_at timestamp without time zone DEFAULT now(),
+    started_at timestamp with time zone DEFAULT now(),
     comments text
 );
 
@@ -1060,7 +1060,7 @@ CREATE TABLE public.tape_recipe_line_actuals (
     measure_mode public.measure_mode NOT NULL,
     actual_mass_g numeric,
     actual_volume_ml numeric,
-    recorded_at timestamp without time zone DEFAULT now() NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
     material_instance_id integer NOT NULL,
     CONSTRAINT tape_recipe_line_actuals_check CHECK ((((measure_mode = 'mass'::public.measure_mode) AND (actual_mass_g IS NOT NULL) AND (actual_volume_ml IS NULL)) OR ((measure_mode = 'volume'::public.measure_mode) AND (actual_volume_ml IS NOT NULL) AND (actual_mass_g IS NULL))))
 );
@@ -1141,7 +1141,7 @@ CREATE TABLE public.tape_recipes (
     variant_label text,
     notes text,
     created_by integer NOT NULL,
-    created_at timestamp without time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1225,11 +1225,11 @@ CREATE TABLE public.tape_step_mixing (
     step_id integer NOT NULL,
     slurry_volume_ml numeric,
     dry_mixing_id integer,
-    dry_start_time timestamp without time zone,
+    dry_start_time timestamp with time zone,
     dry_duration_min integer,
     dry_rpm text,
     wet_mixing_id integer,
-    wet_start_time timestamp without time zone,
+    wet_start_time timestamp with time zone,
     wet_duration_min integer,
     wet_rpm text
 );
@@ -1246,7 +1246,7 @@ CREATE TABLE public.tapes (
     project_id integer NOT NULL,
     tape_recipe_id integer NOT NULL,
     prepared_by integer NOT NULL,
-    prepared_at timestamp without time zone DEFAULT now() NOT NULL,
+    prepared_at timestamp with time zone DEFAULT now() NOT NULL,
     status public.tape_status,
     notes text
 );
@@ -2452,5 +2452,5 @@ ALTER TABLE ONLY public.tapes
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ewbOZfwVtpa4vTY63EBe3LDmkE1OBqEDTZBzDyl3ieIeDgf3kqPh7J9NnhA4p9F
+\unrestrict EuNNpBgz8Dsn2xI4qRRqAmh32oYbNGJ6v0oIMnUSxuGWddMECDGoocPEJLooA7z
 

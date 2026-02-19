@@ -610,53 +610,33 @@ app.delete('/api/projects/:id', async (req, res) => {
 
 // CREATE
 app.post('/api/materials', async (req, res) => {
-  try {
-    let {
-      name,
-      supplier,
-      brand,
-      default_role,
-      exclude_from_composition,
-      comments,
-      created_by
-    } = req.body;
+  const { name, role } = req.body;
 
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'Название обязательно' });
+  }
+
+  // role is optional in schema (role public.material_role), but UI requires it.
+  if (typeof role !== 'string' || !role.trim()) {
+    return res.status(400).json({ error: 'Роль обязательна' });
+  }
+
+  try {
     const result = await pool.query(
       `
-      INSERT INTO materials (
-        name,
-        supplier,
-        brand,
-        default_role,
-        exclude_from_composition,
-        comments,
-        created_by
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *;
+      INSERT INTO materials (name, role)
+      VALUES ($1, $2)
+      RETURNING material_id, name, role
       `,
-      [
-        name,
-        supplier || null,
-        brand || null,
-        default_role,
-        exclude_from_composition ?? false,
-        comments || null,
-        created_by
-      ]
+      [name.trim(), role]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error(err);
-
-    // unique constraint violation (name, supplier, brand)
     if (err.code === '23505') {
-      return res.status(400).json({
-        error: 'Материал с таким названием, поставщиком и брендом уже существует'
-      });
+      return res.status(409).json({ error: 'Материал с таким названием уже существует' });
     }
-
+    console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
@@ -664,21 +644,13 @@ app.post('/api/materials', async (req, res) => {
 // READ
 app.get('/api/materials', async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT
-        material_id,
-        name,
-        supplier,
-        brand,
-        default_role,
-        exclude_from_composition,
-        comments,
-        created_by,
-        created_at
+    const result = await pool.query(
+      `
+      SELECT material_id, name, role
       FROM materials
-      ORDER BY name;
-    `);
-
+      ORDER BY name
+      `
+    );
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -688,58 +660,30 @@ app.get('/api/materials', async (req, res) => {
 
 // UPDATE
 app.put('/api/materials/:id', async (req, res) => {
-  const { id } = req.params;
-  const {
-    name,
-    supplier,
-    brand,
-    default_role,
-    exclude_from_composition,
-    comments,
-    created_by
-  } = req.body;
+  const id = Number(req.params.id);
+  const { name, role } = req.body;
 
-  // 1. validate name
-  if (!name || !name.trim()) {
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный material_id' });
+  }
+
+  if (typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'Название обязательно' });
   }
 
-  // 2. validate created_by
-  if (!created_by) {
-    return res.status(400).json({ error: 'Обязательные поля отсутствуют' });
-  }
-
-  const createdBy = Number(created_by);
-
-  if (!Number.isInteger(createdBy)) {
-    return res.status(400).json({ error: 'Некорректные идентификаторы' });
+  if (typeof role !== 'string' || !role.trim()) {
+    return res.status(400).json({ error: 'Роль обязательна' });
   }
 
   try {
     const result = await pool.query(
       `
       UPDATE materials
-      SET
-        name = $1,
-        supplier = $2,
-        brand = $3,
-        default_role = $4,
-        exclude_from_composition = $5,
-        comments = $6,
-        created_by = $7
-      WHERE material_id = $8
-      RETURNING *;
+      SET name = $1, role = $2
+      WHERE material_id = $3
+      RETURNING material_id, name, role
       `,
-      [
-        name.trim(),
-        supplier || null,
-        brand || null,
-        default_role,
-        exclude_from_composition ?? false,
-        comments || null,
-        created_by,
-        id
-      ]
+      [name.trim(), role, id]
     );
 
     if (result.rowCount === 0) {
@@ -748,22 +692,21 @@ app.put('/api/materials/:id', async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (err) {
-    console.error(err);
-
     if (err.code === '23505') {
-      return res.status(400).json({
-        error: 'Материал с такими параметрами уже существует'
-      });
+      return res.status(409).json({ error: 'Материал с таким названием уже существует' });
     }
-
+    console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
-
 // DELETE
 app.delete('/api/materials/:id', async (req, res) => {
-  const { id } = req.params;
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный material_id' });
+  }
 
   try {
     const result = await pool.query(
@@ -777,95 +720,57 @@ app.delete('/api/materials/:id', async (req, res) => {
 
     res.status(204).end();
   } catch (err) {
+    // likely FK restrict from material_instances (ON DELETE RESTRICT)
+    if (err.code === '23503') {
+      return res.status(409).json({ error: 'Нельзя удалить материал: существуют экземпляры (instances)' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
 
-// -------- MATERIAL BATCHES --------
+// -------- MATERIAL INSTANCES --------
 
-// CREATE batch for material
-app.post('/api/materials/:id/batches', async (req, res) => {
+// CREATE instance for material
+app.post('/api/materials/:id/instances', async (req, res) => {
   const materialId = Number(req.params.id);
 
   if (!Number.isInteger(materialId)) {
     return res.status(400).json({ error: 'Некорректный material_id' });
   }
 
-  const {
-    batch_code,
-    supplier_lot,
-    received_at,
-    status = 'available',
-    depleted_at,
-    passport_file,
-    comments,
-    created_by
-  } = req.body;
-
-  // ---- validation ----
-  if (!batch_code || !batch_code.trim()) {
-    return res.status(400).json({ error: 'Код партии обязателен' });
-  }
-
-  const createdBy = created_by ? Number(created_by) : null;
-  if (created_by && !Number.isInteger(createdBy)) {
-    return res.status(400).json({ error: 'Некорректный created_by' });
-  }
-
-  // enforce status ↔ depleted_at rule
-  const cleanDepletedAt =
-    status === 'available' ? null : (depleted_at || new Date());
+  const { supplier, brand, batch, notes, file_path } = req.body;
 
   try {
     const result = await pool.query(
       `
-      INSERT INTO material_batches (
-        material_id,
-        batch_code,
-        supplier_lot,
-        received_at,
-        status,
-        depleted_at,
-        passport_file,
-        comments,
-        created_by
+      INSERT INTO material_instances (
+        material_id, supplier, brand, batch, notes, file_path
       )
-      VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9
-      )
-      RETURNING *;
+      VALUES ($1,$2,$3,$4,$5,$6)
+      RETURNING
+        material_instance_id, material_id, supplier, brand, batch, notes, file_path, created_at
       `,
       [
         materialId,
-        batch_code.trim(),
-        supplier_lot || null,
-        received_at || null,
-        status,
-        cleanDepletedAt,
-        passport_file || null,
-        comments || null,
-        createdBy
+        supplier || null,
+        brand || null,
+        batch || null,
+        notes || null,
+        file_path || null
       ]
     );
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    // unique (material_id, batch_code)
-    if (err.code === '23505') {
-      return res.status(409).json({
-        error: 'Партия с таким кодом уже существует для этого материала'
-      });
-    }
-
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
 
-// READ (batches for a material)
-app.get('/api/materials/:id/batches', async (req, res) => {
+// READ instances for a material
+app.get('/api/materials/:id/instances', async (req, res) => {
   const materialId = Number(req.params.id);
 
   if (!Number.isInteger(materialId)) {
@@ -876,22 +781,10 @@ app.get('/api/materials/:id/batches', async (req, res) => {
     const result = await pool.query(
       `
       SELECT
-        material_batch_id,
-        material_id,
-        batch_code,
-        supplier_lot,
-        received_at,
-        status,
-        depleted_at,
-        passport_file,
-        comments,
-        created_by,
-        created_at,
-        edited_by,
-        edited_at
-      FROM material_batches
+        material_instance_id, material_id, supplier, brand, batch, notes, file_path, created_at
+      FROM material_instances
       WHERE material_id = $1
-      ORDER BY created_at DESC, material_batch_id DESC;
+      ORDER BY created_at DESC, material_instance_id DESC
       `,
       [materialId]
     );
@@ -903,36 +796,42 @@ app.get('/api/materials/:id/batches', async (req, res) => {
   }
 });
 
-// UPDATE batch status
-app.put('/api/material-batches/:id/status', async (req, res) => {
-  const batchId = Number(req.params.id);
-  const { status } = req.body;
+// UPDATE instance
+app.put('/api/material-instances/:id', async (req, res) => {
+  const instanceId = Number(req.params.id);
 
-  if (!Number.isInteger(batchId)) {
-    return res.status(400).json({ error: 'Некорректный batch_id' });
+  if (!Number.isInteger(instanceId)) {
+    return res.status(400).json({ error: 'Некорректный material_instance_id' });
   }
 
-  if (!['available', 'depleted', 'scrap'].includes(status)) {
-    return res.status(400).json({ error: 'Некорректный статус' });
-  }
-
-  const depletedAt = status === 'available' ? null : new Date();
+  const { supplier, brand, batch, notes, file_path } = req.body;
 
   try {
     const result = await pool.query(
       `
-      UPDATE material_batches
+      UPDATE material_instances
       SET
-        status = $1,
-        depleted_at = $2
-      WHERE material_batch_id = $3
-      RETURNING *;
+        supplier = $1,
+        brand = $2,
+        batch = $3,
+        notes = $4,
+        file_path = $5
+      WHERE material_instance_id = $6
+      RETURNING
+        material_instance_id, material_id, supplier, brand, batch, notes, file_path, created_at
       `,
-      [status, depletedAt, batchId]
+      [
+        supplier || null,
+        brand || null,
+        batch || null,
+        notes || null,
+        file_path || null,
+        instanceId
+      ]
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Партия не найдена' });
+      return res.status(404).json({ error: 'Экземпляр материала не найден' });
     }
 
     res.json(result.rows[0]);
@@ -942,22 +841,22 @@ app.put('/api/material-batches/:id/status', async (req, res) => {
   }
 });
 
-// DELETE batch
-app.delete('/api/material-batches/:id', async (req, res) => {
-  const batchId = Number(req.params.id);
+// DELETE instance
+app.delete('/api/material-instances/:id', async (req, res) => {
+  const instanceId = Number(req.params.id);
 
-  if (!Number.isInteger(batchId)) {
-    return res.status(400).json({ error: 'Некорректный batch_id' });
+  if (!Number.isInteger(instanceId)) {
+    return res.status(400).json({ error: 'Некорректный material_instance_id' });
   }
 
   try {
     const result = await pool.query(
-      'DELETE FROM material_batches WHERE material_batch_id = $1',
-      [batchId]
+      'DELETE FROM material_instances WHERE material_instance_id = $1',
+      [instanceId]
     );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Партия не найдена' });
+      return res.status(404).json({ error: 'Экземпляр материала не найден' });
     }
 
     res.status(204).end();
@@ -982,12 +881,16 @@ app.post('/api/recipes', async (req, res) => {
     lines
   } = req.body;
 
+  const projectId = Number(project_id);
+  const createdBy = Number(created_by);
+
   if (
-    !Number.isInteger(project_id) ||
-    !Number.isInteger(created_by) ||
+    !Number.isInteger(projectId) ||
+    !Number.isInteger(createdBy) ||
     !name ||
     !role ||
-    !Array.isArray(lines)
+    !Array.isArray(lines) || 
+    lines.length === 0
   ) {
     return res.status(400).json({ error: 'Некорректные данные запроса' });
   }
@@ -1005,7 +908,7 @@ app.post('/api/recipes', async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING tape_recipe_id
       `,
-      [project_id, role, name, variant_label || null, notes || null, created_by]
+      [projectId, role, name, variant_label || null, notes || null, createdBy]
     );
 
     const recipeId = recipeResult.rows[0].tape_recipe_id;
@@ -1014,35 +917,42 @@ app.post('/api/recipes', async (req, res) => {
       const {
         material_id,
         recipe_role,
-        measure_mode,
-        target_mass_g,
-        target_volume_ml,
-        include_in_pct,
+        slurry_percent,
         line_notes
       } = line;
-      
+
+      const pct =
+        slurry_percent === '' || slurry_percent === null
+          ? null
+          : Number(slurry_percent);
+
+      const matId = Number(material_id);
+
+      if (
+        !Number.isInteger(matId) ||
+        !recipe_role ||
+        (pct !== null && (!Number.isFinite(pct) || pct < 0 || pct > 100))
+      ) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Некорректные данные строки рецепта' });
+      }
+
       await client.query(
         `
         INSERT INTO tape_recipe_lines (
           tape_recipe_id,
           material_id,
           recipe_role,
-          measure_mode,
-          target_mass_g,
-          target_volume_ml,
-          include_in_pct,
+          slurry_percent,
           line_notes
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        VALUES ($1,$2,$3,$4,$5)
         `,
         [
           recipeId,
-          material_id,
+          matId,
           recipe_role,
-          measure_mode,
-          target_mass_g ?? null,
-          target_volume_ml ?? null,
-          include_in_pct ?? null,
+          pct,
           line_notes ?? null
         ]
       );
@@ -1064,8 +974,9 @@ app.post('/api/recipes', async (req, res) => {
 app.post('/api/recipes/:id/duplicate', async (req, res) => {
   const sourceRecipeId = Number(req.params.id);
   const { created_by } = req.body;
+  const createdBy = Number(created_by);
 
-  if (!Number.isInteger(sourceRecipeId) || !Number.isInteger(created_by)) {
+  if (!Number.isInteger(sourceRecipeId) || !Number.isInteger(createdBy)) {
     return res.status(400).json({ error: 'Некорректные данные запроса' });
   }
 
@@ -1096,7 +1007,7 @@ app.post('/api/recipes/:id/duplicate', async (req, res) => {
       WHERE tape_recipe_id = $1
       RETURNING tape_recipe_id
       `,
-      [sourceRecipeId, created_by]
+      [sourceRecipeId, createdBy]
     );
 
     if (recipeResult.rowCount === 0) {
@@ -1113,20 +1024,14 @@ app.post('/api/recipes/:id/duplicate', async (req, res) => {
         tape_recipe_id,
         material_id,
         recipe_role,
-        measure_mode,
-        target_mass_g,
-        target_volume_ml,
-        include_in_pct,
+        slurry_percent,
         line_notes
       )
       SELECT
         $2,
         material_id,
         recipe_role,
-        measure_mode,
-        target_mass_g,
-        target_volume_ml,
-        include_in_pct,
+        slurry_percent,
         line_notes
       FROM tape_recipe_lines
       WHERE tape_recipe_id = $1
@@ -1151,6 +1056,10 @@ app.get('/api/recipes', async (req, res) => {
   const projectId = req.query.project_id
     ? Number(req.query.project_id)
     : null;
+  
+  if (req.query.project_id && !Number.isInteger(projectId)) {
+    return res.status(400).json({ error: 'Некорректный project_id' });
+  }
 
   try {
     const result = projectId
@@ -1165,11 +1074,23 @@ app.get('/api/recipes', async (req, res) => {
             r.notes,
             r.created_by,
             r.created_at,
+            act.active_material_name,
+            act.active_percent,
             u.name AS created_by_name
           FROM tape_recipes r
           JOIN users u ON u.user_id = r.created_by
+          LEFT JOIN LATERAL (
+            SELECT
+              m.name AS active_material_name,
+              rl.slurry_percent AS active_percent
+            FROM tape_recipe_lines rl
+            JOIN materials m ON m.material_id = rl.material_id
+            WHERE rl.tape_recipe_id = r.tape_recipe_id
+              AND rl.recipe_role IN ('cathode_active','anode_active')
+            LIMIT 1
+          ) act ON true
           WHERE r.project_id = $1
-          ORDER BY r.created_at DESC;
+          ORDER BY r.name ASC, r.variant_label ASC NULLS FIRST;
           `,
           [projectId]
         )
@@ -1184,10 +1105,22 @@ app.get('/api/recipes', async (req, res) => {
             r.notes,
             r.created_by,
             r.created_at,
+            act.active_material_name,
+            act.active_percent,
             u.name AS created_by_name
           FROM tape_recipes r
           JOIN users u ON u.user_id = r.created_by
-          ORDER BY r.created_at DESC;
+          LEFT JOIN LATERAL (
+            SELECT
+              m.name AS active_material_name,
+              rl.slurry_percent AS active_percent
+            FROM tape_recipe_lines rl
+            JOIN materials m ON m.material_id = rl.material_id
+            WHERE rl.tape_recipe_id = r.tape_recipe_id
+              AND rl.recipe_role IN ('cathode_active','anode_active')
+            LIMIT 1
+          ) act ON true
+          ORDER BY r.name ASC, r.variant_label ASC NULLS FIRST;
           `
         );
 
@@ -1251,10 +1184,7 @@ app.get('/api/recipes/:id/lines', async (req, res) => {
         rl.material_id,
         m.name AS material_name,
         rl.recipe_role,
-        rl.measure_mode,
-        rl.target_mass_g,
-        rl.target_volume_ml,
-        rl.include_in_pct,
+        rl.slurry_percent,
         rl.line_notes
       FROM tape_recipe_lines rl
       JOIN materials m ON m.material_id = rl.material_id
@@ -1287,7 +1217,8 @@ app.put('/api/recipes/:id', async (req, res) => {
     !Number.isInteger(recipeId) ||
     !name ||
     !role ||
-    !Array.isArray(lines)
+    !Array.isArray(lines) ||
+    lines.length === 0
   ) {
     return res.status(400).json({ error: 'Некорректные данные запроса' });
   }
@@ -1335,12 +1266,25 @@ app.put('/api/recipes/:id', async (req, res) => {
       const {
         material_id,
         recipe_role,
-        measure_mode,
-        target_mass_g,
-        target_volume_ml,
-        include_in_pct,
+        slurry_percent,
         line_notes
       } = line;
+
+      const pct =
+        slurry_percent === '' || slurry_percent === null
+          ? null
+          : Number(slurry_percent);
+
+      const matId = Number(material_id);
+
+      if (
+        !Number.isInteger(matId) ||
+        !recipe_role ||
+        (pct !== null && (!Number.isFinite(pct) || pct < 0 || pct > 100))
+      ) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Некорректные данные строки рецепта' });
+      }
 
       await client.query(
         `
@@ -1348,22 +1292,16 @@ app.put('/api/recipes/:id', async (req, res) => {
           tape_recipe_id,
           material_id,
           recipe_role,
-          measure_mode,
-          target_mass_g,
-          target_volume_ml,
-          include_in_pct,
+          slurry_percent,
           line_notes
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        VALUES ($1,$2,$3,$4,$5)
         `,
         [
           recipeId,
-          material_id,
+          matId,
           recipe_role,
-          measure_mode,
-          target_mass_g ?? null,
-          target_volume_ml ?? null,
-          include_in_pct ?? null,
+          pct,
           line_notes ?? null
         ]
       );
