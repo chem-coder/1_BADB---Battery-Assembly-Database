@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict hsD3spRa7KQEV8HCdw8xBat0T157sSQoaaZwKVWRdmzcIGSbdcRe2aFhw6d5NJ7
+\restrict VWUJbfwm7OanJqXlbtKufzhA2Ufyt1toRHNhQuDrPTJgb556G9lDijeNofO640v
 
 -- Dumped from database version 16.11 (Postgres.app)
 -- Dumped by pg_dump version 16.11 (Postgres.app)
@@ -1140,7 +1140,9 @@ CREATE TABLE public.tape_recipe_lines (
     recipe_role public.recipe_component_role NOT NULL,
     line_notes text,
     slurry_percent numeric,
-    CONSTRAINT slurry_percent_range_check CHECK (((slurry_percent >= (0)::numeric) AND (slurry_percent <= (100)::numeric)))
+    include_in_pct boolean DEFAULT true NOT NULL,
+    CONSTRAINT slurry_percent_range_check CHECK (((slurry_percent >= (0)::numeric) AND (slurry_percent <= (100)::numeric))),
+    CONSTRAINT tape_recipe_lines_include_pct_logic_check CHECK ((((include_in_pct = true) AND (slurry_percent IS NOT NULL)) OR ((include_in_pct = false) AND (slurry_percent IS NULL))))
 );
 
 
@@ -2544,5 +2546,5 @@ ALTER TABLE ONLY public.tapes
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hsD3spRa7KQEV8HCdw8xBat0T157sSQoaaZwKVWRdmzcIGSbdcRe2aFhw6d5NJ7
+\unrestrict VWUJbfwm7OanJqXlbtKufzhA2Ufyt1toRHNhQuDrPTJgb556G9lDijeNofO640v
 

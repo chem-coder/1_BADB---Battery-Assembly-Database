@@ -210,8 +210,10 @@
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || 'Ошибка удаления');
+          alert(err.error || 'Ошибка удаления');
+          return false;
         }
+        return true;
       }
 
       async function fetchInstances(materialId) {
@@ -415,12 +417,14 @@
                       
                       const nameSpan = document.createElement('span');
                       nameSpan.classList.add('row-title');
-                      nameSpan.textContent = comp.name;
+                      nameSpan.textContent = comp.component_name;
+                      nameSpan.style = "display:inline-block; width:10vw;";
 
                       const percentSpan = document.createElement('span');
                       percentSpan.classList.add('row-meta');
                       percentSpan.textContent = (comp.mass_fraction * 100).toFixed(2) + ' %';
                       percentSpan.style.marginLeft = '1rem';
+                      percentSpan.style = "display:inline-block; width:10vw;";
 
                       const editBtn = document.createElement('button');
                       editBtn.type = 'button';
@@ -555,7 +559,7 @@
 
                           const nameSpan = document.createElement('span');
                           nameSpan.classList.add('row-title');
-                          nameSpan.textContent = newComp.name;
+                          nameSpan.textContent = newComp.component_name;
 
                           const percentSpan = document.createElement('span');
                           percentSpan.classList.add('row-meta');
@@ -927,9 +931,9 @@
           if (!confirm('Удалить?')) return;
 
           try {
-
             if (type === 'material') {
-              await deleteMaterial(Number(id));
+              const success = await deleteMaterial(Number(id));
+              if (!success) return;
               row.remove();
               return;
             }

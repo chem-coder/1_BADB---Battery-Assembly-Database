@@ -813,7 +813,7 @@ app.get('/api/material-instances', async (req, res) => {
       FROM material_instances mi
       JOIN materials m
         ON m.material_id = mi.material_id
-      ORDER BY m.name, mi.name
+      ORDER BY mi.name ASC;
     `);
 
     res.json(result.rows);
@@ -905,15 +905,18 @@ app.get('/api/material-instances/:id/components', async (req, res) => {
       mic.parent_material_instance_id,
       mic.component_material_instance_id,
       mic.mass_fraction,
+      mi.name AS component_name,
       mi.material_id,
-      m.name AS material_name
+      m.name AS material_name,
+      m.role AS material_role,
+      mic.notes
     FROM material_instance_components mic
     JOIN material_instances mi
       ON mic.component_material_instance_id = mi.material_instance_id
     JOIN materials m
       ON mi.material_id = m.material_id
     WHERE mic.parent_material_instance_id = $1
-    ORDER BY m.name;
+    ORDER BY mi.name;
     `,
     [id]
   );
@@ -928,41 +931,31 @@ app.post('/api/material-instances/:id/components', async (req, res) => {
 
   const result = await pool.query(
     `
-    INSERT INTO material_instance_components
-    (parent_material_instance_id, component_material_instance_id, mass_fraction)
-    VALUES ($1, $2, $3)
-    RETURNING
-      material_instance_component_id,
-      parent_material_instance_id,
-      component_material_instance_id,
-      mass_fraction;
+    WITH ins AS (
+      INSERT INTO material_instance_components
+        (parent_material_instance_id, component_material_instance_id, mass_fraction)
+      VALUES ($1, $2, $3)
+      RETURNING *
+    )
+    SELECT
+      ins.material_instance_component_id,
+      ins.parent_material_instance_id,
+      ins.component_material_instance_id,
+      ins.mass_fraction,
+      mi.name AS component_name,
+      mi.material_id,
+      m.name AS material_name,
+      ins.notes
+    FROM ins
+    JOIN material_instances mi
+      ON ins.component_material_instance_id = mi.material_instance_id
+    JOIN materials m
+      ON mi.material_id = m.material_id;
     `,
     [parentId, component_material_instance_id, mass_fraction]
   );
 
-  const compId = result.rows[0].material_instance_component_id;
-
-  const full = await pool.query(
-    `
-    SELECT
-      mic.material_instance_component_id,
-      mic.parent_material_instance_id,
-      mic.component_material_instance_id,
-      mic.mass_fraction,
-      mi.name,
-      m.name AS material_name
-    FROM material_instance_components mic
-    JOIN material_instances mi
-      ON mic.component_material_instance_id = mi.material_instance_id
-    JOIN materials m
-      ON mi.material_id = m.material_id
-    WHERE mic.material_instance_component_id = $1
-    `,
-    [compId]
-  );
-
-  res.json(full.rows[0]);
-  
+  res.json(result.rows[0]);
 });
 
 // --- UPDATE component ---
@@ -1076,6 +1069,7 @@ app.post('/api/recipes', async (req, res) => {
       const {
         material_id,
         recipe_role,
+        include_in_pct,
         slurry_percent,
         line_notes
       } = line;
@@ -1087,10 +1081,19 @@ app.post('/api/recipes', async (req, res) => {
 
       const matId = Number(material_id);
 
+      const includeInPct =
+        include_in_pct === false || include_in_pct === 'false'
+          ? false
+          : true;
+
+      // If excluded (solvent), percent must be NULL to satisfy the new CHECK constraint
+      const pctFinal = includeInPct ? pct : null;
+
       if (
         !Number.isInteger(matId) ||
         !recipe_role ||
-        (pct !== null && (!Number.isFinite(pct) || pct < 0 || pct > 100))
+        (includeInPct && (pctFinal === null || !Number.isFinite(pctFinal) || pctFinal < 0 || pctFinal > 100)) ||
+        (!includeInPct && pctFinal !== null)
       ) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Некорректные данные строки рецепта' });
@@ -1102,16 +1105,18 @@ app.post('/api/recipes', async (req, res) => {
           tape_recipe_id,
           material_id,
           recipe_role,
+          include_in_pct,
           slurry_percent,
           line_notes
         )
-        VALUES ($1,$2,$3,$4,$5)
+        VALUES ($1,$2,$3,$4,$5,$6)
         `,
         [
           recipeId,
           matId,
           recipe_role,
-          pct,
+          includeInPct,
+          pctFinal,
           line_notes ?? null
         ]
       );
@@ -1183,6 +1188,7 @@ app.post('/api/recipes/:id/duplicate', async (req, res) => {
         tape_recipe_id,
         material_id,
         recipe_role,
+        include_in_pct,
         slurry_percent,
         line_notes
       )
@@ -1190,6 +1196,7 @@ app.post('/api/recipes/:id/duplicate', async (req, res) => {
         $2,
         material_id,
         recipe_role,
+        include_in_pct,
         slurry_percent,
         line_notes
       FROM tape_recipe_lines
@@ -1220,68 +1227,60 @@ app.get('/api/recipes', async (req, res) => {
     return res.status(400).json({ error: 'Некорректный project_id' });
   }
 
+  const role = req.query.role ? String(req.query.role) : null;
+
+  if (req.query.role && role !== 'cathode' && role !== 'anode') {
+    return res.status(400).json({ error: 'Некорректный role (ожидается cathode или anode)' });
+  }
+
   try {
-    const result = projectId
-      ? await pool.query(
-          `
-          SELECT
-            r.tape_recipe_id,
-            r.project_id,
-            r.role,
-            r.name,
-            r.variant_label,
-            r.notes,
-            r.created_by,
-            r.created_at,
-            act.active_material_name,
-            act.active_percent,
-            u.name AS created_by_name
-          FROM tape_recipes r
-          JOIN users u ON u.user_id = r.created_by
-          LEFT JOIN LATERAL (
-            SELECT
-              m.name AS active_material_name,
-              rl.slurry_percent AS active_percent
-            FROM tape_recipe_lines rl
-            JOIN materials m ON m.material_id = rl.material_id
-            WHERE rl.tape_recipe_id = r.tape_recipe_id
-              AND rl.recipe_role IN ('cathode_active','anode_active')
-            LIMIT 1
-          ) act ON true
-          WHERE r.project_id = $1
-          ORDER BY r.name ASC, r.variant_label ASC NULLS FIRST;
-          `,
-          [projectId]
-        )
-      : await pool.query(
-          `
-          SELECT
-            r.tape_recipe_id,
-            r.project_id,
-            r.role,
-            r.name,
-            r.variant_label,
-            r.notes,
-            r.created_by,
-            r.created_at,
-            act.active_material_name,
-            act.active_percent,
-            u.name AS created_by_name
-          FROM tape_recipes r
-          JOIN users u ON u.user_id = r.created_by
-          LEFT JOIN LATERAL (
-            SELECT
-              m.name AS active_material_name,
-              rl.slurry_percent AS active_percent
-            FROM tape_recipe_lines rl
-            JOIN materials m ON m.material_id = rl.material_id
-            WHERE rl.tape_recipe_id = r.tape_recipe_id
-              AND rl.recipe_role IN ('cathode_active','anode_active')
-            LIMIT 1
-          ) act ON true
-          ORDER BY r.name ASC, r.variant_label ASC NULLS FIRST;
-          `
-        );
+        let sql = `
+      SELECT
+        r.tape_recipe_id,
+        r.project_id,
+        r.role,
+        r.name,
+        r.variant_label,
+        r.notes,
+        r.created_by,
+        r.created_at,
+        act.active_material_name,
+        act.active_percent,
+        u.name AS created_by_name
+      FROM tape_recipes r
+      JOIN users u ON u.user_id = r.created_by
+      LEFT JOIN LATERAL (
+        SELECT
+          m.name AS active_material_name,
+          rl.slurry_percent AS active_percent
+        FROM tape_recipe_lines rl
+        JOIN materials m ON m.material_id = rl.material_id
+        WHERE rl.tape_recipe_id = r.tape_recipe_id
+          AND rl.recipe_role IN ('cathode_active','anode_active')
+        LIMIT 1
+      ) act ON true
+    `;
+
+    const params = [];
+    const where = [];
+
+    if (projectId !== null) {
+      params.push(projectId);
+      where.push(`r.project_id = $${params.length}`);
+    }
+
+    if (role !== null) {
+      params.push(role);
+      where.push(`r.role = $${params.length}`);
+    }
+
+    if (where.length) {
+      sql += ` WHERE ` + where.join(' AND ');
+    }
+
+    sql += ` ORDER BY r.name ASC, r.variant_label ASC NULLS FIRST;`;
+
+    const result = await pool.query(sql, params);
 
     res.json(result.rows);
   } catch (err) {
@@ -1343,6 +1342,7 @@ app.get('/api/recipes/:id/lines', async (req, res) => {
         rl.material_id,
         m.name AS material_name,
         rl.recipe_role,
+        rl.include_in_pct,
         rl.slurry_percent,
         rl.line_notes
       FROM tape_recipe_lines rl
@@ -1425,21 +1425,31 @@ app.put('/api/recipes/:id', async (req, res) => {
       const {
         material_id,
         recipe_role,
+        include_in_pct,
         slurry_percent,
         line_notes
       } = line;
 
+      const matId = Number(material_id);
+
+      const includeInPct =
+        include_in_pct === false || include_in_pct === 'false'
+          ? false
+          : true;
+
       const pct =
-        slurry_percent === '' || slurry_percent === null
+        slurry_percent === '' || slurry_percent === null || slurry_percent === undefined
           ? null
           : Number(slurry_percent);
 
-      const matId = Number(material_id);
+      // If excluded, percent must be NULL to satisfy the CHECK constraint
+      const pctFinal = includeInPct ? pct : null;
 
       if (
         !Number.isInteger(matId) ||
         !recipe_role ||
-        (pct !== null && (!Number.isFinite(pct) || pct < 0 || pct > 100))
+        (includeInPct && (pctFinal === null || !Number.isFinite(pctFinal) || pctFinal < 0 || pctFinal > 100)) ||
+        (!includeInPct && pctFinal !== null)
       ) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Некорректные данные строки рецепта' });
@@ -1451,16 +1461,18 @@ app.put('/api/recipes/:id', async (req, res) => {
           tape_recipe_id,
           material_id,
           recipe_role,
+          include_in_pct,
           slurry_percent,
           line_notes
         )
-        VALUES ($1,$2,$3,$4,$5)
+        VALUES ($1,$2,$3,$4,$5,$6)
         `,
         [
           recipeId,
           matId,
           recipe_role,
-          pct,
+          includeInPct,
+          pctFinal,
           line_notes ?? null
         ]
       );

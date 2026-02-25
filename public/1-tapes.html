@@ -57,6 +57,40 @@
         </select><br>
       </fieldset>
 
+      <label for="tape-recipe-id">Рецепт</label>
+      <select id="tape-recipe-id" name="tape_recipe_id" required>
+        <option value="">— выбрать рецепт —</option>
+      </select>
+      <a href="reference/recipes.html" target="_blank" class="ref-link">
+        Управление рецептами
+      </a><br>
+
+      <hr>
+
+      <label for="calc-mode">Расчёт по</label>
+      <select id="calc-mode">
+        <option value="active_mass">массе активного материала</option>
+        <option value="total_mass">общей массе суспензии</option>
+      </select>
+
+      <hr>
+
+      <label for="active-mass-g">Масса активного материала, г</label>
+      <input
+        id="active-mass-g"
+        type="number"
+        step="0.0001"
+        min="0"
+        placeholder="например 10.0000">
+
+      <hr>
+      <div id="recipe-lines-container"></div>
+      
+      <hr>
+      <h3>Расчёт состава (расширенный вид)</h3>
+      <div id="expanded-calculation-container"></div>
+
+      <hr>
       <button type="button" id="saveBtn">Сохранить файл</button>
       <button type="button" id="clearBtn">Очистить форму</button><br>
       
@@ -531,9 +565,694 @@
           </fieldset>
         </fieldset>
       </details>
-
     </form>
-
     <div class="autosave-message" aria-live="polite"></div>
+    
+    <script>
+      // -------- State and helpers --------
+
+      const createdBySelect = document.getElementById('tape-created-by');
+      const projectSelect   = document.getElementById('project_id');
+      const tapeTypeSelect  = document.getElementById('tape_type');
+      const recipeSelect    = document.getElementById('tape-recipe-id'); // already added in HTML
+
+      let currentRecipeLines = []; // full array from /api/recipes/:id/lines
+      let selectedInstanceByLineId = {}; // { [recipe_line_id]: material_instance_id }
+      let instanceCacheByMaterialId = {}; // { [material_id]: [instances...] }
+      let instanceComponentsCache = {}; // { [material_instance_id]: [ { component_material_id, component_name, mass_fraction } ] }
+
+      function fillSelect(selectEl, items, valueKey, labelFn, placeholderHtml) {
+        const current = selectEl.value;
+
+        selectEl.innerHTML = placeholderHtml;
+
+        items.forEach(item => {
+          const opt = document.createElement('option');
+          opt.value = item[valueKey];
+          opt.textContent = labelFn(item);
+          selectEl.appendChild(opt);
+        });
+
+        // restore selection if still present
+        if (current && [...selectEl.options].some(o => o.value === current)) {
+          selectEl.value = current;
+        }
+      }
+
+      // -------- API helpers --------
+
+      async function fetchUsers() {
+        const res = await fetch('/api/users');
+        return res.json();
+      }
+
+      async function fetchProjects() {
+        const res = await fetch('/api/projects');
+        return res.json();
+      }
+
+      async function fetchRecipes(projectId, role) {
+        const params = new URLSearchParams();
+
+        if (projectId) {
+          params.append('project_id', projectId);
+        }
+
+        if (role) {
+          params.append('role', role);
+        }
+
+        const qs = params.toString();
+        const url = qs ? `/api/recipes?${qs}` : '/api/recipes';
+
+        const res = await fetch(url);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка загрузки рецептов');
+        }
+
+        return res.json();
+      }
+
+      async function fetchRecipeLines(recipeId) {
+        const res = await fetch(`/api/recipes/${recipeId}/lines`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка загрузки состава рецепта');
+        }
+        return res.json();
+      }
+
+      async function fetchMaterialInstances(materialId) {
+        if (!materialId) return [];
+
+        // simple cache to avoid refetching repeatedly
+        if (instanceCacheByMaterialId[materialId]) {
+          return instanceCacheByMaterialId[materialId];
+        }
+
+        const res = await fetch(`/api/materials/${materialId}/instances`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка загрузки экземпляров материала');
+        }
+
+        const data = await res.json();
+        instanceCacheByMaterialId[materialId] = data;
+
+        return data;
+      }
+
+      async function fetchInstanceComponents(instanceId) {
+        if (!instanceId) return [];
+
+        const res = await fetch(`/api/material-instances/${instanceId}/components`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка загрузки состава экземпляра');
+        }
+
+        return res.json();
+      }
+
+      // -------- Rendering --------
+      function recipeRoleLabel(recipeRole) {
+        const map = {
+          cathode_active: 'Aктивный материал: ',
+          anode_active: 'Aктивный материал: ',
+          binder: 'Связующее: ',
+          additive: 'Проводящая добавка: ',
+          solvent: 'Растворитель: ',
+          other: 'Другое: '
+        };
+
+        return map[recipeRole] || recipeRole || '';
+      }
+      
+      function renderRecipeLines(lines) {
+        const container = document.getElementById('recipe-lines-container');
+        if (!container) return;
+
+        container.innerHTML = '';
+        container.classList.add('recipe-lines-list');
+
+        lines.forEach(line => {
+          const row = document.createElement('div');
+          row.className = 'recipe-line-row';
+          row.dataset.recipeLineId = line.recipe_line_id;
+
+          // role label (left)
+          const roleInput = document.createElement('input');
+          roleInput.type = 'text';
+          roleInput.value = recipeRoleLabel(line.recipe_role);
+          roleInput.disabled = true;
+
+          // material name (middle)
+          const nameInput = document.createElement('input');
+          nameInput.type = 'text';
+          nameInput.value = line.material_name;
+          nameInput.disabled = true;
+
+          // material instance selector
+          const instanceSelect = document.createElement('select');
+          instanceSelect.className = 'material-instance-select';
+
+          // placeholder option
+          const placeholderOpt = document.createElement('option');
+          placeholderOpt.value = '';
+          placeholderOpt.textContent = '— выбрать экземпляр —';
+          instanceSelect.appendChild(placeholderOpt);
+
+          // restore previously selected instance if any
+          if (selectedInstanceByLineId[line.recipe_line_id]) {
+            instanceSelect.value = selectedInstanceByLineId[line.recipe_line_id];
+          }
+
+          // load instances asynchronously
+          fetchMaterialInstances(line.material_id)
+            .then(instances => {
+              const prev = selectedInstanceByLineId[line.recipe_line_id] || '';
+
+              instances
+                .slice()
+                .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                .forEach(inst => {
+                  const opt = document.createElement('option');
+                  opt.value = inst.material_instance_id;
+                  opt.textContent = inst.name || `ID ${inst.material_instance_id}`;
+                  instanceSelect.appendChild(opt);
+                });
+
+              // restore selection after options are appended
+              if (prev) instanceSelect.value = String(prev);
+            })
+            .catch(err => console.error(err));
+
+          // store selection in state
+          instanceSelect.addEventListener('change', () => {
+            selectedInstanceByLineId[line.recipe_line_id] =
+              instanceSelect.value || null;
+
+            // recalculation will later depend on instance compositions
+            recalculatePlannedMasses();
+          });
+
+          // percent (right) with % sign
+          const pctInput = document.createElement('input');
+          pctInput.type = 'text';           // text, so "96%" can be shown
+          pctInput.disabled = true;
+
+          if (line.include_in_pct) {
+            pctInput.value =
+              (line.slurry_percent === null || line.slurry_percent === undefined || line.slurry_percent === '')
+                ? ''
+                : `${line.slurry_percent}%`;
+          } else {
+            pctInput.value = '';
+          }
+
+          row.appendChild(roleInput);
+          row.appendChild(nameInput);
+          row.appendChild(instanceSelect);
+          row.appendChild(pctInput);
+
+          const targetDrySpan = document.createElement('span');
+          targetDrySpan.className = 'target-dry-mass';
+          targetDrySpan.textContent = '';
+          row.appendChild(targetDrySpan);
+
+          const plannedSpan = document.createElement('span');
+          plannedSpan.className = 'planned-mass';
+          plannedSpan.textContent = '';
+          row.appendChild(plannedSpan);
+
+          container.appendChild(row);
+        });
+      }
+            
+      function clearRecipeLines() {
+        const container = document.getElementById('recipe-lines-container');
+        if (container) {
+          container.innerHTML = '';
+        }
+      }
+
+      function renderExpandedCalculation(data) {
+        const container = document.getElementById('expanded-calculation-container');
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        const table = document.createElement('table');
+        table.style.width = '100%';
+        table.style.borderCollapse = 'collapse';
+
+        const header = document.createElement('tr');
+        header.innerHTML = `
+          <th style="text-align:left;">Роль</th>
+          <th style="text-align:left;">Материал</th>
+          <th style="text-align:left;">Экземпляр</th>
+          <th style="text-align:right;">%</th>
+          <th style="text-align:left;">Компонент</th>
+          <th style="text-align:right;">Масса компонента, г</th>
+          <th style="text-align:right;">Масса к навеске, г</th>
+        `;
+        table.appendChild(header);
+
+        data.forEach(block => {
+
+          const instanceMass = block.instanceMass;
+
+          block.components.forEach((c, index) => {
+
+            const tr = document.createElement('tr');
+
+            if (index === 0) {
+              tr.innerHTML += `<td>${block.role}</td>`;
+              tr.innerHTML += `<td>${block.material}</td>`;
+              tr.innerHTML += `<td>${block.instanceName}</td>`;
+            } else {
+              tr.innerHTML += `<td></td><td></td><td></td>`;
+            }
+
+            tr.innerHTML += `
+              <td style="text-align:right;">${(c.fraction * 100).toFixed(2)}%</td>
+              <td>${c.material_name}</td>
+              <td style="text-align:right;">${c.mass.toFixed(4)}</td>
+            `;
+
+            if (index === 0) {
+              tr.innerHTML += `<td style="text-align:right;">${instanceMass.toFixed(4)}</td>`;
+            } else {
+              tr.innerHTML += `<td></td>`;
+            }
+
+            table.appendChild(tr);
+          });
+        });
+
+        container.appendChild(table);
+      }
+
+      function recalculatePlannedMasses() {
+        const mode = calcModeSelect.value;
+        const inputValue = Number(activeMassInput.value);
+
+        if (!currentRecipeLines.length) return;
+        if (!Number.isFinite(inputValue) || inputValue <= 0) return;
+
+        let target; // active dry mass (g)
+
+        if (mode !== 'active_mass' && mode !== 'total_mass') return;
+
+        if (mode === 'active_mass') {
+          target = inputValue;
+        }
+
+        if (mode === 'total_mass' && !Number.isFinite(inputValue)) return;
+
+        // Find active material line
+        const activeLine = currentRecipeLines.find(l =>
+          l.recipe_role === 'cathode_active' ||
+          l.recipe_role === 'anode_active'
+        );
+
+        if (!activeLine) return;
+        if (!Number.isFinite(Number(activeLine.slurry_percent))) return;
+
+        const activePercent = Number(activeLine.slurry_percent);
+        if (!Number.isFinite(activePercent) || activePercent <= 0) return;
+
+        if (mode === 'total_mass') {
+          const totalWetMass = inputValue;
+
+          const totalDryPercent = currentRecipeLines
+            .filter(l => l.include_in_pct)
+            .reduce((sum, l) => sum + Number(l.slurry_percent || 0), 0);
+          if (totalDryPercent > 100) return;
+          if (!Number.isFinite(totalDryPercent) || totalDryPercent <= 0) return;
+
+          const totalDryMassFromWet = totalWetMass * (totalDryPercent / 100);
+
+          target = totalDryMassFromWet * (activePercent / totalDryPercent);
+        }
+
+        // Total dry mass = total dry solids mass required
+        // derived from requested active mass and active material fraction
+        if (!Number.isFinite(target) || target <= 0) return;
+        if (activePercent > 100) return;
+        const totalDryMass = target / (activePercent / 100);
+
+        // Loop through rendered rows and compute required "to-weigh" masses
+        const rows = Array.from(
+          document.querySelectorAll('#recipe-lines-container .recipe-line-row')
+        );
+        if (!rows.length) return;
+
+        const lineMap = {};
+        currentRecipeLines.forEach(l => {
+          lineMap[l.recipe_line_id] = l;
+        });
+
+        const expandedData = [];
+
+        // 1) Build TARGET dry mass per material_id from recipe lines
+        const targetDryByMaterialId = {};   // { material_id: target_dry_g }
+        const remainingDryByMaterialId = {}; // { material_id: remaining_dry_g }
+
+        // Only lines with include_in_pct=true (i.e., slurry_percent present) define dry targets
+        currentRecipeLines.forEach(l => {
+          if (!l || !l.include_in_pct) return;
+          if (l.slurry_percent === null || l.slurry_percent === undefined || l.slurry_percent === '') return;
+
+          const pct = Number(l.slurry_percent);
+          if (!Number.isFinite(pct) || pct <= 0) return;
+
+          const matId = Number(l.material_id);
+          if (!Number.isFinite(matId)) return;
+
+          const dry = totalDryMass * (pct / 100);
+
+          targetDryByMaterialId[matId] = (targetDryByMaterialId[matId] || 0) + dry;
+        });
+
+        // Fill STEP 1–2 view: target dry mass column
+        rows.forEach(row => {
+          const lineId = Number(row.dataset.recipeLineId);
+          const line = lineMap[lineId];
+          if (!line) return;
+
+          const span = row.querySelector('.target-dry-mass');
+          if (!span) return;
+
+          const matId = Number(line.material_id);
+          const value = targetDryByMaterialId[matId];
+
+          span.textContent = Number.isFinite(value)
+            ? value.toFixed(4) + ' g'
+            : '';
+        });
+
+        // Initialize remaining = target
+        Object.keys(targetDryByMaterialId).forEach(k => {
+          remainingDryByMaterialId[k] = targetDryByMaterialId[k];
+        });
+
+        // 2) Aggregate ACTUAL contributions from selected instances (including solvents)
+        const aggregatedByMaterialId = {}; // { material_id: mass_g }
+        // contributions per recipe line (for overlap reporting)
+        // lineContribByLineId[lineId][materialId] = mass_g
+        const lineContribByLineId = {};
+
+        for (const row of rows) {
+          const lineId = Number(row.dataset.recipeLineId);
+          const line = lineMap[lineId];
+          if (!line) continue;
+
+          const selectedInstanceId = selectedInstanceByLineId[lineId];
+          const plannedCell = row.querySelector('.planned-mass');
+
+          if (!selectedInstanceId) {
+            if (plannedCell) plannedCell.textContent = '';
+            continue;
+          }
+
+          const lineMaterialId = Number(line.material_id);
+          const needDry = Number(remainingDryByMaterialId[lineMaterialId] || 0);
+
+          // If this line's material is already satisfied by previous mixtures, show 0.0000 g to weigh
+          if (!Number.isFinite(needDry) || needDry <= 0) {
+            if (plannedCell) plannedCell.textContent = (0).toFixed(4) + ' g';
+            continue;
+          }
+
+          // Ensure composition is loaded
+          if (!instanceComponentsCache[selectedInstanceId]) {
+            fetchInstanceComponents(selectedInstanceId)
+              .then(components => {
+                instanceComponentsCache[selectedInstanceId] = components;
+                recalculatePlannedMasses(); // re-run after loading
+              })
+              .catch(console.error);
+
+            continue; // wait until components are loaded
+          }
+
+          let components = instanceComponentsCache[selectedInstanceId];
+
+          // Fallback: no composition defined → treat instance as 100% of itself (solid)
+          if (!components || components.length === 0) {
+            components = [{
+              component_material_instance_id: null,
+              component_name: line.material_name,
+              material_id: lineMaterialId,
+              material_name: line.material_name,
+              material_role: null,
+              mass_fraction: 1
+            }];
+          }
+
+          // Find the fraction of THIS line's material inside the selected instance (by material_id)
+          const match = components.find(c =>
+            Number(c.material_id ?? c.component_material_id) === lineMaterialId
+          );
+          const fLine = match ? Number(match.mass_fraction) : NaN;
+
+          if (!Number.isFinite(fLine) || fLine <= 0) {
+            // If the instance does not contain the requested material_id, show blank and skip
+            if (plannedCell) plannedCell.textContent = '';
+            continue;
+          }
+
+          // Required instance mass to supply the remaining dry mass of this line's material
+          // (This is the "to weigh" mass of the instance.)
+          const instanceMassToWeigh = needDry / fLine;
+          const instanceSelectEl = row.querySelector('.material-instance-select');
+
+          expandedData.push({
+            role: recipeRoleLabel(line.recipe_role),
+            material: line.material_name,
+            instanceName: instanceSelectEl && instanceSelectEl.selectedIndex >= 0
+              ? instanceSelectEl.options[instanceSelectEl.selectedIndex].textContent
+              : '',
+            instanceMass: instanceMassToWeigh,
+            components: components.map(comp => {
+              const frac = Number(comp.mass_fraction);
+              const safeFrac = Number.isFinite(frac) && frac > 0 ? frac : 0;
+
+              return {
+                material_name: comp.material_name,
+                fraction: safeFrac,
+                mass: instanceMassToWeigh * safeFrac
+              };
+            })
+          });
+
+          if (plannedCell) {
+            plannedCell.textContent = instanceMassToWeigh.toFixed(4) + ' g';
+          }
+
+          // Add contributions of every component from this instance
+          components.forEach(comp => {
+            const frac = Number(comp.mass_fraction);
+            if (!Number.isFinite(frac)) return;
+
+            const mass = instanceMassToWeigh * frac;
+            const mid = Number(comp.material_id);
+            if (!Number.isFinite(mid)) return;
+
+            // 1) total aggregation (unchanged behavior)
+            aggregatedByMaterialId[mid] = (aggregatedByMaterialId[mid] || 0) + mass;
+
+            // 2) per-line contribution tracking (NEW)
+            if (!lineContribByLineId[lineId]) {
+              lineContribByLineId[lineId] = {};
+            }
+            lineContribByLineId[lineId][mid] =
+              (lineContribByLineId[lineId][mid] || 0) + mass;
+          });
+
+          // Subtract SOLID contributions from remaining targets (overlap accounting)
+          components.forEach(comp => {
+            const frac = Number(comp.mass_fraction);
+            if (!Number.isFinite(frac)) return;
+
+            const mid = Number(comp.material_id);
+            if (!Number.isFinite(mid)) return;
+
+            const role = comp.material_role;
+            if (role === 'solvent') return;
+
+            if (remainingDryByMaterialId[mid] == null) return;
+
+            const mass = instanceMassToWeigh * frac;
+            remainingDryByMaterialId[mid] -= mass;
+            if (remainingDryByMaterialId[mid] < 0) {
+              remainingDryByMaterialId[mid] = 0;
+            }
+          });
+        }
+
+        expandedData.sort((a, b) => {
+          const aIndex = currentRecipeLines.findIndex(l =>
+            recipeRoleLabel(l.recipe_role) === a.role &&
+            l.material_name === a.material
+          );
+          const bIndex = currentRecipeLines.findIndex(l =>
+            recipeRoleLabel(l.recipe_role) === b.role &&
+            l.material_name === b.material
+          );
+          return aIndex - bIndex;
+        });
+        
+        renderExpandedCalculation(expandedData);
+      }
+
+      // -------- Status helper --------
+      // (kept minimal on this page for now)
+      function logLoadError(err) {
+        console.error(err);
+      }
+
+      // -------- Reference dropdowns --------
+
+      async function loadUsers() {
+        try {
+          const users = await fetchUsers();
+
+          fillSelect(
+            createdBySelect,
+            users,
+            'user_id',
+            u => u.name,
+            '<option value="">— выбрать пользователя —</option>'
+          );
+        } catch (err) {
+          logLoadError(err);
+        }
+      }
+
+      async function loadProjects() {
+        try {
+          const projects = await fetchProjects();
+
+          fillSelect(
+            projectSelect,
+            projects,
+            'project_id',
+            p => p.name,
+            '<option value="">— выбрать проект —</option>'
+          );
+        } catch (err) {
+          logLoadError(err);
+        }
+      }
+
+      async function loadRecipesDropdown() {
+        try {
+          const projectId = projectSelect.value
+            ? Number(projectSelect.value)
+            : null;
+
+          const role = tapeTypeSelect.value || null;
+
+          // If no role selected → show only placeholder
+          if (!role) {
+            recipeSelect.innerHTML = '<option value="">— выбрать рецепт —</option>';
+            recipeSelect.value = '';
+            clearRecipeLines();
+            return;
+          }
+
+          const previousValue = recipeSelect.value;
+
+          const recipes = await fetchRecipes(projectId, role);
+
+          fillSelect(
+            recipeSelect,
+            recipes,
+            'tape_recipe_id',
+            r => (r.variant_label ? `${r.name} — ${r.variant_label}` : r.name),
+            '<option value="">— выбрать рецепт —</option>'
+          );
+
+          // Auto-clear if previously selected recipe no longer valid
+          if (
+            previousValue &&
+            !recipes.some(r => String(r.tape_recipe_id) === previousValue)
+          ) {
+            recipeSelect.value = '';
+            clearRecipeLines();
+          }
+
+        } catch (err) {
+          logLoadError(err);
+        }
+      }
+
+      // -------- Events --------
+
+      // refresh reference dropdowns on focus (same pattern as reference pages)
+      createdBySelect.addEventListener('focus', loadUsers);
+      projectSelect.addEventListener('focus', loadProjects);
+      recipeSelect.addEventListener('focus', loadRecipesDropdown);
+      tapeTypeSelect.addEventListener('change', loadRecipesDropdown);
+
+      // optional: when project changes, recipes list should match the project
+      projectSelect.addEventListener('change', () => {
+        // selection should not be wiped during focus refresh; on project change, a refresh is intended
+        loadRecipesDropdown();
+      });
+
+      recipeSelect.addEventListener('change', async () => {
+        const recipeId = recipeSelect.value;
+
+        if (!recipeId) {
+          currentRecipeLines = [];
+          selectedInstanceByLineId = {};   // reset instance selections
+          instanceCacheByMaterialId = {};  // reset instance cache
+          clearRecipeLines();
+          return;
+        }
+
+        try {
+          const lines = await fetchRecipeLines(recipeId);
+          currentRecipeLines = lines;
+
+          selectedInstanceByLineId = {};   // reset instance selections for new recipe
+          instanceCacheByMaterialId = {};  // clear cache for clean reload
+
+          renderRecipeLines(lines);
+
+          // trigger recalculation immediately if mass already entered
+          recalculatePlannedMasses();
+
+        } catch (err) {
+          console.error(err);
+        }
+      });
+
+      const activeMassInput = document.getElementById('active-mass-g');
+      const calcModeSelect  = document.getElementById('calc-mode');
+      const activeMassLabel = document.querySelector('label[for="active-mass-g"]');
+
+      calcModeSelect.addEventListener('change', () => {
+        if (calcModeSelect.value === 'total_mass') {
+          activeMassLabel.textContent = 'Общая масса суспензии, г';
+        } else {
+          activeMassLabel.textContent = 'Масса активного материала, г';
+        }
+      });
+
+      activeMassInput.addEventListener('input', recalculatePlannedMasses);
+      calcModeSelect.addEventListener('change', recalculatePlannedMasses);
+
+      // -------- Init --------
+
+      loadUsers();
+      loadProjects();
+      loadRecipesDropdown();
+      
+    </script>
   </body>
 </html>
