@@ -76,7 +76,7 @@
       required
     />
 
-    <form name="tapes-form" autocomplete="on">
+    <form name="tape-form" hidden autocomplete="on">
 
       <!-- FormData ignores fields without `name` -->
       <details id="0-general-info">
@@ -84,6 +84,14 @@
       
         <fieldset id="tapes-general-info">
           <legend>Общая информация о ленте</legend>
+
+          <input
+            type="text"
+            name="name"
+            id="tape-name-input"
+            hidden
+          />
+          <h2></h2>
 
           <label for="tape-created-by">Кто добавил</label>
           <select id="tape-created-by" name="created_by" required>
@@ -599,10 +607,22 @@
         </fieldset>
       </details>
     </form>
+    <ul id="tapesList" class="users-list"></ul>
     <div class="autosave-message" aria-live="polite"></div>
     
     <script>
       // -------- State and helpers --------
+
+      const addInput = document.getElementById('tape-name');
+      const nameInput = document.getElementById('tape-name-input');
+      const form = document.forms['tape-form'];
+      const title = form.querySelector('h2');
+      const saveBtn = document.getElementById('saveBtn');
+      const clearBtn = document.getElementById('clearBtn');
+      const tapesList = document.getElementById('tapesList');
+
+      let mode = null;
+      let currentId = null;
 
       const createdBySelect = document.getElementById('tape-created-by');
       const projectSelect   = document.getElementById('project_id');
@@ -615,6 +635,24 @@
       let instanceCacheByMaterialId = {}; // { [material_id]: [instances...] }
       let instanceComponentsCache = {}; // { [material_instance_id]: [ { component_material_id, component_name, mass_fraction } ] }
       
+      function showForm() {
+        form.hidden = false;
+        addInput.disabled = true;
+      }
+
+      function hideForm() {
+        form.hidden = true;
+        addInput.disabled = false;
+      }
+
+      function resetForm() {
+        form.reset();
+        title.textContent = '';
+        mode = null;
+        currentId = null;
+        hideForm();
+      }
+
       function fillSelect(selectEl, items, valueKey, labelFn, placeholderHtml) {
         const current = selectEl.value;
 
@@ -645,12 +683,8 @@
         return res.json();
       }
 
-      async function fetchRecipes(projectId, role) {
+      async function fetchRecipes(role) {
         const params = new URLSearchParams();
-
-        if (projectId) {
-          params.append('project_id', projectId);
-        }
 
         if (role) {
           params.append('role', role);
@@ -709,6 +743,57 @@
         return res.json();
       }
 
+      async function createTape(data) {
+        const res = await fetch('/api/tapes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка сохранения');
+        }
+
+        return res.json();
+      }
+
+      async function fetchTapes() {
+        const res = await fetch('/api/tapes');
+        return res.json();
+      }
+      
+      async function loadTapes() {
+        const tapes = await fetchTapes();
+        renderTapes(tapes);
+      }
+      
+      async function updateTape(id, data) {
+        const res = await fetch(`/api/tapes/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка обновления');
+        }
+
+        return res.json();
+      }
+
+      async function deleteTape(id) {
+        const res = await fetch(`/api/tapes/${id}`, {
+          method: 'DELETE'
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка удаления');
+        }
+      }
+      
       // -------- Rendering --------
       function recipeRoleLabel(recipeRole) {
         const map = {
@@ -1165,6 +1250,86 @@
         renderExpandedCalculation(expandedData);
       }
 
+      function renderTapes(tapes) {
+        tapesList.innerHTML = '';
+
+        tapes.forEach(t => {
+          const li = document.createElement('li');
+          li.className = 'user-row';
+
+          const info = document.createElement('div');
+          info.className = 'user-info';
+
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent = t.name;
+
+          const dateSpan = document.createElement('span');
+          dateSpan.textContent =
+            new Date(t.created_at).toLocaleDateString();
+
+          info.appendChild(nameSpan);
+          info.appendChild(dateSpan);
+
+          const actions = document.createElement('div');
+          actions.className = 'actions';
+
+          const editBtn = document.createElement('button');
+          editBtn.textContent = '✏️';
+
+          editBtn.onclick = () => {
+            mode = 'edit';
+            currentId = t.tape_id;
+
+            showForm();
+            
+
+            title.textContent = t.name;
+            nameInput.value = t.name;
+
+            form.elements['notes'].value = t.notes || '';
+          };
+
+          const duplicateBtn = document.createElement('button');
+          duplicateBtn.textContent = '📄';
+
+          duplicateBtn.onclick = () => {
+            mode = 'create';
+            currentId = null;
+
+            showForm();
+
+            const copyName = t.name + ' (копия)';
+            title.textContent = copyName;
+            nameInput.value = copyName;
+
+            form.elements['notes'].value = t.notes || '';
+          };
+
+          const deleteBtn = document.createElement('button');
+          deleteBtn.textContent = '🗑';
+
+          deleteBtn.onclick = async () => {
+            if (!confirm(`Удалить ленту "${t.name}"?`)) return;
+
+            try {
+              await deleteTape(t.tape_id);
+              loadTapes();
+            } catch (err) {
+              console.error(err);
+            }
+          };
+
+          actions.appendChild(editBtn);
+          actions.appendChild(duplicateBtn);
+          actions.appendChild(deleteBtn);
+
+          li.appendChild(info);
+          li.appendChild(actions);
+
+          tapesList.appendChild(li);
+        });
+      }
+
       // -------- Status helper --------
       // (kept minimal on this page for now)
       function logLoadError(err) {
@@ -1206,11 +1371,8 @@
       }
 
       async function loadRecipesDropdown() {
+        document.getElementById('0-tape-recipe-materials').open = true;
         try {
-          const projectId = projectSelect.value
-            ? Number(projectSelect.value)
-            : null;
-
           const role = tapeTypeSelect.value || null;
 
           // If no role selected → show only placeholder
@@ -1223,7 +1385,7 @@
 
           const previousValue = recipeSelect.value;
 
-          const recipes = await fetchRecipes(projectId, role);
+          const recipes = await fetchRecipes(role);
 
           fillSelect(
             recipeSelect,
@@ -1289,50 +1451,6 @@
         }
       });
 
-      document.getElementById('tape-name').addEventListener('keydown', async (e) => {
-        if (e.key !== 'Enter') return;
-
-        e.preventDefault();
-
-        if (currentTapeId) return; // already created
-
-        const projectId = Number(projectSelect.value);
-        const recipeId  = Number(recipeSelect.value);
-        const createdBy = Number(createdBySelect.value);
-        const notes     = document.getElementById('notes').value;
-
-        if (!projectId || !recipeId || !createdBy) {
-          alert('Заполните общую информацию и выберите рецепт');
-          return;
-        }
-
-        try {
-          const res = await fetch('/api/tapes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              project_id: projectId,
-              tape_recipe_id: recipeId,
-              created_by: createdBy,
-              notes
-            })
-          });
-
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || 'Ошибка создания ленты');
-          }
-
-          const tape = await res.json();
-          currentTapeId = tape.tape_id;
-
-          alert(`Лента создана (ID ${currentTapeId})`);
-
-        } catch (err) {
-          alert(err.message);
-        }
-      });
-
       const activeMassInput = document.getElementById('active-mass-g');
       const calcModeSelect  = document.getElementById('calc-mode');
       const activeMassLabel = document.querySelector('label[for="active-mass-g"]');
@@ -1348,7 +1466,57 @@
       activeMassInput.addEventListener('input', recalculatePlannedMasses);
       calcModeSelect.addEventListener('change', recalculatePlannedMasses);
 
+      addInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+
+        e.preventDefault();
+        if (!form.hidden) return;
+
+        const name = addInput.value.trim();
+        if (!name) return;
+
+        mode = 'create';
+        currentId = null;
+
+        title.textContent = name;
+        nameInput.value = name;
+
+        showForm();
+        document.getElementById('0-general-info').open = true;
+
+        addInput.value = '';
+      });
+
       // -------- Buttons --------
+
+      saveBtn.addEventListener('click', async () => {
+        if (!mode) return;
+
+        const data = Object.fromEntries(new FormData(form));
+        data.name = title.textContent;
+
+        // ADD THIS BLOCK
+        if (!data.project_id || !data.tape_recipe_id || !data.created_by) {
+          alert('Выберите проект, рецепт и пользователя');
+          return;
+        }
+
+        try {
+          if (mode === 'create') {
+            await createTape(data);
+          }
+
+          if (mode === 'edit') {
+            await updateTape(currentId, data);
+          }
+
+          resetForm();
+          loadTapes();
+        } catch (err) {
+          console.error(err);
+        }
+      });
+
       const dryingSaveBtn = document.getElementById('0-drying-save-btn');
 
       dryingSaveBtn.addEventListener('click', async () => {
@@ -1395,7 +1563,9 @@
       });
 
       // -------- Init --------
-
+      
+      hideForm();
+      loadTapes();
       loadUsers();
       loadProjects();
       loadRecipesDropdown();

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict MEcaoGMua7qGed81k2nkEn4Wbynbx8FE1EZ1PKwf28yceh1dxm4FAVO3DEUTpYm
+\restrict H3cUOaxYFpOFba2JhKvK11c4gGaKyfzSTtliDDP57YLP1ZuMIvc6vNHmeiEc70u
 
 -- Dumped from database version 16.11 (Postgres.app)
 -- Dumped by pg_dump version 16.11 (Postgres.app)
@@ -604,7 +604,6 @@ ALTER SEQUENCE public.electrodes_electrode_id_seq OWNED BY public.electrodes.ele
 
 CREATE TABLE public.electrolytes (
     electrolyte_id integer NOT NULL,
-    project_id integer NOT NULL,
     name text NOT NULL,
     electrolyte_type public.electrolyte_type NOT NULL,
     solvent_system text,
@@ -1176,7 +1175,6 @@ ALTER SEQUENCE public.tape_recipe_lines_recipe_line_id_seq OWNED BY public.tape_
 
 CREATE TABLE public.tape_recipes (
     tape_recipe_id integer NOT NULL,
-    project_id integer NOT NULL,
     role public.electrode_role NOT NULL,
     name text NOT NULL,
     variant_label text,
@@ -1286,10 +1284,11 @@ CREATE TABLE public.tapes (
     tape_id integer NOT NULL,
     project_id integer NOT NULL,
     tape_recipe_id integer NOT NULL,
-    prepared_by integer NOT NULL,
-    prepared_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
     status public.tape_status,
-    notes text
+    notes text,
+    name text DEFAULT 'Unnamed tape'::text NOT NULL
 );
 
 
@@ -1567,6 +1566,642 @@ ALTER TABLE ONLY public.users ALTER COLUMN user_id SET DEFAULT nextval('public.u
 --
 
 ALTER TABLE ONLY public.wet_mixing_methods ALTER COLUMN wet_mixing_id SET DEFAULT nextval('public.wet_mixing_methods_wet_mixing_id_seq'::regclass);
+
+
+--
+-- Data for Name: active_materials; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.active_materials (active_material_id, role, th_capacity_mah, th_capacity_ma_g, created_at, material_instance_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: batteries; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.batteries (battery_id, project_id, form_factor, created_by, created_at, status, notes) FROM stdin;
+\.
+
+
+--
+-- Data for Name: battery_coin_config; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_coin_config (battery_id, half_cell_type) FROM stdin;
+\.
+
+
+--
+-- Data for Name: battery_cyl_config; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_cyl_config (battery_id, param_1, param_2) FROM stdin;
+\.
+
+
+--
+-- Data for Name: battery_electrodes; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_electrodes (battery_id, electrode_id, role, position_index) FROM stdin;
+\.
+
+
+--
+-- Data for Name: battery_electrolyte; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_electrolyte (battery_electrolyte_id, battery_id, electrolyte_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: battery_electrolyte_parameters; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_electrolyte_parameters (battery_electrolyte_id, parameter_name, value, unit) FROM stdin;
+\.
+
+
+--
+-- Data for Name: battery_pouch_config; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_pouch_config (battery_id, param_1, param_2) FROM stdin;
+\.
+
+
+--
+-- Data for Name: battery_qc; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_qc (battery_id, ocv_v, esr_mohm) FROM stdin;
+\.
+
+
+--
+-- Data for Name: battery_sep_config; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_sep_config (battery_id, separator_id, separator_layout, spacer_thickness_mm, spacer_count, notes) FROM stdin;
+\.
+
+
+--
+-- Data for Name: coating_methods; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.coating_methods (coating_id, name, gap_um, coat_temp_c, coat_time_min, comments) FROM stdin;
+1	dr_blade	\N	\N	\N	Ракель / Dr. Blade (GN-VC-15H)
+2	coater_machine	\N	\N	\N	Машина для намазки
+\.
+
+
+--
+-- Data for Name: dry_mixing_methods; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.dry_mixing_methods (dry_mixing_id, name, description) FROM stdin;
+1	none	Сухую смесь не перемешивали
+2	mortar_pestle	Вручную: ступка и пестик
+3	spatula	Вручную: шпателем
+4	turbula	Турбула / смеситель Шатца
+\.
+
+
+--
+-- Data for Name: electrode_circle; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.electrode_circle (electrode_id, diameter_mm) FROM stdin;
+\.
+
+
+--
+-- Data for Name: electrode_cut_batches; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.electrode_cut_batches (cut_batch_id, tape_id, created_by, created_at, comments) FROM stdin;
+\.
+
+
+--
+-- Data for Name: electrode_drying; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.electrode_drying (drying_id, cut_batch_id, start_time, end_time, temperature_c, other_parameters, comments) FROM stdin;
+\.
+
+
+--
+-- Data for Name: electrode_rectangle; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.electrode_rectangle (electrode_id, length_mm, width_mm) FROM stdin;
+\.
+
+
+--
+-- Data for Name: electrode_status; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.electrode_status (status_code, name) FROM stdin;
+1	available
+2	used
+3	scrapped
+\.
+
+
+--
+-- Data for Name: electrodes; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.electrodes (electrode_id, cut_batch_id, shape, diameter_mm, length_mm, width_mm, total_mass_g, cup_number, scrapped_reason, comments, status_code, used_in_battery_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: electrolytes; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.electrolytes (electrolyte_id, name, electrolyte_type, solvent_system, salts, concentration, additives, notes, status, created_by, created_at) FROM stdin;
+1	TEST Elec 1	liquid	\N	\N	\N	\N	comment	active	33	2026-02-11 02:22:26.40737+03
+2	TEST Elec 1 (копия)	liquid	\N	\N	\N	\N	comment	active	34	2026-02-11 02:54:17.669943+03
+\.
+
+
+--
+-- Data for Name: foil_mass_measurements; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.foil_mass_measurements (foil_measurement_id, cut_batch_id, mass_g, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: foils; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.foils (foil_id, type, comments) FROM stdin;
+1	Cu	Для графита
+2	Al	Для титанатов
+\.
+
+
+--
+-- Data for Name: material_instance_components; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.material_instance_components (material_instance_component_id, parent_material_instance_id, component_material_instance_id, mass_fraction, notes) FROM stdin;
+10	30	23	0.015	\N
+11	29	24	0.515	\N
+12	29	9	0.485	\N
+13	32	33	0.004	\N
+14	32	25	0.02	\N
+15	32	8	0.972	\N
+16	32	34	0.0039000000000000003	\N
+17	30	9	0.985	\N
+18	7	25	0.05	\N
+2	7	8	0.95	\N
+19	5	8	0.93	\N
+20	5	25	0.07	\N
+\.
+
+
+--
+-- Data for Name: material_instances; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.material_instances (material_instance_id, material_id, notes, created_at, name) FROM stdin;
+7	5	\N	2026-02-19 14:08:54.159656+03	5% Solef 5130 PVDF in NMP
+39	22	\N	2026-02-24 12:54:35.690839+03	S360
+40	22	\N	2026-02-24 12:54:39.94632+03	AML 403
+41	22	\N	2026-02-24 12:55:28.726871+03	SiC
+28	7	\N	2026-02-19 20:33:49.717437+03	NMC M2C2
+42	23	\N	2026-02-24 14:40:51.011599+03	NMC C85E dry
+5	5	PVDF powder test	2026-02-19 14:07:45.578558+03	7% PVDF in NMP
+23	10	\N	2026-02-19 20:31:47.905885+03	CMC dry
+24	11	\N	2026-02-19 20:31:57.465104+03	SBR dry
+25	5	\N	2026-02-19 20:32:06.618994+03	PVDF dry
+9	12	\N	2026-02-19 14:43:46.671379+03	DI H2O
+10	2	\N	2026-02-19 14:44:12.898832+03	Super P 5130
+26	8	\N	2026-02-19 20:33:31.275198+03	LFP S19 TEST
+27	4	\N	2026-02-19 20:33:38.894146+03	NMC 811 TEST
+8	3	NMP bulk solvent	2026-02-19 14:12:38.574079+03	NMP solvent (pure)
+30	10	\N	2026-02-19 20:36:04.781038+03	1.5% CMC in water
+29	11	\N	2026-02-19 20:35:39.567477+03	51.5% SBR in water
+32	13	\N	2026-02-19 20:37:17.300709+03	0.4% ОУНТ
+33	13	\N	2026-02-19 21:14:31.315868+03	ОУНТ dry
+34	19	\N	2026-02-19 21:16:09.793655+03	DMP solvent (pure)
+\.
+
+
+--
+-- Data for Name: materials; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.materials (material_id, name, role) FROM stdin;
+7	NMC M2C2	cathode_active
+23	NMC C85E	cathode_active
+5	PVDF	binder
+3	NMP	solvent
+2	Super P (Сажа)	conductive_additive
+10	CMC	binder
+11	SBR	binder
+12	Вода	solvent
+13	ОУНТ	conductive_additive
+4	NCM 811	cathode_active
+8	LFP S19	cathode_active
+19	DMP	solvent
+22	Graphite	anode_active
+\.
+
+
+--
+-- Data for Name: module_batteries; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.module_batteries (module_id, battery_id, position_index) FROM stdin;
+\.
+
+
+--
+-- Data for Name: module_qc; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.module_qc (module_id, module_meas_1, module_meas_2, notes) FROM stdin;
+\.
+
+
+--
+-- Data for Name: modules; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.modules (module_id, other_info_about_modules) FROM stdin;
+\.
+
+
+--
+-- Data for Name: operation_types; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.operation_types (operation_type_id, code, display, ui_order) FROM stdin;
+1	drying_am	Drying AM	0
+2	weighing	Weighing	1
+3	mixing	Mixing	2
+4	coating	Coating	3
+5	drying_tape	Drying (tape)	4
+6	calendering	Calendering	5
+7	drying_pressed_tape	Drying (pressed tape)	6
+\.
+
+
+--
+-- Data for Name: projects; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.projects (project_id, name, lead_id, start_date, due_date, status, description, created_by, created_at, updated_at) FROM stdin;
+4	Project 2	43	2026-02-10	2029-06-04	active	Project 2 comment	43	2026-02-02 16:43:35.323236+03	2026-02-02 16:43:35.323236+03
+6	Project 3	47	2026-02-11	\N	active	Comment to project	47	2026-02-12 15:00:07.573411+03	2026-02-12 15:00:15.748864+03
+3	Project 1	38	2026-02-01	2028-01-01	active	project 1 comment	38	2026-02-02 16:43:06.370289+03	2026-02-13 11:22:10.394662+03
+\.
+
+
+--
+-- Data for Name: separator_structure; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.separator_structure (sep_str_id, name, comments) FROM stdin;
+1	PE-PP	comments
+4	Coated	comments comments
+5	structure 1	\N
+6	New structure	comment
+7	New structure.v2	\N
+\.
+
+
+--
+-- Data for Name: separators; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.separators (sep_id, supplier, name, brand, batch, structure_id, air_perm, air_perm_units, thickness_um, porosity, comments, status, depleted_at, created_by, file, file_path, created_at, updated_at) FROM stdin;
+10	Celgard	Celgard 2330	2320	A1 test	1	\N	\N	\N	\N	no comments	available	\N	39	\N	\N	2026-01-30 19:29:30.594069+03	2026-01-30 19:29:30.594069+03
+11	\N	Separator	\N	\N	6	\N	\N	\N	\N	\N	available	\N	42	\N	\N	2026-02-01 14:36:40.342922+03	2026-02-01 14:36:40.342922+03
+5	Celgard	Celgard 2320	2320	A1 test	7	\N	\N	\N	\N	no comments	available	\N	33	\N	\N	2026-01-30 15:02:58.964101+03	2026-01-30 15:02:58.964101+03
+\.
+
+
+--
+-- Data for Name: tape_process_steps; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tape_process_steps (step_id, tape_id, operation_type_id, performed_by, started_at, comments) FROM stdin;
+\.
+
+
+--
+-- Data for Name: tape_recipe_line_actuals; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tape_recipe_line_actuals (actual_id, tape_id, recipe_line_id, measure_mode, actual_mass_g, actual_volume_ml, recorded_at, material_instance_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: tape_recipe_lines; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tape_recipe_lines (recipe_line_id, tape_recipe_id, material_id, recipe_role, line_notes, slurry_percent, include_in_pct) FROM stdin;
+130	54	2	additive	\N	2.2	t
+131	54	5	binder	Solef 5130: 5%	1.8	t
+139	56	2	additive	\N	2	t
+140	56	10	binder	1.5%	1.3	t
+141	56	11	binder	51.1%	1.7	t
+129	54	7	cathode_active	\N	96	t
+96	47	4	cathode_active	\N	96	t
+26	39	4	cathode_active	\N	0	t
+97	47	2	additive	\N	2	t
+98	47	5	binder	7% PVDF	2	t
+28	39	2	additive	\N	0	t
+29	39	3	solvent	\N	0	t
+149	48	8	cathode_active	\N	96.8	t
+150	48	2	additive	\N	1	t
+151	48	13	additive	Суспензия НТ: 0.4% ОУНТ, 2.0%, PVDF 97.2% NMP, 0.39% DMP	0.2	t
+152	48	5	binder	Solef 5130:  5%	2	t
+132	54	3	solvent	\N	\N	f
+142	56	12	solvent	\N	\N	f
+99	47	3	solvent	\N	\N	f
+153	48	3	solvent	\N	\N	f
+138	56	22	anode_active	\N	95	t
+\.
+
+
+--
+-- Data for Name: tape_recipes; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tape_recipes (tape_recipe_id, role, name, variant_label, notes, created_by, created_at) FROM stdin;
+39	cathode	TEST NCM 811 Recipe	v1	v1 comment	33	2026-02-09 21:43:38.137357+03
+47	cathode	NCM 811	\N	\N	34	2026-02-12 18:36:00.05876+03
+54	cathode	NMC M2C2	\N	\N	33	2026-02-18 18:51:12.607111+03
+56	anode	S360	\N	\N	33	2026-02-18 18:54:44.505341+03
+48	cathode	LFP S19	\N	\N	33	2026-02-13 14:28:32.747597+03
+\.
+
+
+--
+-- Data for Name: tape_step_calendering; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tape_step_calendering (step_id, temp_c, pressure_value, pressure_units, draw_speed_m_min, other_params, init_thickness_microns, final_thickness_microns, no_passes, appearance) FROM stdin;
+\.
+
+
+--
+-- Data for Name: tape_step_coating; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tape_step_coating (step_id, foil_id, coating_id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: tape_step_drying; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tape_step_drying (step_id, temperature_c, atmosphere, target_duration_min, other_parameters) FROM stdin;
+\.
+
+
+--
+-- Data for Name: tape_step_mixing; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tape_step_mixing (step_id, slurry_volume_ml, dry_mixing_id, dry_start_time, dry_duration_min, dry_rpm, wet_mixing_id, wet_start_time, wet_duration_min, wet_rpm) FROM stdin;
+\.
+
+
+--
+-- Data for Name: tapes; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.tapes (tape_id, project_id, tape_recipe_id, created_by, created_at, status, notes, name) FROM stdin;
+1	3	39	33	2026-02-12 17:42:17.876583+03	\N	\N	Unnamed tape
+\.
+
+
+--
+-- Data for Name: users; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.users (user_id, name, active) FROM stdin;
+34	Irina	t
+38	Olga	t
+39	Jerald	t
+35	Ivan	t
+41	New user	t
+42	Marina	t
+43	Viktor V. Shapovalov	t
+45	Roman Batalov	t
+47	Karlson	t
+33	Dalia	t
+48	Dima	t
+49	Julia	t
+\.
+
+
+--
+-- Data for Name: wet_mixing_methods; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.wet_mixing_methods (wet_mixing_id, name, description) FROM stdin;
+1	by_hand	Вручную
+2	mag_stir	Магнитная мешалка
+3	gn_vm_7	Вакуумный миксер GN-VM-7
+\.
+
+
+--
+-- Name: active_materials_active_material_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.active_materials_active_material_id_seq', 1, false);
+
+
+--
+-- Name: batteries_battery_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.batteries_battery_id_seq', 1, false);
+
+
+--
+-- Name: battery_electrolyte_battery_electrolyte_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.battery_electrolyte_battery_electrolyte_id_seq', 1, false);
+
+
+--
+-- Name: coating_methods_coating_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.coating_methods_coating_id_seq', 2, true);
+
+
+--
+-- Name: dry_mixing_methods_dry_mixing_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.dry_mixing_methods_dry_mixing_id_seq', 4, true);
+
+
+--
+-- Name: electrode_cut_batches_cut_batch_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.electrode_cut_batches_cut_batch_id_seq', 1, false);
+
+
+--
+-- Name: electrode_drying_drying_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.electrode_drying_drying_id_seq', 1, false);
+
+
+--
+-- Name: electrodes_electrode_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.electrodes_electrode_id_seq', 1, false);
+
+
+--
+-- Name: electrolytes_electrolyte_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.electrolytes_electrolyte_id_seq', 7, true);
+
+
+--
+-- Name: foil_mass_measurements_foil_measurement_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.foil_mass_measurements_foil_measurement_id_seq', 1, false);
+
+
+--
+-- Name: foils_foil_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.foils_foil_id_seq', 2, true);
+
+
+--
+-- Name: material_instance_components_material_instance_component_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.material_instance_components_material_instance_component_id_seq', 27, true);
+
+
+--
+-- Name: material_instances_material_instance_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.material_instances_material_instance_id_seq', 42, true);
+
+
+--
+-- Name: materials_material_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.materials_material_id_seq', 24, true);
+
+
+--
+-- Name: modules_module_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.modules_module_id_seq', 1, false);
+
+
+--
+-- Name: operation_types_operation_type_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.operation_types_operation_type_id_seq', 7, true);
+
+
+--
+-- Name: projects_project_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.projects_project_id_seq', 7, true);
+
+
+--
+-- Name: separator_structure_sep_str_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.separator_structure_sep_str_id_seq', 7, true);
+
+
+--
+-- Name: separators_sep_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.separators_sep_id_seq', 12, true);
+
+
+--
+-- Name: tape_process_steps_step_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.tape_process_steps_step_id_seq', 1, false);
+
+
+--
+-- Name: tape_recipe_line_actuals_actual_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.tape_recipe_line_actuals_actual_id_seq', 1, false);
+
+
+--
+-- Name: tape_recipe_lines_recipe_line_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.tape_recipe_lines_recipe_line_id_seq', 166, true);
+
+
+--
+-- Name: tape_recipes_tape_recipe_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.tape_recipes_tape_recipe_id_seq', 60, true);
+
+
+--
+-- Name: tapes_tape_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.tapes_tape_id_seq', 1, true);
+
+
+--
+-- Name: users_user_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.users_user_id_seq', 49, true);
+
+
+--
+-- Name: wet_mixing_methods_wet_mixing_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.wet_mixing_methods_wet_mixing_id_seq', 3, true);
 
 
 --
@@ -2279,14 +2914,6 @@ ALTER TABLE ONLY public.electrolytes
 
 
 --
--- Name: electrolytes electrolytes_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: Dalia
---
-
-ALTER TABLE ONLY public.electrolytes
-    ADD CONSTRAINT electrolytes_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(project_id);
-
-
---
 -- Name: foil_mass_measurements foil_mass_measurements_cut_batch_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: Dalia
 --
 
@@ -2447,14 +3074,6 @@ ALTER TABLE ONLY public.tape_recipes
 
 
 --
--- Name: tape_recipes tape_recipes_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: Dalia
---
-
-ALTER TABLE ONLY public.tape_recipes
-    ADD CONSTRAINT tape_recipes_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(project_id);
-
-
---
 -- Name: tape_step_calendering tape_step_calendering_step_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: Dalia
 --
 
@@ -2523,7 +3142,7 @@ ALTER TABLE ONLY public.tape_step_mixing
 --
 
 ALTER TABLE ONLY public.tapes
-    ADD CONSTRAINT tapes_prepared_by_fkey FOREIGN KEY (prepared_by) REFERENCES public.users(user_id);
+    ADD CONSTRAINT tapes_prepared_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(user_id);
 
 
 --
@@ -2546,5 +3165,5 @@ ALTER TABLE ONLY public.tapes
 -- PostgreSQL database dump complete
 --
 
-\unrestrict MEcaoGMua7qGed81k2nkEn4Wbynbx8FE1EZ1PKwf28yceh1dxm4FAVO3DEUTpYm
+\unrestrict H3cUOaxYFpOFba2JhKvK11c4gGaKyfzSTtliDDP57YLP1ZuMIvc6vNHmeiEc70u
 

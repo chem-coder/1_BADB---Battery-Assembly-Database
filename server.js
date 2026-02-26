@@ -113,6 +113,7 @@ app.delete('/api/users/:id', async (req, res) => {
 });
 
 
+
 // -------- SEPARATORS --------
 
 // CREATE
@@ -332,6 +333,7 @@ app.delete('/api/separators/:id', async (req, res) => {
 });
 
 
+
 // -------- STRUCTURES --------
 
 // CREATE
@@ -443,6 +445,7 @@ app.delete('/api/structures/:id', async (req, res) => {
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
+
 
 
 // -------- PROJECTS --------
@@ -606,6 +609,7 @@ app.delete('/api/projects/:id', async (req, res) => {
 });
 
 
+
 // -------- MATERIALS --------
 
 // CREATE
@@ -728,6 +732,7 @@ app.delete('/api/materials/:id', async (req, res) => {
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
+
 
 
 // -------- MATERIAL INSTANCES --------
@@ -892,6 +897,7 @@ app.delete('/api/material-instances/:id', async (req, res) => {
 });
 
 
+
 // -------- MATERIAL INSTANCE COMPONENTS --------
 
 // --- GET components for a material instance ---
@@ -1024,7 +1030,6 @@ app.delete('/api/material-instance-components/:id', async (req, res) => {
 // CREATE: new recipe + lines
 app.post('/api/recipes', async (req, res) => {
   const {
-    project_id,
     role,
     name,
     variant_label,
@@ -1033,11 +1038,9 @@ app.post('/api/recipes', async (req, res) => {
     lines
   } = req.body;
 
-  const projectId = Number(project_id);
   const createdBy = Number(created_by);
 
   if (
-    !Number.isInteger(projectId) ||
     !Number.isInteger(createdBy) ||
     !name ||
     !role ||
@@ -1055,12 +1058,12 @@ app.post('/api/recipes', async (req, res) => {
     const recipeResult = await client.query(
       `
       INSERT INTO tape_recipes (
-        project_id, role, name, variant_label, notes, created_by
+        role, name, variant_label, notes, created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING tape_recipe_id
       `,
-      [projectId, role, name, variant_label || null, notes || null, createdBy]
+      [role, name, variant_label || null, notes || null, createdBy]
     );
 
     const recipeId = recipeResult.rows[0].tape_recipe_id;
@@ -1153,7 +1156,6 @@ app.post('/api/recipes/:id/duplicate', async (req, res) => {
     const recipeResult = await client.query(
       `
       INSERT INTO tape_recipes (
-        project_id,
         role,
         name,
         variant_label,
@@ -1161,7 +1163,6 @@ app.post('/api/recipes/:id/duplicate', async (req, res) => {
         created_by
       )
       SELECT
-        project_id,
         role,
         name || ' (copy)',
         variant_label,
@@ -1217,16 +1218,8 @@ app.post('/api/recipes/:id/duplicate', async (req, res) => {
   }
 });
 
-// READ: list recipes by project_id
+// READ
 app.get('/api/recipes', async (req, res) => {
-  const projectId = req.query.project_id
-    ? Number(req.query.project_id)
-    : null;
-  
-  if (req.query.project_id && !Number.isInteger(projectId)) {
-    return res.status(400).json({ error: 'Некорректный project_id' });
-  }
-
   const role = req.query.role ? String(req.query.role) : null;
 
   if (req.query.role && role !== 'cathode' && role !== 'anode') {
@@ -1237,7 +1230,6 @@ app.get('/api/recipes', async (req, res) => {
         let sql = `
       SELECT
         r.tape_recipe_id,
-        r.project_id,
         r.role,
         r.name,
         r.variant_label,
@@ -1263,11 +1255,6 @@ app.get('/api/recipes', async (req, res) => {
 
     const params = [];
     const where = [];
-
-    if (projectId !== null) {
-      params.push(projectId);
-      where.push(`r.project_id = $${params.length}`);
-    }
 
     if (role !== null) {
       params.push(role);
@@ -1302,7 +1289,6 @@ app.get('/api/recipes/:id', async (req, res) => {
       `
       SELECT
         tape_recipe_id,
-        project_id,
         role,
         name,
         variant_label,
@@ -1517,13 +1503,13 @@ app.delete('/api/recipes/:id', async (req, res) => {
 });
 
 
+
 // ---------- ELECTROLYTES ----------
 
 // CREATE electrolyte
 // POST /api/electrolytes
 app.post('/api/electrolytes', async (req, res) => {
   const {
-    project_id,
     name,
     electrolyte_type,
     solvent_system,
@@ -1535,7 +1521,7 @@ app.post('/api/electrolytes', async (req, res) => {
     created_by
   } = req.body;
 
-  if (!project_id || !name || !electrolyte_type || !created_by) {
+  if (!name || !electrolyte_type || !created_by) {
     return res.status(400).json({ error: 'Обязательные поля отсутствуют' });
   }
 
@@ -1543,7 +1529,6 @@ app.post('/api/electrolytes', async (req, res) => {
     const result = await pool.query(
       `
       INSERT INTO electrolytes (
-        project_id,
         name,
         electrolyte_type,
         solvent_system,
@@ -1554,11 +1539,10 @@ app.post('/api/electrolytes', async (req, res) => {
         status,
         created_by
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
       RETURNING *
       `,
       [
-        project_id,
         name,
         electrolyte_type,
         solvent_system || null,
@@ -1587,8 +1571,6 @@ app.get('/api/electrolytes', async (req, res) => {
         e.electrolyte_id,
         e.name,
         e.electrolyte_type,
-        e.project_id,
-        p.name AS project_name,
         e.created_by,
         u.name AS created_by_name,
         e.created_at,
@@ -1599,9 +1581,8 @@ app.get('/api/electrolytes', async (req, res) => {
         e.additives,
         e.notes
       FROM electrolytes e
-      JOIN projects p ON p.project_id = e.project_id
       JOIN users u ON u.user_id = e.created_by
-      ORDER BY e.created_at DESC
+      ORDER BY e.name ASC;
     `);
 
     res.json(result.rows);
@@ -1667,6 +1648,32 @@ app.put('/api/electrolytes/:id', async (req, res) => {
   }
 });
 
+// DELETE electrolyte
+// DELETE /api/electrolytes/:id
+app.delete('/api/electrolytes/:id', async (req, res) => {
+  const electrolyteId = Number(req.params.id);
+
+  if (!Number.isInteger(electrolyteId)) {
+    return res.status(400).json({ error: 'Некорректный electrolyte_id' });
+  }
+
+  try {
+    const result = await pool.query(
+      'DELETE FROM electrolytes WHERE electrolyte_id = $1',
+      [electrolyteId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Электролит не найден' });
+    }
+
+    res.status(204).end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка удаления электролита' });
+  }
+});
+
 
 // -------- ELECTRODE CUT BATCHES --------
 
@@ -1696,9 +1703,10 @@ app.post('/api/electrode-cut-batches', async (req, res) => {
 });
 
 
-// -------- FOIL MASS MEASUREMENTS --------
-// ADD measurement
 
+// -------- FOIL MASS MEASUREMENTS --------
+
+// ADD measurement
 app.post('/api/electrode-cut-batches/:id/foil-measurements', async (req, res) => {
   const cutBatchId = Number(req.params.id);
   const { mass_g } = req.body;
@@ -1751,7 +1759,9 @@ app.get('/api/electrode-cut-batches/:id/foil-measurements', async (req, res) => 
 });
 
 
+
 // -------- ELECTRODES --------
+
 // CREATE electrode
 app.post('/api/electrodes', async (req, res) => {
   const {
@@ -1869,7 +1879,9 @@ app.put('/api/electrodes/:id/status', async (req, res) => {
 });
 
 
+
 // -------- ELECTRODE DRYING --------
+
 // CREATE drying record
 app.post('/api/electrode-cut-batches/:id/drying', async (req, res) => {
   const cutBatchId = Number(req.params.id);
@@ -1897,10 +1909,13 @@ app.post('/api/electrode-cut-batches/:id/drying', async (req, res) => {
 });
 
 
+
 // -------- TAPES --------
+
 // CREATE tape
 app.post('/api/tapes', async (req, res) => {
   const {
+    name,
     project_id,
     tape_recipe_id,
     created_by,
@@ -1923,15 +1938,17 @@ app.post('/api/tapes', async (req, res) => {
     const result = await pool.query(
       `
       INSERT INTO tapes (
+        name,
         project_id,
         tape_recipe_id,
         created_by,
         notes
       )
-      VALUES ($1,$2,$3,$4)
+      VALUES ($1,$2,$3,$4, $5)
       RETURNING *
       `,
       [
+        name,
         projectId,
         recipeId,
         createdBy,
@@ -1958,7 +1975,7 @@ app.get('/api/tapes', async (req, res) => {
           SELECT
             t.tape_id,
             t.project_id,
-            t.prepared_at,
+            t.created_at,
             t.status,
             r.role,
             r.name AS recipe_name
@@ -1966,7 +1983,7 @@ app.get('/api/tapes', async (req, res) => {
           JOIN tape_recipes r
             ON r.tape_recipe_id = t.tape_recipe_id
           WHERE r.role = $1
-          ORDER BY t.prepared_at DESC
+          ORDER BY t.created_at DESC
           `,
           [role]
         )
@@ -1975,14 +1992,14 @@ app.get('/api/tapes', async (req, res) => {
           SELECT
             t.tape_id,
             t.project_id,
-            t.prepared_at,
+            t.created_at,
             t.status,
             r.role,
             r.name AS recipe_name
           FROM tapes t
           JOIN tape_recipes r
             ON r.tape_recipe_id = t.tape_recipe_id
-          ORDER BY t.prepared_at DESC
+          ORDER BY t.created_at DESC
           `
         );
 
@@ -1992,6 +2009,53 @@ app.get('/api/tapes', async (req, res) => {
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });
+
+// EDIT
+app.put('/api/tapes/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный ID' });
+  }
+
+  const { name, notes } = req.body;
+
+  try {
+    const result = await pool.query(
+      `
+      UPDATE tapes
+      SET name = $1,
+          notes = $2
+      WHERE tape_id = $3
+      RETURNING *
+      `,
+      [name, notes || null, id]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка обновления' });
+  }
+});
+
+// DELETE
+app.delete('/api/tapes/:id', async (req, res) => {
+  const id = Number(req.params.id);
+
+  try {
+    await pool.query(
+      `DELETE FROM tapes WHERE tape_id = $1`,
+      [id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка удаления' });
+  }
+});
+
+
 
 // -------- TAPE PROCESS STEPS (DRYING) --------
 

@@ -2,14 +2,4 @@ node_modules/
 .env
 *.db
 .DS_Store
-notes.txt
-1_BADB tables plan.xlsx
-~$1_BADB tables plan.xlsx
-2_BADB tables plan.xlsx
-~$2_BADB tables plan.xlsx
-3_BADB recipes.xlsx
-~$3_BADB recipes.xlsx
-script-old.js
-recipes-old.html
-Javascript_Outline.txt
-Materials_Plan.docx
+badb_v1_schema.txt

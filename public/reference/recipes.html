@@ -163,11 +163,6 @@
           placeholder="A / B / low binder / v2"
         />
 
-        <label for="projectSelect">Проект</label>
-        <select id="projectSelect" name="project_id" required>
-          <option value="">— выбрать проект —</option>
-        </select>
-
         <label for="recipe-role">Роль электрода</label>
         <select id="recipe-role" name="role" required disabled>
           <option value="">— выбрать —</option>
@@ -224,8 +219,6 @@
       const clearBtn = document.getElementById('clearBtn');
       const recipesList = document.getElementById('recipesList');
       const createdBySelect = document.getElementById('recipe-created-by');
-
-      const projectSelect = document.getElementById('projectSelect');
       const addRecipeLine = document.getElementById('add-recipe-line');
 
       let mode = null;       // 'create' | 'edit'
@@ -273,11 +266,6 @@
         return res.json();
       }
 
-      async function fetchProjects() {
-        const res = await fetch('/api/projects');
-        return res.json();
-      }
-
       async function fetchMaterials() {
         if (cachedMaterials) return cachedMaterials;
 
@@ -289,21 +277,6 @@
       async function loadRecipes() {
         const recipes = await fetchAllRecipes();
         renderRecipes(recipes);
-      }
-
-      async function loadProjects() {
-        const res = await fetch('/api/projects');
-        const projects = await res.json();
-
-        projectSelect.innerHTML =
-          '<option value="">— выбрать проект —</option>';
-
-        projects.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = p.project_id;
-          opt.textContent = p.name;
-          projectSelect.appendChild(opt);
-        });
       }
 
       async function loadUsers() {
@@ -443,12 +416,11 @@
         title.textContent = copyName;
         nameInput.value = copyName;
 
-        form.elements['project_id'].value = recipe.project_id || '';
         form.elements['role'].value = recipe.role || '';
         form.elements['variant_label'].value = recipe.variant_label || '';
         form.elements['notes'].value = recipe.notes || '';
 
-        // created_by must be re-selected, same rule as Projects
+        // created_by must be re-selected
         createdBySelect.value = '';
 
         // copy recipe lines
@@ -675,7 +647,6 @@
             title.textContent = r.name;
             nameInput.value = r.name;
 
-            form.elements['project_id'].value = r.project_id || '';
             form.elements['created_by'].value = r.created_by || '';
             form.elements['role'].value = r.role || '';
             form.elements['variant_label'].value = r.variant_label || '';
@@ -775,14 +746,8 @@
         let missing = [];
         const roleSelect = form.elements.role;
 
-        projectSelect.classList.remove('required-missing');
         createdBySelect.classList.remove('required-missing');
         roleSelect.classList.remove('required-missing');
-
-        if (!projectSelect.value) {
-          missing.push('Проект');
-          projectSelect.classList.add('required-missing');
-        }
 
         if (!createdBySelect.value) {
           missing.push('Кто добавил');
@@ -894,7 +859,6 @@
         }
 
         const data = {
-          project_id: Number(form.elements.project_id.value),
           role: form.elements.role.value,
           name: nameInput.value,
           variant_label: form.elements.variant_label.value || null,
@@ -953,7 +917,6 @@
       // -------- Init --------
 
       hideForm();
-      loadProjects();
       loadUsers();
       loadRecipes();
 
