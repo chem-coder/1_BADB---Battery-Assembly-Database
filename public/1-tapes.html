@@ -9,6 +9,53 @@
     <link rel="stylesheet" type="text/css" href="reference/reference-styles.css">
   </head>
 
+  <style>
+    .recipe-line-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1.5fr 1fr 1fr 1fr;
+      align-items: start;
+      gap: 0.5rem;
+    }
+
+    .recipe-line-header {
+      font-weight: 600;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 0.25rem;
+      margin-bottom: 0.25rem;
+    }
+
+    .numeric {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .recipe-line-header,
+    .extended-header {
+      font-weight: 600;
+    }
+
+    .recipe-line-row,
+    .extended-row {
+      font-size: 0.95rem;
+    }
+
+    .extended-row {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1.2fr 1fr 1fr 1fr;
+      gap: 0.5rem;
+      align-items: start;
+    }
+
+    .section-divider {
+      margin: 2rem 0 1rem 0;
+      border-top: 2px solid #ddd;
+    }
+
+    .recipe-line-row:nth-child(even):not(.recipe-line-header) {
+      background: #fafafa;
+    }
+  </style>
+
   <body data-page="tapes">
 
     <header>
@@ -32,115 +79,101 @@
     <form name="tapes-form" autocomplete="on">
 
       <!-- FormData ignores fields without `name` -->
-
-      <fieldset id="tapes-meta">
-        <legend>Метаданные</legend>
-
-        <label for="tape-created-by">Кто добавил</label>
-        <select id="tape-created-by" name="created_by" required>
-          <option value="">— выбрать пользователя —</option>
-        </select>
-        <a href="reference/users.html" target="_blank" class="ref-link">
-          Управление пользователями
-        </a><br>
-
-        <label for="project_id">Проект</label>
-        <select id="project_id" name="project_id" required>
-          <option value="">— выбрать проект —</option>
-        </select><br>
-
-        <label for="tape_type">Тип электродной ленты</label>
-        <select id="tape_type" name="tape_type" required>
-          <option value="">— выбрать тип —</option>
-          <option value="cathode">Катод</option>
-          <option value="anode">Анод</option>
-        </select><br>
-      </fieldset>
-
-      <label for="tape-recipe-id">Рецепт</label>
-      <select id="tape-recipe-id" name="tape_recipe_id" required>
-        <option value="">— выбрать рецепт —</option>
-      </select>
-      <a href="reference/recipes.html" target="_blank" class="ref-link">
-        Управление рецептами
-      </a><br>
-
-      <hr>
-
-      <label for="calc-mode">Расчёт по</label>
-      <select id="calc-mode">
-        <option value="active_mass">массе активного материала</option>
-        <option value="total_mass">общей массе суспензии</option>
-      </select>
-
-      <hr>
-
-      <label for="active-mass-g">Масса активного материала, г</label>
-      <input
-        id="active-mass-g"
-        type="number"
-        step="0.0001"
-        min="0"
-        placeholder="например 10.0000">
-
-      <hr>
-      <div id="recipe-lines-container"></div>
+      <details id="0-general-info">
+        <summary>Общая информация о ленте</summary>
       
-      <hr>
-      <h3>Расчёт состава (расширенный вид)</h3>
-      <div id="expanded-calculation-container"></div>
+        <fieldset id="tapes-general-info">
+          <legend>Общая информация о ленте</legend>
 
-      <hr>
-      <button type="button" id="saveBtn">Сохранить файл</button>
-      <button type="button" id="clearBtn">Очистить форму</button><br>
+          <label for="tape-created-by">Кто добавил</label>
+          <select id="tape-created-by" name="created_by" required>
+            <option value="">— выбрать пользователя —</option>
+          </select>
+          <a href="reference/users.html" target="_blank" class="ref-link">
+            Управление пользователями
+          </a><br>
+
+          <label for="project_id">Проект</label>
+          <select id="project_id" name="project_id" required>
+            <option value="">— выбрать проект —</option>
+          </select><br>
+
+          <label for="tape_type">Тип электродной ленты</label>
+          <select id="tape_type" name="tape_type" required>
+            <option value="">— выбрать тип —</option>
+            <option value="cathode">Катод</option>
+            <option value="anode">Анод</option>
+          </select><br>
+          
+          <label for="notes">Заметки: </label>
+          <textarea id="notes" name="notes" placeholder="Общие комментарии о ленте и процессе ее приготовления"></textarea>
+        </fieldset>
+      </details>
       
-      <p id="loaded-file-container" class="loaded-file-label" style="display:none;">
-        Файл: <span id="loaded-file-name"></span>
-      </p>
+      <details id="0-tape-recipe-materials">
+        <summary>Рецепт ленты</summary>
 
-      <fieldset id="cathode-intro">
-        <legend>Общая информация о катоде</legend>
-        <label for="project-name">Название проекта: </label>
-        <input id="project-name" type="text" name="project-name" placeholder="Какому проекту принадлежит?" required value="" /><br>
-        <!--N O T E: form fields must have a "name" attribute to be included in the FormData object. Otherwise, they're skipped: the "id" property doesn't count. */-->
+        <fieldset id="tape-recipe-and-materials">
+          <legend>Рецепт ленты</legend>
+        
+          <label for="tape-recipe-id">Рецепт</label>
+          <select id="tape-recipe-id" name="tape_recipe_id" required>
+            <option value="">— выбрать рецепт —</option>
+          </select>
+          <a href="reference/recipes.html" target="_blank" class="ref-link">
+            Управление рецептами
+          </a><br>
 
-        <label for="cathode-name">Катод - название/код: </label>
-        <input id="cathode-name" type="text" name="cathode-name" placeholder="NMC811 или NMC811-KGX и т.п." required><br>
+          <label for="calc-mode">Расчёт по</label>
+          <select id="calc-mode">
+            <option value="active_mass">массе активного материала</option>
+            <option value="total_mass">общей массе суспензии</option>
+          </select><br>
 
-        <label for="cathode-batch">Катод - партия: </label>
-        <input id="cathode-batch" type="text" name="cathode-batch" placeholder="37B или 2025-03-17-B и т.п." required><br>
+          <label for="active-mass-g">Масса активного материала, г</label>
+          <input
+            id="active-mass-g"
+            type="number"
+            step="0.0001"
+            min="0"
+            placeholder="например 10.0000">
 
-        <label for="cathode-notes">Катод - заметки/комментарии: </label>
-        <textarea id="cathode-notes" name="cathode-notes" placeholder="Общие комментарии о катодной ленте и процессе ее приготовления"></textarea>
-      </fieldset>
+          <hr>
+          <div id="recipe-lines-container"></div>
+          
+          <!-- <hr class="section-divider"> -->
+          <details id="calculations-expanded">
+            <summary>Расчёт состава (расширенный вид)</summary><br>
+            <div id="expanded-calculation-container"></div>
+          </details>
+        </fieldset>
+      </details>
 
-      <details id="0-pre-prep">
-        <summary>0. Предподготовка</summary>
-        <fieldset id="0-pre-prep-f">
-          <legend class="visually-hidden">0. Предподготовка</legend>
+      <details id="0-materials-preparation">
+        <summary>Подготовка материалов</summary>
 
-          <fieldset id="0-drying">
-            <legend>Сушка активного материала в шкафу</legend>
+        <fieldset id="0-drying">
+          <legend>Сушка активного материала в шкафу</legend>
 
-            <!-- кто/когда -->
-            <label for="0-drying-operator">Оператор: </label>
-            <input id="0-drying-operator" type="text" name="0-drying-operator" placeholder="Инициалы/ФИО">
+          <!-- кто/когда -->
+          <label for="0-drying-operator">Оператор: </label>
+          <input id="0-drying-operator" type="text" name="0-drying-operator" placeholder="Инициалы/ФИО">
 
-            <label for="0-drying-date">Дата: </label>
-            <input id="0-drying-date" type="date" name="0-drying-date" placeholder="Дата начала сушки">
+          <label for="0-drying-date">Дата: </label>
+          <input id="0-drying-date" type="date" name="0-drying-date" placeholder="Дата начала сушки">
 
-            <label for="0-drying-time">Время: </label>
-            <input id="0-drying-time" type="time" name="0-drying-time" placeholder="Время начала сушки">
+          <label for="0-drying-time">Время: </label>
+          <input id="0-drying-time" type="time" name="0-drying-time" placeholder="Время начала сушки">
 
-            <button type="button" class="date-time-now-button" id="0-drying-now-button">Сейчас</button><br>
+          <button type="button" class="date-time-now-button" id="0-drying-now-button">Сейчас</button><br>
 
-            <label for="0-drying-temperature">Температура: </label>
-            <input id="0-drying-temperature" type="number" step="1" min="-273" name="0-drying-temperature" placeholder="Температура сушки">, °C<br>
+          <label for="0-drying-temperature">Температура: </label>
+          <input id="0-drying-temperature" type="number" step="1" min="-273" name="0-drying-temperature" placeholder="Температура сушки">, °C<br>
 
-            <label for="0-cathode-pre-prep-notes">Заметки/комментарии: </label>
-            <textarea id="0-cathode-pre-prep-notes" name="0-cathode-pre-prep-notes" placeholder="Комментарии о предподготовке катодной ленты"></textarea>
-          </fieldset>
-
+          <label for="0-cathode-pre-prep-notes">Заметки/комментарии: </label>
+          <textarea id="0-cathode-pre-prep-notes" name="0-cathode-pre-prep-notes" placeholder="Комментарии о предподготовке катодной ленты"></textarea>
+          <br>
+          <button type="button" id="0-drying-save-btn">Сохранить сушку</button>
         </fieldset>
       </details>
 
@@ -576,11 +609,12 @@
       const tapeTypeSelect  = document.getElementById('tape_type');
       const recipeSelect    = document.getElementById('tape-recipe-id'); // already added in HTML
 
+      let currentTapeId = null;
       let currentRecipeLines = []; // full array from /api/recipes/:id/lines
       let selectedInstanceByLineId = {}; // { [recipe_line_id]: material_instance_id }
       let instanceCacheByMaterialId = {}; // { [material_id]: [instances...] }
       let instanceComponentsCache = {}; // { [material_instance_id]: [ { component_material_id, component_name, mass_fraction } ] }
-
+      
       function fillSelect(selectEl, items, valueKey, labelFn, placeholderHtml) {
         const current = selectEl.value;
 
@@ -696,6 +730,28 @@
         container.innerHTML = '';
         container.classList.add('recipe-lines-list');
 
+        // ----- Header row -----
+        const headerRow = document.createElement('div');
+        headerRow.className = 'recipe-line-row recipe-line-header';
+
+        const headers = [
+          'Роль',
+          'Материал',
+          'Экземпляр материала',
+          '% в сухой смеси',
+          'Масса сухого компонента, г',
+          'Масса экземпляра, г'
+        ];
+
+        headers.forEach(text => {
+          const cell = document.createElement('div');
+          cell.className = 'recipe-line-cell recipe-line-header-cell';
+          cell.textContent = text;
+          headerRow.appendChild(cell);
+        });
+
+        container.appendChild(headerRow);
+
         lines.forEach(line => {
           const row = document.createElement('div');
           row.className = 'recipe-line-row';
@@ -759,6 +815,7 @@
 
           // percent (right) with % sign
           const pctInput = document.createElement('input');
+          pctInput.classList.add('numeric');
           pctInput.type = 'text';           // text, so "96%" can be shown
           pctInput.disabled = true;
 
@@ -766,7 +823,7 @@
             pctInput.value =
               (line.slurry_percent === null || line.slurry_percent === undefined || line.slurry_percent === '')
                 ? ''
-                : `${line.slurry_percent}%`;
+                : `${Number(line.slurry_percent).toFixed(2)} %`
           } else {
             pctInput.value = '';
           }
@@ -777,12 +834,12 @@
           row.appendChild(pctInput);
 
           const targetDrySpan = document.createElement('span');
-          targetDrySpan.className = 'target-dry-mass';
+          targetDrySpan.className = 'target-dry-mass numeric';
           targetDrySpan.textContent = '';
           row.appendChild(targetDrySpan);
 
           const plannedSpan = document.createElement('span');
-          plannedSpan.className = 'planned-mass';
+          plannedSpan.className = 'planned-mass numeric';
           plannedSpan.textContent = '';
           row.appendChild(plannedSpan);
 
@@ -812,10 +869,10 @@
           <th style="text-align:left;">Роль</th>
           <th style="text-align:left;">Материал</th>
           <th style="text-align:left;">Экземпляр</th>
-          <th style="text-align:right;">%</th>
+          <th class="numeric">%</th>
           <th style="text-align:left;">Компонент</th>
-          <th style="text-align:right;">Масса компонента, г</th>
-          <th style="text-align:right;">Масса к навеске, г</th>
+          <th class="numeric">Масса компонента, г</th>
+          <th class="numeric">Масса к навеске, г</th>
         `;
         table.appendChild(header);
 
@@ -836,13 +893,13 @@
             }
 
             tr.innerHTML += `
-              <td style="text-align:right;">${(c.fraction * 100).toFixed(2)}%</td>
+              <td class="numeric">${(c.fraction * 100).toFixed(2)} %</td>
               <td>${c.material_name}</td>
-              <td style="text-align:right;">${c.mass.toFixed(4)}</td>
+              <td class="numeric">${c.mass.toFixed(4)}</td>
             `;
 
             if (index === 0) {
-              tr.innerHTML += `<td style="text-align:right;">${instanceMass.toFixed(4)}</td>`;
+              tr.innerHTML += `<td class="numeric">${instanceMass.toFixed(4)}</td>`;
             } else {
               tr.innerHTML += `<td></td>`;
             }
@@ -949,7 +1006,7 @@
           const value = targetDryByMaterialId[matId];
 
           span.textContent = Number.isFinite(value)
-            ? value.toFixed(4) + ' g'
+            ? value.toFixed(4)
             : '';
         });
 
@@ -982,7 +1039,7 @@
 
           // If this line's material is already satisfied by previous mixtures, show 0.0000 g to weigh
           if (!Number.isFinite(needDry) || needDry <= 0) {
-            if (plannedCell) plannedCell.textContent = (0).toFixed(4) + ' g';
+            if (plannedCell) plannedCell.textContent = (0).toFixed(4);
             continue;
           }
 
@@ -1049,7 +1106,7 @@
           });
 
           if (plannedCell) {
-            plannedCell.textContent = instanceMassToWeigh.toFixed(4) + ' g';
+            plannedCell.textContent = instanceMassToWeigh.toFixed(4);
           }
 
           // Add contributions of every component from this instance
@@ -1232,6 +1289,50 @@
         }
       });
 
+      document.getElementById('tape-name').addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+
+        e.preventDefault();
+
+        if (currentTapeId) return; // already created
+
+        const projectId = Number(projectSelect.value);
+        const recipeId  = Number(recipeSelect.value);
+        const createdBy = Number(createdBySelect.value);
+        const notes     = document.getElementById('notes').value;
+
+        if (!projectId || !recipeId || !createdBy) {
+          alert('Заполните общую информацию и выберите рецепт');
+          return;
+        }
+
+        try {
+          const res = await fetch('/api/tapes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              project_id: projectId,
+              tape_recipe_id: recipeId,
+              created_by: createdBy,
+              notes
+            })
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Ошибка создания ленты');
+          }
+
+          const tape = await res.json();
+          currentTapeId = tape.tape_id;
+
+          alert(`Лента создана (ID ${currentTapeId})`);
+
+        } catch (err) {
+          alert(err.message);
+        }
+      });
+
       const activeMassInput = document.getElementById('active-mass-g');
       const calcModeSelect  = document.getElementById('calc-mode');
       const activeMassLabel = document.querySelector('label[for="active-mass-g"]');
@@ -1246,6 +1347,52 @@
 
       activeMassInput.addEventListener('input', recalculatePlannedMasses);
       calcModeSelect.addEventListener('change', recalculatePlannedMasses);
+
+      // -------- Buttons --------
+      const dryingSaveBtn = document.getElementById('0-drying-save-btn');
+
+      dryingSaveBtn.addEventListener('click', async () => {
+        if (!currentTapeId) {
+          alert('Сначала создайте ленту');
+          return;
+        }
+
+        const date = document.getElementById('0-drying-date').value;
+        const time = document.getElementById('0-drying-time').value;
+
+        let startedAt = null;
+        if (date && time) {
+          startedAt = `${date}T${time}`;
+        }
+
+        const payload = {
+          operation_code: 'drying_am',
+          performed_by: Number(document.getElementById('tape-created-by').value),
+          started_at: startedAt,
+          comments: document.getElementById('0-cathode-pre-prep-notes').value || null,
+          temperature_c: Number(document.getElementById('0-drying-temperature').value) || null,
+          atmosphere: null,
+          target_duration_min: null,
+          other_parameters: null
+        };
+
+        try {
+          const res = await fetch(`/api/tapes/${currentTapeId}/steps/drying`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || 'Ошибка сохранения');
+          }
+
+          alert('Сушка сохранена');
+        } catch (err) {
+          alert(err.message);
+        }
+      });
 
       // -------- Init --------
 

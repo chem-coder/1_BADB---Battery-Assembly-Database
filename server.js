@@ -1898,7 +1898,56 @@ app.post('/api/electrode-cut-batches/:id/drying', async (req, res) => {
 
 
 // -------- TAPES --------
+// CREATE tape
+app.post('/api/tapes', async (req, res) => {
+  const {
+    project_id,
+    tape_recipe_id,
+    created_by,
+    notes
+  } = req.body;
 
+  const projectId = Number(project_id);
+  const recipeId  = Number(tape_recipe_id);
+  const createdBy = Number(created_by);
+
+  if (
+    !Number.isInteger(projectId) ||
+    !Number.isInteger(recipeId) ||
+    !Number.isInteger(createdBy)
+  ) {
+    return res.status(400).json({ error: 'Некорректные данные' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO tapes (
+        project_id,
+        tape_recipe_id,
+        created_by,
+        notes
+      )
+      VALUES ($1,$2,$3,$4)
+      RETURNING *
+      `,
+      [
+        projectId,
+        recipeId,
+        createdBy,
+        notes || null
+      ]
+    );
+
+    res.status(201).json(result.rows[0]);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// READ
 app.get('/api/tapes', async (req, res) => {
   const { role } = req.query;
 
@@ -1941,6 +1990,90 @@ app.get('/api/tapes', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// -------- TAPE PROCESS STEPS (DRYING) --------
+
+// CREATE one drying step (creates tape_process_steps + tape_step_drying)
+app.post('/api/tapes/:tapeId/steps/drying', async (req, res) => {
+  const tapeId = Number(req.params.tapeId);
+  if (!Number.isInteger(tapeId)) {
+    return res.status(400).json({ error: 'Некорректный tape_id' });
+  }
+
+  const {
+    operation_code,      // e.g. "tape_drying_pre_cal" (must exist in operation_types.code)
+    performed_by,        // user_id
+    started_at,          // ISO string or null; if null -> DEFAULT now()
+    comments,            // text
+    temperature_c,
+    atmosphere,
+    target_duration_min,
+    other_parameters
+  } = req.body;
+
+  if (!operation_code || typeof operation_code !== 'string') {
+    return res.status(400).json({ error: 'operation_code обязателен' });
+  }
+  if (!Number.isInteger(Number(performed_by))) {
+    return res.status(400).json({ error: 'Некорректный performed_by' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const op = await client.query(
+      `SELECT operation_type_id FROM operation_types WHERE code = $1`,
+      [operation_code]
+    );
+    if (op.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `Не найден operation_types.code = ${operation_code}` });
+    }
+    const operationTypeId = op.rows[0].operation_type_id;
+
+    const step = await client.query(
+      `
+      INSERT INTO tape_process_steps (tape_id, operation_type_id, performed_by, started_at, comments)
+      VALUES ($1, $2, $3, COALESCE($4::timestamptz, DEFAULT), $5)
+      RETURNING step_id, tape_id, operation_type_id, performed_by, started_at, comments
+      `,
+      [
+        tapeId,
+        operationTypeId,
+        Number(performed_by),
+        started_at || null,
+        comments || null
+      ]
+    );
+
+    const stepId = step.rows[0].step_id;
+
+    const drying = await client.query(
+      `
+      INSERT INTO tape_step_drying (step_id, temperature_c, atmosphere, target_duration_min, other_parameters)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING step_id, temperature_c, atmosphere, target_duration_min, other_parameters
+      `,
+      [
+        stepId,
+        temperature_c ?? null,
+        atmosphere || null,
+        Number.isFinite(Number(target_duration_min)) ? Number(target_duration_min) : null,
+        other_parameters || null
+      ]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({ step: step.rows[0], drying: drying.rows[0] });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка при сохранении сушки ленты' });
+  } finally {
+    client.release();
   }
 });
 

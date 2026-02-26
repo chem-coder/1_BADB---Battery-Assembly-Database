@@ -63,6 +63,7 @@ fieldset legend {
   font-size: 0.9rem;
   margin-right: 0.5rem;
 }
+
 .edit-row textarea {
   font-size: 0.9rem;
   width: 100%;
@@ -84,4 +85,10 @@ fieldset legend {
 span {
   font-size: 0.9rem;
   margin-right: 2rem;
+}
+
+textarea {
+  align-self: flex-start;
+  min-height: 3rem;
+  min-width: 200px;
 }
