@@ -2054,30 +2054,48 @@ app.post('/api/tapes/:id/steps/by-code/:code', async (req, res) => {
     }
   }
 
-  // MIXING -> forward to existing mixing save (simple: same upsert but by code lookup)
+  // MIXING (header + tape_step_mixing)
   if (code === 'mixing') {
-    const { performed_by, started_at, comments } = req.body || {};
+    const {
+      performed_by,
+      started_at,
+      comments,
+      slurry_volume_ml,
+      dry_mixing_id,
+      dry_start_time,
+      dry_duration_min,
+      dry_rpm,
+      wet_mixing_id,
+      wet_start_time,
+      wet_duration_min,
+      wet_rpm
+    } = req.body || {};
 
+    const client = await pool.connect();
     try {
-      const ot = await pool.query(
+      await client.query('BEGIN');
+
+      // 1) lookup operation_type_id by code
+      const ot = await client.query(
         `SELECT operation_type_id FROM operation_types WHERE code = $1`,
         [code]
       );
       if (ot.rows.length === 0) {
-        return res.status(400).json({ error: `Unknown operation code: ${code}` });
+        throw new Error(`Unknown operation code: ${code}`);
       }
       const operationTypeId = ot.rows[0].operation_type_id;
 
-      const result = await pool.query(
+      // 2) upsert base step
+      const step = await client.query(
         `
         INSERT INTO tape_process_steps (tape_id, operation_type_id, performed_by, started_at, comments)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1,$2,$3,$4,$5)
         ON CONFLICT (tape_id, operation_type_id)
         DO UPDATE SET
           performed_by = EXCLUDED.performed_by,
           started_at   = EXCLUDED.started_at,
           comments     = EXCLUDED.comments
-        RETURNING *
+        RETURNING step_id
         `,
         [
           tapeId,
@@ -2088,10 +2106,54 @@ app.post('/api/tapes/:id/steps/by-code/:code', async (req, res) => {
         ]
       );
 
-      return res.json(result.rows[0]);
+      const stepId = step.rows[0].step_id;
+
+      // 3) upsert mixing subtype
+      await client.query(
+        `
+        INSERT INTO tape_step_mixing
+          (step_id, slurry_volume_ml,
+          dry_mixing_id, dry_start_time, dry_duration_min, dry_rpm,
+          wet_mixing_id, wet_start_time, wet_duration_min, wet_rpm)
+        VALUES
+          ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        ON CONFLICT (step_id)
+        DO UPDATE SET
+          slurry_volume_ml  = EXCLUDED.slurry_volume_ml,
+          dry_mixing_id     = EXCLUDED.dry_mixing_id,
+          dry_start_time    = EXCLUDED.dry_start_time,
+          dry_duration_min  = EXCLUDED.dry_duration_min,
+          dry_rpm           = EXCLUDED.dry_rpm,
+          wet_mixing_id     = EXCLUDED.wet_mixing_id,
+          wet_start_time    = EXCLUDED.wet_start_time,
+          wet_duration_min  = EXCLUDED.wet_duration_min,
+          wet_rpm           = EXCLUDED.wet_rpm
+        `,
+        [
+          stepId,
+          Number.isFinite(Number(slurry_volume_ml)) ? Number(slurry_volume_ml) : null,
+
+          Number(dry_mixing_id) || null,
+          dry_start_time || null,
+          Number.isFinite(Number(dry_duration_min)) ? Number(dry_duration_min) : null,
+          dry_rpm || null,
+
+          Number(wet_mixing_id) || null,
+          wet_start_time || null,
+          Number.isFinite(Number(wet_duration_min)) ? Number(wet_duration_min) : null,
+          wet_rpm || null
+        ]
+      );
+
+      await client.query('COMMIT');
+      return res.status(201).json({ step_id: stepId });
+
     } catch (err) {
+      await client.query('ROLLBACK');
       console.error(err);
       return res.status(500).json({ error: 'Failed to save mixing step' });
+    } finally {
+      client.release();
     }
   }
 
@@ -2321,8 +2383,27 @@ dry_mixing_id |     name      |         description
             2 | mortar_pestle | Вручную: ступка и пестик
             3 | spatula       | Вручную: шпателем
             4 | turbula       | Турбула / смеситель Шатца
+*/
 
-dry_mixing_methods
+// READ: dry mixing methods
+app.get('/api/dry-mixing-methods', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT dry_mixing_id, name, description
+      FROM dry_mixing_methods
+      ORDER BY dry_mixing_id ASC
+      `
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка загрузки dry mixing методов' });
+  }
+});
+
+/*
+wet_mixing_methods
 wet_mixing_id |   name   |       description        
 ---------------+----------+--------------------------
             1 | by_hand  | Вручную
@@ -2330,7 +2411,22 @@ wet_mixing_id |   name   |       description
             3 | gn_vm_7  | Вакуумный миксер GN-VM-7
 */
 
-// READ
+// READ: wet mixing methods
+app.get('/api/wet-mixing-methods', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT wet_mixing_id, name, description
+      FROM wet_mixing_methods
+      ORDER BY wet_mixing_id ASC
+      `
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка загрузки wet mixing методов' });
+  }
+});
 
 
 

@@ -80,7 +80,7 @@
 
       <div class="form-actions" style="display:flex; gap:.5rem; align-items:center; margin:.5rem 0 1rem 0;">
         <button type="button" id="saveBtn">Создать ленту</button>
-        <button type="button" id="clearBtn">Отмена</button>
+        <button type="button" id="clearBtn">Выйти</button>
       </div>
   
       <!-- FormData ignores fields without `name` -->
@@ -189,16 +189,19 @@
           <label for="0-drying_am-notes">Примечания: </label>
           <textarea id="0-drying_am-notes" name="0-drying_am-notes" placeholder="Примечания к этапу сушки активного материала"></textarea><br>
 
-          <label for="0-drying_am-temperature">Температура: </label>
-          <input id="0-drying_am-temperature" type="number" step="1" min="-273" name="0-drying_am-temperature" placeholder="Температура сушки">, °C<br>
+          <label for="0-drying_am-temperature">Температура, °C: </label>
+          <input id="0-drying_am-temperature" type="number" step="1" min="-273" name="0-drying_am-temperature" value="80"><br>
 
           <label for="0-drying_am-atmosphere">Атмосфера: </label>
           <select id="0-drying_am-atmosphere" name="0-drying_am-atmosphere">
             <option value="">— не выбрано —</option>
-          </select>
+          </select><br>
 
-          <label for="0-drying_am-target-duration">Длительность: </label>
-          <input id="0-drying_am-target-duration" type="number" step="1" min="0" name="0-drying_am-target-duration" placeholder="Плановая длительность">, мин
+          <label for="0-drying_am-target-duration">Плановая длительность, мин: </label>
+          <input id="0-drying_am-target-duration" type="number" step="1" min="0" name="0-drying_am-target-duration" value="120"><br>
+          
+          <label for="0-drying_am-other_param">Дополнительные технические параметры (если применимо): </label>
+          <textarea id="0-drying_am-other_param" name="0-drying_am-other_param" placeholder="Примечания к этапу сушки активного материала"></textarea><br>
 
           <button type="button" id="0-drying_am-save-btn">Сохранить сушку</button>
         </fieldset>
@@ -538,16 +541,19 @@
 
             <button type="button" class="date-time-now-button" id="2a-drying_tape-now-button">Сейчас</button><br>
 
-            <label for="2a-drying-notes">Примечания: </label>
-            <textarea id="2a-drying-notes" name="2a-drying-notes" placeholder="Примечания к этапу сушки"></textarea>
+            <label for="2a-drying_tape-temperature">Температура, °C: </label>
+            <input id="2a-drying_tape-temperature" type="number" step="1" min="-273" name="2a-drying_tape-temperature" value="80"><br>
 
-            <label for="2a-drying_tape-temperature">Температура: </label>
-            <input id="2a-drying_tape-temperature" type="number" step="1" min="-273" name="2a-drying_tape-temperature" placeholder="Температура сушки">, °C<br>
-            
             <label for="2a-drying_tape-atmosphere">Атмосфера: </label>
             <select id="2a-drying_tape-atmosphere" name="2a-drying_tape-atmosphere">
               <option value="">— не выбрано —</option>
-            </select>
+            </select><br>
+
+            <label for="2a-drying_tape-target-duration">Плановая длительность, мин: </label>
+            <input id="2a-drying_tape-target-duration" type="number" step="1" min="0" name="2a-drying_tape-target-duration" value="120"><br>
+            
+            <label for="2a-drying_tape-other_param">Дополнительные технические параметры (если применимо): </label>
+            <textarea id="2a-drying_tape-other_param" name="2a-drying_tape-other_param" placeholder="Примечания к этапу сушки активного материала"></textarea><br>
 
             <button type="button" id="2a-drying_tape-save-btn">Сохранить этап сушки</button>
 
@@ -574,7 +580,7 @@
             <button type="button" class="date-time-now-button" id="2-calendering-now-button">Сейчас</button><br>
 
             <label for="2-calendering-notes">Примечания: </label>
-            <textarea id="2-calendering-notes" name="2-calendering-notes" placeholder="Примечания к этапу каландрирования">
+            <textarea id="2-calendering-notes" name="2-calendering-notes" placeholder="Примечания к этапу каландрирования"></textarea><br>
 
             <!-- параметры процесса -->
             <h4>Параметры каландрирования:</h4>
@@ -650,13 +656,19 @@
             <label for="2b-drying_pressed_tape-notes">Примечания: </label>
             <textarea id="2b-drying_pressed_tape-notes" name="2b-drying_pressed_tape-notes" placeholder="Примечания к этапу сушки"></textarea>
 
-            <label for="2b-drying_pressed_tape-temperature">Температура: </label>
-            <input id="2b-drying_pressed_tape-temperature" type="number" step="1" min="-273" name="2b-drying_pressed_tape-temperature" placeholder="Температура сушки">, °C<br>
+            <label for="2b-drying_pressed_tape-temperature">Температура, °C: </label>
+            <input id="2b-drying_pressed_tape-temperature" type="number" step="1" min="-273" name="2b-drying_pressed_tape-temperature" value="80"><br>
 
             <label for="2b-drying_pressed_tape-atmosphere">Атмосфера: </label>
             <select id="2b-drying_pressed_tape-atmosphere" name="2b-drying_pressed_tape-atmosphere">
               <option value="">— не выбрано —</option>
-            </select>
+            </select><br>
+
+            <label for="2b-drying_pressed_tape-target-duration">Плановая длительность, мин: </label>
+            <input id="2b-drying_pressed_tape-target-duration" type="number" step="1" min="0" name="2b-drying_pressed_tape-target-duration" value="120"><br>
+            
+            <label for="2b-drying_pressed_tape-other_param">Дополнительные технические параметры (если применимо): </label>
+            <textarea id="2b-drying_pressed_tape-other_param" name="2b-drying_pressed_tape-other_param" placeholder="Примечания к этапу сушки активного материала"></textarea><br>
 
             <button type="button" id="2b-drying_pressed_tape-save-btn">Сохранить этап сушки</button>
 
@@ -911,6 +923,46 @@
         }
       }
 
+      async function loadDryMixingMethods(selectEl, selectedId = '') {
+        if (!selectEl) return;
+
+        const res = await fetch('/api/dry-mixing-methods');
+        if (!res.ok) throw new Error('Failed to load dry mixing methods');
+
+        const items = await res.json();
+
+        selectEl.innerHTML = '<option value="">— не выбрано —</option>';
+
+        items.forEach(item => {
+          const opt = document.createElement('option');
+          opt.value = String(item.dry_mixing_id);
+          opt.textContent = item.description || item.name;
+          selectEl.appendChild(opt);
+        });
+
+        if (selectedId) selectEl.value = String(selectedId);
+      }
+
+      async function loadWetMixingMethods(selectEl, selectedId = '') {
+        if (!selectEl) return;
+
+        const res = await fetch('/api/wet-mixing-methods');
+        if (!res.ok) throw new Error('Failed to load wet mixing methods');
+
+        const items = await res.json();
+
+        selectEl.innerHTML = '<option value="">— не выбрано —</option>';
+
+        items.forEach(item => {
+          const opt = document.createElement('option');
+          opt.value = String(item.wet_mixing_id);
+          opt.textContent = item.description || item.name;
+          selectEl.appendChild(opt);
+        });
+
+        if (selectedId) selectEl.value = String(selectedId);
+      }
+
       // -------- Rendering --------
       function recipeRoleLabel(recipeRole) {
         const map = {
@@ -1113,9 +1165,10 @@
           modeSelect.className = 'actual-mode-select';
           modeSelect.dataset.recipeLineId = line.recipe_line_id;
           modeSelect.innerHTML = `
-            <option value="mass">m (г)</option>
+            <option value="mass" selected>m (г)</option>
             <option value="volume">V (мкл)</option>
           `;
+          modeSelect.value = 'mass';
 
           const valueInput = document.createElement('input');
           valueInput.type = 'number';
@@ -1139,13 +1192,15 @@
             const valueInput = tr.querySelector('.actual-value-input');
 
             if (modeSelect && valueInput) {
-              modeSelect.value = saved.measure_mode;
 
-              if (saved.measure_mode === 'mass') {
+              const restoredMode = saved.measure_mode || 'mass';
+              modeSelect.value = restoredMode;
+
+              if (restoredMode === 'mass') {
                 valueInput.value = saved.actual_mass_g ?? '';
               }
 
-              if (saved.measure_mode === 'volume') {
+              if (restoredMode === 'volume') {
                 valueInput.value = saved.actual_volume_ml ?? '';
               }
             }
@@ -1530,58 +1585,75 @@
           const editBtn = document.createElement('button');
           editBtn.textContent = '✏️';
 
+
+          async function restoreDryingStep({ code, prefix }) {
+
+            if (!currentTapeId) return;
+
+            const res = await fetch(
+              `/api/tapes/${currentTapeId}/steps/by-code/${code}`
+            );
+
+            if (!res.ok) return;
+
+            const drying = await res.json();
+            const details = document.getElementById(prefix);
+
+            if (!drying) {
+              if (details) details.open = false;
+              return;
+            }
+
+            if (details) details.open = true;
+
+            const started = drying.started_at
+              ? new Date(drying.started_at)
+              : null;
+
+            if (started) {
+              const yyyy = started.getFullYear();
+              const mm   = String(started.getMonth() + 1).padStart(2, '0');
+              const dd   = String(started.getDate()).padStart(2, '0');
+              const hh   = String(started.getHours()).padStart(2, '0');
+              const min  = String(started.getMinutes()).padStart(2, '0');
+
+              const dateInput = document.getElementById(`${prefix}-date`);
+              const timeInput = document.getElementById(`${prefix}-time`);
+
+              if (dateInput) dateInput.value = `${yyyy}-${mm}-${dd}`;
+              if (timeInput) timeInput.value = `${hh}:${min}`;
+            }
+
+            const map = {
+              operator: 'performed_by',
+              notes: 'comments',
+              temperature: 'temperature_c',
+              atmosphere: 'atmosphere',
+              'target-duration': 'target_duration_min',
+              other_param: 'other_parameters'
+            };
+
+            Object.entries(map).forEach(([suffix, field]) => {
+              const el = document.getElementById(`${prefix}-${suffix}`);
+              if (!el) return;
+              el.value = drying[field] ?? '';
+            });
+          }
+
+
           editBtn.onclick = async() => {
             mode = 'edit';
             currentId = t.tape_id;
             currentTapeId = t.tape_id;
 
             // --- RESTORE DRYING STEP ---
-            try {
-              const res = await fetch(
-                `/api/tapes/${currentTapeId}/steps/by-code/drying_am`
-              );
-              if (!res.ok) throw new Error('Drying load failed');
+            await Promise.all([
+              restoreDryingStep({ code: 'drying_am',           prefix: '0-drying_am' }),
+              restoreDryingStep({ code: 'drying_tape',         prefix: '2a-drying_tape' }),
+              restoreDryingStep({ code: 'drying_pressed_tape', prefix: '2b-drying_pressed_tape' })
+            ]);
 
-              const drying = await res.json();
-              const dryingDetails = document.getElementById('0-drying_am');
-
-              if (drying) {
-                dryingDetails.open = true;
-
-                const started = drying.started_at ? new Date(drying.started_at) : null;
-
-                if (started) {
-                  const yyyy = started.getFullYear();
-                  const mm   = String(started.getMonth() + 1).padStart(2, '0');
-                  const dd   = String(started.getDate()).padStart(2, '0');
-
-                  const hh   = String(started.getHours()).padStart(2, '0');
-                  const min  = String(started.getMinutes()).padStart(2, '0');
-
-                  document.getElementById('0-drying_am-date').value = `${yyyy}-${mm}-${dd}`;
-                  document.getElementById('0-drying_am-time').value = `${hh}:${min}`;
-                } else {
-                  document.getElementById('0-drying_am-date').value = '';
-                  document.getElementById('0-drying_am-time').value = '';
-                }
-
-                document.getElementById('0-drying_am-temperature').value =
-                  drying.temperature_c ?? '';
-
-                document.getElementById('0-drying_am-notes').value =
-                  drying.comments || '';
-              } else {
-                dryingDetails.open = false;
-
-                document.getElementById('0-drying_am-date').value = '';
-                document.getElementById('0-drying_am-time').value = '';
-                document.getElementById('0-drying_am-temperature').value = '';
-                document.getElementById('0-drying_am-notes').value = '';
-              }
-            } catch (err) {
-              console.error(err);
-            }
-            
+            // --- RESTORE MIXING STEP ---
             const res = await fetch(
               `/api/tapes/${currentTapeId}/steps/by-code/mixing`
             );
@@ -1998,51 +2070,67 @@
       });
       clearBtn.addEventListener('click', resetForm);
 
-      const dryingSaveBtn = document.getElementById('0-drying_am-save-btn');
-      dryingSaveBtn.addEventListener('click', async () => {
+      // -------- Drying step helpers (generic for all drying blocks) --------
+
+      function getStartedAt(prefix) {
+        const date = document.getElementById(`${prefix}-date`)?.value || '';
+        const time = document.getElementById(`${prefix}-time`)?.value || '';
+        if (!date || !time) return null;
+        return `${date}T${time}`;
+      }
+
+      function buildDryingPayload(prefix) {
+        return {
+          performed_by: Number(document.getElementById(`${prefix}-operator`)?.value) || null,
+          started_at: getStartedAt(prefix),
+          comments: document.getElementById(`${prefix}-notes`)?.value || null,
+          temperature_c: Number(document.getElementById(`${prefix}-temperature`)?.value) || null,
+          atmosphere: document.getElementById(`${prefix}-atmosphere`)?.value || null,
+          target_duration_min: Number(document.getElementById(`${prefix}-target-duration`)?.value) || null,
+          other_parameters: document.getElementById(`${prefix}-other_param`)?.value || null
+        };
+      }
+
+      async function saveDryingStep({ code, prefix }) {
         if (!currentTapeId) {
           alert('Сначала создайте ленту');
           return;
         }
 
-        const date = document.getElementById('0-drying_am-date').value;
-        const time = document.getElementById('0-drying_am-time').value;
+        const payload = buildDryingPayload(prefix);
 
-        let startedAt = null;
-        if (date && time) {
-          startedAt = `${date}T${time}`;
-        }
-
-        const payload = {
-          operation_code: 'drying_am',
-          performed_by: Number(document.getElementById('0-drying_am-operator').value) || null,
-          started_at: startedAt,
-          comments: document.getElementById('0-drying_am-notes').value || null,
-          temperature_c: Number(document.getElementById('0-drying_am-temperature').value) || null,
-          atmosphere: document.getElementById('0-drying_am-atmosphere').value || null,
-          target_duration_min: Number(document.getElementById('0-drying_am-target-duration').value) || null,
-          other_parameters: null
-        };
-
-        try {
-          const res = await fetch(
-            `/api/tapes/${currentTapeId}/steps/by-code/drying_am`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
-            }
-          );
-
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || 'Ошибка сохранения');
+        const res = await fetch(
+          `/api/tapes/${currentTapeId}/steps/by-code/${code}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
           }
+        );
 
-          alert('Сушка сохранена');
-        } catch (err) {
-          alert(err.message);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Ошибка сохранения');
         }
+      }
+
+      // Wire all drying save buttons
+      [
+        { code: 'drying_am',           prefix: '0-drying_am',            btnId: '0-drying_am-save-btn' },
+        { code: 'drying_tape',         prefix: '2a-drying_tape',         btnId: '2a-drying_tape-save-btn' },
+        { code: 'drying_pressed_tape', prefix: '2b-drying_pressed_tape', btnId: '2b-drying_pressed_tape-save-btn' }
+      ].forEach(cfg => {
+        const btn = document.getElementById(cfg.btnId);
+        if (!btn) return;
+
+        btn.addEventListener('click', async () => {
+          try {
+            await saveDryingStep(cfg);
+            alert('Этап сушки сохранён');
+          } catch (err) {
+            alert(err.message);
+          }
+        });
       });
 
       const weighingSaveBtn = document.getElementById('1-weighing-save-btn');
@@ -2125,7 +2213,22 @@
       loadUsers();
       loadProjects();
       loadRecipesDropdown();
-      loadDryingAtmospheres(document.getElementById('0-drying_am-atmosphere')).catch(console.error);
+  
+      const dryingAtmosphereSelectIds = [
+        '0-drying_am-atmosphere',
+        '2a-drying_tape-atmosphere',
+        '2b-drying_pressed_tape-atmosphere'
+      ];
+
+      dryingAtmosphereSelectIds.forEach(id => {
+        loadDryingAtmospheres(
+          document.getElementById(id),
+          'vacuum'
+        ).catch(console.error);
+      });
+
+      loadDryMixingMethods(document.getElementById('dry-mixing-method')).catch(console.error);
+      loadWetMixingMethods(document.getElementById('wet-mixing-method')).catch(console.error);
       
     </script>
   </body>
