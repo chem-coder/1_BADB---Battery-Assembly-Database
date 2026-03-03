@@ -178,10 +178,8 @@
             Управление пользователями
           </a><br>
 
-          <label for="0-drying_am-date">Дата: </label>
+          <label for="0-drying_am-date">Дата/время: </label>
           <input id="0-drying_am-date" type="date" name="0-drying_am-date" placeholder="Дата начала сушки">
-
-          <label for="0-drying_am-time">Время: </label>
           <input id="0-drying_am-time" type="time" name="0-drying_am-time" placeholder="Время начала сушки">
 
           <button type="button" class="date-time-now-button" id="0-drying_am-now-button">Сейчас</button><br>
@@ -224,10 +222,8 @@
               Управление пользователями
             </a><br>
 
-            <label for="1-weighing-date">Дата: </label>
+            <label for="1-weighing-date">Дата/время: </label>
             <input id="1-weighing-date" type="date" name="1-weighing-date" placeholder="Дата начала сушки">
-
-            <label for="1-weighing-time">Время: </label>
             <input id="1-weighing-time" type="time" name="1-weighing-time" placeholder="Время начала сушки">
 
             <button type="button" class="date-time-now-button" id="1-weighing-now-button">Сейчас</button><br>
@@ -262,154 +258,82 @@
 
             <!-- кто/когда -->
             <label for="1-mixing-operator">Оператор: </label>
-            <select id="1-mixing-operator" name="1-mixing-operator">
+            <select id="1-mixing-operator" name="performed_by">
               <option value="">— выбрать пользователя —</option>
             </select>
             <a href="reference/users.html" target="_blank" class="ref-link">
               Управление пользователями
             </a><br>
 
-            <label for="1-mixing-date">Дата: </label>
-            <input id="1-mixing-date" type="date" name="1-mixing-date" placeholder="Дата начала сушки">
-
-            <label for="1-mixing-time">Время: </label>
-            <input id="1-mixing-time" type="time" name="1-mixing-time" placeholder="Время начала сушки">
+            <label for="1-mixing-started_at-date">Дата/время начала: </label>
+            <input id="1-mixing-started_at-date" type="date" name="started_at_date" placeholder="Дата начала перемешивания">
+            <input id="1-mixing-started_at-time" type="time" name="started_at_time" placeholder="Время начала перемешивания">
 
             <button type="button" class="date-time-now-button" id="1-mixing-now-button">Сейчас</button><br>
 
-            <label for="1-mixing-notes">Примечания: </label>
-            <textarea id="1-mixing-notes" name="1-mixing-notes" placeholder="Примечания к этапу перемешивания"></textarea><br>
+            <label for="1-mixing-comments">Примечания: </label>
+            <textarea id="1-mixing-comments" name="comments" placeholder="Примечания к этапу перемешивания"></textarea><br>
 
             <!-- Объём пасты: просто записываем, ничего не блокирует -->
-            <label for="mix-volume">Объём пасты, мл: </label>
-            <input id="mix-volume"
-                    name="mix-volume"
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    placeholder="Например, 25">, мл<br>
+            <label for="1-mixing-slurry_volume_ml">Объём пасты, мл: </label>
+            <input id="1-mixing-slurry_volume_ml"
+                  name="slurry_volume_ml"
+                  type="number"
+                  inputmode="decimal"
+                  min="0"
+                  step="0.1"
+                  placeholder="Например, 250"><br>
 
-            <div class="mix-columns">
-              <!-- Сухое перемешивание -->
-              <fieldset>
-                <legend>Сухое перемешивание (порошок)</legend>
+            <!-- Сухое перемешивание -->
+            <label for="1-mixing-dry_mixing_id">Сухая смесь - метод перемешивания: </label>
+            <select id="1-mixing-dry_mixing_id" name="dry_mixing_id">
+              <option value="">— не выбрано —</option>
+            </select><br>
 
-                <label>
-                  <input type="radio"
-                          name="mix-dry-technique"
-                          value="dry-mortar">
-                  Вручную: ступка и пестик
-                </label><br>
+            <!-- Параметры сухого перемешивания (универсальные) -->
+            <div class="mix-params" id="mix-dry-params" hidden>
+              <h4>Параметры сухого перемешивания</h4>
 
-                <label>
-                  <input type="radio"
-                          name="mix-dry-technique"
-                          value="dry-spatula">
-                  Вручную: шпателем
-                </label><br>
+              <label for="dry-start-date">Дата/время запуска: </label>
+              <input id="dry-start-date" type="date" name="dry_start_date">
+              <input id="dry-start-time" type="time" name="dry_start_time_clock">
 
-                <label>
-                  <input type="radio"
-                          name="mix-dry-technique"
-                          value="dry-turbula"
-                          data-params-target="mix-dry-turbula-params">
-                  Пьяная бочка / Turbula
-                </label>
-              </fieldset>
+              <button type="button" class="date-time-now-button" id="dry-start-now-button">Сейчас</button><br>
 
-              <!-- Мокрое перемешивание -->
-              <fieldset>
-                <legend>Мокрое перемешивание (паста)</legend>
+              <label for="dry-duration-min">Длительность, мин: </label>
+              <input id="dry-duration-min" type="number" name="dry_duration_min" min="0" step="1"><br>
 
-                <label>
-                  <input type="radio"
-                          name="mix-wet-technique"
-                          value="wet-manual">
-                  Вручную (стеклянная палочка / шпатель)
-                </label><br>
-
-                <label>
-                  <input type="radio"
-                          name="mix-wet-technique"
-                          value="wet-magnet"
-                          data-params-target="mix-wet-magnet-params">
-                  Магнитная мешалка
-                </label><br>
-
-                <label>
-                  <input type="radio"
-                          name="mix-wet-technique"
-                          value="wet-vacuum"
-                          data-params-target="mix-wet-vacuum-params">
-                  Вакуумный миксер GN-VM-7
-                </label>
-              </fieldset>
+              <label for="dry-rpm">Скорость / режим (RPM, комментарий): </label>
+              <input id="dry-rpm"
+                    type="text"
+                    name="dry_rpm"
+                    placeholder="Например: ~60 об/мин, режим 2"><br>
             </div>
+            
+            <!-- Мокрое перемешивание -->
+            <label for="1-mixing-wet_mixing_id">Электродная паста - метод перемешивания: </label>
+            <select id="1-mixing-wet_mixing_id" name="wet_mixing_id">
+              <option value="">— не выбрано —</option>
+            </select><br>
 
-            <!-- Параметры для сухого машинного перемешивания (Turbula) -->
-            <div class="mix-params" id="mix-dry-turbula-params" hidden>
-              <h4>Параметры сухого перемешивания (Turbula)</h4>
-              
-              <label for="dry-turbula-start-date">Время запуска: </label>
-              <input id="dry-turbula-start-date" type="date" name="dry-turbula-start-date" placeholder="Дата начала сушки">
+            <!-- Параметры мокрого перемешивания (универсальные) -->
+            <div class="mix-params" id="mix-wet-params" hidden>
+              <h4>Параметры мокрого перемешивания</h4>
 
-              <label for="dry-turbula-start-time">Время: </label>
-              <input id="dry-turbula-start-time" type="time" name="dry-turbula-start-time" placeholder="Время начала сушки">
+              <label for="wet-start-date">Дата/время запуска: </label>
+              <input id="wet-start-date" type="date" name="wet_start_date">
+              <input id="wet-start-time" type="time" name="wet_start_time_clock">
 
-              <button type="button" class="date-time-now-button" id="dry-turbula-start-now-button">Сейчас</button><br>
+              <button type="button" class="date-time-now-button" id="wet-start-now-button">Сейчас</button><br>
 
-              <label>Длительность, мин:
-                <input type="number" name="dry-turbula-time" min="0" step="1">
-              </label>
-              <label>Скорость / режим (RPM, комментарий):
-                <input type="text"
-                        name="dry-turbula-rpm-note"
-                        placeholder="Например: ~60 об/мин, режим 2">
-              </label>
-            </div>
+              <label for="wet-duration-min">Длительность, мин: </label>
+              <input id="wet-duration-min" type="number" name="wet_duration_min" min="0" step="1"><br>
 
-            <!-- Параметры для магнитной мешалки -->
-            <div class="mix-params" id="mix-wet-magnet-params" hidden>
-              <h4>Параметры мокрого перемешивания (магнитная мешалка)</h4>
-
-              <label for="wet-magnet-start-date">Время запуска: </label>
-              <input id="wet-magnet-start-date" type="date" name="wet-magnet-start-date" placeholder="Дата начала сушки">
-
-              <label for="wet-magnet-start-time">Время: </label>
-              <input id="wet-magnet-start-time" type="time" name="wet-magnet-start-time" placeholder="Время начала сушки">
-
-              <button type="button" class="date-time-now-button" id="wet-magnet-start-now-button">Сейчас</button><br>
-
-              <label>Длительность, мин:
-                <input type="number" name="wet-magnet-time" min="0" step="1">
-              </label>
-              <label>Скорость / режим (RPM, комментарий):
-                <input type="text"
-                        name="wet-magnet-rpm-note"
-                        placeholder="Например: 500–800 об/мин">
-              </label>
-            </div>
-
-            <!-- Параметры для вакуумного миксера -->
-            <div class="mix-params" id="mix-wet-vacuum-params" hidden>
-              <h4>Параметры мокрого перемешивания (вакуумный миксер)</h4>
-              
-              <label for="wet-vac-start-date">Время запуска: </label>
-              <input id="wet-vac-start-date" type="date" name="wet-vac-start-date" placeholder="Дата начала сушки">
-
-              <label for="wet-vac-start-time">Время: </label>
-              <input id="wet-vac-start-time" type="time" name="wet-vac-start-time" placeholder="Время начала сушки">
-              
-              <button type="button" class="date-time-now-button" id="wet-vac-start-now-button">Сейчас</button><br>
-
-              <label>Длительность, мин:
-                <input type="number" name="wet-vac-time" min="0" step="1">
-              </label>
-              <label>Скорость / режим (RPM, комментарий):
-                <input type="text"
-                        name="wet-vac-rpm-note"
-                        placeholder="Например: 300 об/мин, 2 цикла по 10 мин">
-              </label>
+              <label for="wet-rpm">Скорость / режим (RPM, комментарий): </label>
+              <input id="wet-rpm"
+                    type="text"
+                    name="wet_rpm"
+                    placeholder="Например: 500–800 об/мин"><br>
             </div>
 
             <button type="button" id="1-mixing-save-btn">Сохранить этап перемешивания</button>
@@ -435,10 +359,8 @@
               Управление пользователями
             </a><br>
 
-            <label for="2-coating-date">Дата: </label>
+            <label for="2-coating-date">Дата/время:</label>
             <input id="2-coating-date" type="date" name="2-coating-date" placeholder="Дата начала сушки">
-
-            <label for="2-coating-time">Время: </label>
             <input id="2-coating-time" type="time" name="2-coating-time" placeholder="Время начала сушки">
 
             <button type="button" class="date-time-now-button" id="2-coating-now-button">Сейчас</button><br>
@@ -533,10 +455,8 @@
               Управление пользователями
             </a><br>
 
-            <label for="2a-drying_tape-date">Дата: </label>
+            <label for="2a-drying_tape-date">Дата/время: </label>
             <input id="2a-drying_tape-date" type="date" name="2a-drying_tape-date" placeholder="Дата начала сушки">
-
-            <label for="2a-drying_tape-time">Время: </label>
             <input id="2a-drying_tape-time" type="time" name="2a-drying_tape-time" placeholder="Время начала сушки">
 
             <button type="button" class="date-time-now-button" id="2a-drying_tape-now-button">Сейчас</button><br>
@@ -556,7 +476,6 @@
             <textarea id="2a-drying_tape-other_param" name="2a-drying_tape-other_param" placeholder="Примечания к этапу сушки активного материала"></textarea><br>
 
             <button type="button" id="2a-drying_tape-save-btn">Сохранить этап сушки</button>
-
           </fieldset>
 
           <fieldset id="2-calendering">
@@ -571,10 +490,8 @@
               Управление пользователями
             </a><br>
 
-            <label for="2-calendering-date">Дата: </label>
+            <label for="2-calendering-date">Дата/время: </label>
             <input id="2-calendering-date" type="date" name="2-calendering-date" placeholder="Дата начала сушки">
-
-            <label for="2-calendering-time">Время: </label>
             <input id="2-calendering-time" type="time" name="2-calendering-time" placeholder="Время начала сушки">
 
             <button type="button" class="date-time-now-button" id="2-calendering-now-button">Сейчас</button><br>
@@ -645,10 +562,8 @@
               Управление пользователями
             </a><br>
 
-            <label for="2b-drying_pressed_tape-date">Дата: </label>
+            <label for="2b-drying_pressed_tape-date">Дата/время: </label>
             <input id="2b-drying_pressed_tape-date" type="date" name="2b-drying_pressed_tape-date" placeholder="Дата начала сушки">
-
-            <label for="2b-drying_pressed_tape-time">Время: </label>
             <input id="2b-drying_pressed_tape-time" type="time" name="2b-drying_pressed_tape-time" placeholder="Время начала сушки">
             
             <button type="button" class="date-time-now-button" id="2b-drying_pressed_tape-now-button">Сейчас</button><br>
@@ -691,7 +606,7 @@
       const tapesList = document.getElementById('tapesList');
 
       let mode = null;
-      let currentId = null;
+      let currentTapeId = null;
 
       const createdBySelect = document.getElementById('tape-created-by');
       const dryingOperatorSelect = document.getElementById('0-drying_am-operator');
@@ -699,7 +614,6 @@
       const tapeTypeSelect  = document.getElementById('tape_type');
       const recipeSelect    = document.getElementById('tape-recipe-id'); // already added in HTML
 
-      let currentTapeId = null;
       let currentRecipeLines = []; // full array from /api/recipes/:id/lines
       let selectedInstanceByLineId = {}; // { [recipe_line_id]: material_instance_id }
       let instanceCacheByMaterialId = {}; // { [material_id]: [instances...] }
@@ -726,7 +640,6 @@
         nameInput.hidden = true;
 
         mode = null;
-        currentId = null;
         currentTapeId = null;
 
         if (saveBtn) saveBtn.textContent = 'Создать ленту';
@@ -1643,7 +1556,6 @@
 
           editBtn.onclick = async() => {
             mode = 'edit';
-            currentId = t.tape_id;
             currentTapeId = t.tape_id;
 
             // --- RESTORE DRYING STEP ---
@@ -1653,10 +1565,39 @@
               restoreDryingStep({ code: 'drying_pressed_tape', prefix: '2b-drying_pressed_tape' })
             ]);
 
+            // --- RESTORE WEIGHING STEP (I.1 header) ---
+            {
+              const resWeigh = await fetch(`/api/tapes/${currentTapeId}/steps/by-code/weighing`);
+              if (resWeigh.ok) {
+                const weighing = await resWeigh.json();
+
+                if (weighing && weighing.started_at) {
+                  const dt = new Date(weighing.started_at);
+
+                  const yyyy = dt.getFullYear();
+                  const mm   = String(dt.getMonth() + 1).padStart(2, '0');
+                  const dd   = String(dt.getDate()).padStart(2, '0');
+                  const hh   = String(dt.getHours()).padStart(2, '0');
+                  const min  = String(dt.getMinutes()).padStart(2, '0');
+
+                  document.getElementById('1-weighing-date').value = `${yyyy}-${mm}-${dd}`;
+                  document.getElementById('1-weighing-time').value = `${hh}:${min}`;
+                } else {
+                  document.getElementById('1-weighing-date').value = '';
+                  document.getElementById('1-weighing-time').value = '';
+                }
+
+                document.getElementById('1-weighing-operator').value = String(weighing?.performed_by ?? '');
+                document.getElementById('1-weighing-notes').value    = weighing?.comments ?? '';
+              }
+            }
+
             // --- RESTORE MIXING STEP ---
+            console.log('Fetching mixing step...');
             const res = await fetch(
               `/api/tapes/${currentTapeId}/steps/by-code/mixing`
             );
+            console.log('Fetch response status:', res.status);
 
             if (!res.ok) throw new Error('Mixing load failed');
 
@@ -1664,6 +1605,7 @@
 
             if (mixing) {
 
+              // started_at -> 1-mixing-started_at-date/time
               if (mixing.started_at) {
                 const dt = new Date(mixing.started_at);
 
@@ -1673,18 +1615,45 @@
                 const hh   = String(dt.getHours()).padStart(2, '0');
                 const min  = String(dt.getMinutes()).padStart(2, '0');
 
-                document.getElementById('1-weighing-date').value =
-                  `${yyyy}-${mm}-${dd}`;
-
-                document.getElementById('1-weighing-time').value =
-                  `${hh}:${min}`;
+                document.getElementById('1-mixing-started_at-date').value = `${yyyy}-${mm}-${dd}`;
+                document.getElementById('1-mixing-started_at-time').value = `${hh}:${min}`;
+              } else {
+                document.getElementById('1-mixing-started_at-date').value = '';
+                document.getElementById('1-mixing-started_at-time').value = '';
               }
 
-              document.getElementById('1-weighing-operator').value =
-                mixing.performed_by || '';
+              // performed_by, comments
+              document.getElementById('1-mixing-operator').value = mixing.performed_by || '';
+              document.getElementById('1-mixing-comments').value     = mixing.comments || '';
 
-              document.getElementById('1-weighing-notes').value =
-                mixing.comments || '';
+              // slurry volume + method ids
+              document.getElementById('1-mixing-slurry_volume_ml').value = mixing.slurry_volume_ml ?? '';
+              document.getElementById('1-mixing-dry_mixing_id').value    = mixing.dry_mixing_id ?? '';
+              document.getElementById('1-mixing-wet_mixing_id').value    = mixing.wet_mixing_id ?? '';
+
+              // dry params
+              if (mixing.dry_start_time) {
+                const dt = new Date(mixing.dry_start_time);
+                document.getElementById('dry-start-date').value = dt.toISOString().slice(0, 10);
+                document.getElementById('dry-start-time').value = dt.toISOString().slice(11, 16);
+              } else {
+                document.getElementById('dry-start-date').value = '';
+                document.getElementById('dry-start-time').value = '';
+              }
+              document.getElementById('dry-duration-min').value = mixing.dry_duration_min ?? '';
+              document.getElementById('dry-rpm').value          = mixing.dry_rpm ?? '';
+
+              // wet params
+              if (mixing.wet_start_time) {
+                const dt = new Date(mixing.wet_start_time);
+                document.getElementById('wet-start-date').value = dt.toISOString().slice(0, 10);
+                document.getElementById('wet-start-time').value = dt.toISOString().slice(11, 16);
+              } else {
+                document.getElementById('wet-start-date').value = '';
+                document.getElementById('wet-start-time').value = '';
+              }
+              document.getElementById('wet-duration-min').value = mixing.wet_duration_min ?? '';
+              document.getElementById('wet-rpm').value          = mixing.wet_rpm ?? '';
             }
 
             // --- END OF STEP RESTORATION ---
@@ -1751,7 +1720,6 @@
 
           duplicateBtn.onclick = () => {
             mode = 'create';
-            currentId = null;
             currentTapeId = null;
             if (saveBtn) saveBtn.textContent = 'Создать ленту';
 
@@ -1952,7 +1920,7 @@
         if (!name) return;
 
         mode = 'create';
-        currentId = null;
+        currentTapeId = null;
 
         title.textContent = name;
         nameInput.value = name;
@@ -1961,6 +1929,99 @@
 
         addInput.value = '';
       });
+
+      // -------- I.2. Save mixing --------
+
+      document.getElementById('1-mixing-save-btn').onclick = async () => {
+
+        if (!currentTapeId) {
+          alert('Сначала сохраните ленту.');
+          return;
+        }
+
+        // ---- Top-level step fields ----
+        const performed_by = document.getElementById('1-mixing-operator').value || null;
+        const comments     = document.getElementById('1-mixing-comments').value || null;
+
+        const date = document.getElementById('1-mixing-started_at-date').value;
+        const time = document.getElementById('1-mixing-started_at-time').value;
+
+        let started_at = null;
+        if (date && time) {
+          started_at = new Date(`${date}T${time}`);
+        }
+
+        const slurry_volume_ml =
+          document.getElementById('1-mixing-slurry_volume_ml').value || null;
+
+        const dry_mixing_id =
+          document.getElementById('1-mixing-dry_mixing_id').value || null;
+
+        const wet_mixing_id =
+          document.getElementById('1-mixing-wet_mixing_id').value || null;
+
+        // ---- Dry params ----
+        const dryDate = document.getElementById('dry-start-date').value;
+        const dryTime = document.getElementById('dry-start-time').value;
+
+        let dry_start_time = null;
+        if (dryDate && dryTime) {
+          dry_start_time = new Date(`${dryDate}T${dryTime}`);
+        }
+
+        const dry_duration_min =
+          document.getElementById('dry-duration-min').value || null;
+
+        const dry_rpm =
+          document.getElementById('dry-rpm').value || null;
+
+        // ---- Wet params ----
+        const wetDate = document.getElementById('wet-start-date').value;
+        const wetTime = document.getElementById('wet-start-time').value;
+
+        let wet_start_time = null;
+        if (wetDate && wetTime) {
+          wet_start_time = new Date(`${wetDate}T${wetTime}`);
+        }
+
+        const wet_duration_min =
+          document.getElementById('wet-duration-min').value || null;
+
+        const wet_rpm =
+          document.getElementById('wet-rpm').value || null;
+
+        // ---- Build payload ----
+        const payload = {
+          performed_by,
+          started_at,
+          comments,
+          slurry_volume_ml,
+          dry_mixing_id,
+          dry_start_time,
+          dry_duration_min,
+          dry_rpm,
+          wet_mixing_id,
+          wet_start_time,
+          wet_duration_min,
+          wet_rpm
+        };
+
+        const res = await fetch(
+          `/api/tapes/${currentTapeId}/steps/by-code/mixing`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }
+        );
+
+        if (!res.ok) {
+          alert('Ошибка сохранения этапа перемешивания');
+          return;
+        }
+
+        alert('Этап перемешивания сохранён');
+      };
 
       /* ------ name: editable ------ */
 
@@ -2012,7 +2073,7 @@
 
           if (mode === 'edit') {
             // 1. Update tape general info
-            await updateTape(currentId, data);
+            await updateTape(currentTapeId, data);
 
             // 2. Save actuals for each recipe line
             for (const line of currentRecipeLines) {
@@ -2053,7 +2114,7 @@
                 }
               }
 
-              await fetch(`/api/tapes/${currentId}/actuals`, {
+              await fetch(`/api/tapes/${currentTapeId}/actuals`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -2134,6 +2195,7 @@
       });
 
       const weighingSaveBtn = document.getElementById('1-weighing-save-btn');
+
       weighingSaveBtn.addEventListener('click', async () => {
 
         if (!currentTapeId) {
@@ -2157,7 +2219,7 @@
 
         try {
           const res = await fetch(
-            `/api/tapes/${currentTapeId}/steps/by-code/mixing`,
+            `/api/tapes/${currentTapeId}/steps/by-code/weighing`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2177,17 +2239,16 @@
         }
       });
 
-
       // ---- NOW buttons (scoped to their own fieldset) ----
       document.addEventListener('click', (e) => {
         const btn = e.target.closest('.date-time-now-button');
         if (!btn) return;
 
-        const fieldset = btn.closest('fieldset');
-        if (!fieldset) return;
+        const scope = btn.closest('.mix-params') || btn.closest('fieldset');
+        if (!scope) return;
 
-        const dateInput = fieldset.querySelector('input[type="date"]');
-        const timeInput = fieldset.querySelector('input[type="time"]');
+        const dateInput = scope.querySelector('input[type="date"]');
+        const timeInput = scope.querySelector('input[type="time"]');
 
         const now = new Date();
 
@@ -2205,6 +2266,20 @@
         }
       });
 
+      // ---- Mixing params show/hide (empty method => hide params) ----
+      const dryMixSelect = document.getElementById('1-mixing-dry_mixing_id');
+      const wetMixSelect = document.getElementById('1-mixing-wet_mixing_id');
+      const dryParamsBox = document.getElementById('mix-dry-params');
+      const wetParamsBox = document.getElementById('mix-wet-params');
+      updateMixParamsVisibility();
+
+      function updateMixParamsVisibility() {
+        if (dryParamsBox) dryParamsBox.hidden = !(dryMixSelect && dryMixSelect.value);
+        if (wetParamsBox) wetParamsBox.hidden = !(wetMixSelect && wetMixSelect.value);
+      }
+
+      if (dryMixSelect) dryMixSelect.addEventListener('change', updateMixParamsVisibility);
+      if (wetMixSelect) wetMixSelect.addEventListener('change', updateMixParamsVisibility);
 
       // -------- Init --------
       
@@ -2227,9 +2302,16 @@
         ).catch(console.error);
       });
 
-      loadDryMixingMethods(document.getElementById('dry-mixing-method')).catch(console.error);
-      loadWetMixingMethods(document.getElementById('wet-mixing-method')).catch(console.error);
-      
+      loadDryMixingMethods(document.getElementById('1-mixing-dry_mixing_id'))
+        .then(updateMixParamsVisibility)
+        .catch(console.error);
+
+      loadWetMixingMethods(document.getElementById('1-mixing-wet_mixing_id'))
+        .then(updateMixParamsVisibility)
+        .catch(console.error);
+
+      updateMixParamsVisibility();
+
     </script>
   </body>
 </html>

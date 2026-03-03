@@ -2054,6 +2054,62 @@ app.post('/api/tapes/:id/steps/by-code/:code', async (req, res) => {
     }
   }
 
+  // WEIGHING (header only, no subtype table)
+  if (code === 'weighing') {
+    const {
+      performed_by,
+      started_at,
+      comments
+    } = req.body || {};
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const ot = await client.query(
+        `SELECT operation_type_id FROM operation_types WHERE code = $1`,
+        [code]
+      );
+
+      if (ot.rows.length === 0) {
+        throw new Error(`Unknown operation code: ${code}`);
+      }
+
+      const operationTypeId = ot.rows[0].operation_type_id;
+
+      const step = await client.query(
+        `
+        INSERT INTO tape_process_steps
+          (tape_id, operation_type_id, performed_by, started_at, comments)
+        VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (tape_id, operation_type_id)
+        DO UPDATE SET
+          performed_by = EXCLUDED.performed_by,
+          started_at   = EXCLUDED.started_at,
+          comments     = EXCLUDED.comments
+        RETURNING step_id
+        `,
+        [
+          tapeId,
+          operationTypeId,
+          Number(performed_by) || null,
+          started_at || null,
+          comments || null
+        ]
+      );
+
+      await client.query('COMMIT');
+      return res.status(201).json({ step_id: step.rows[0].step_id });
+
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(err);
+      return res.status(500).json({ error: 'Failed to save weighing step' });
+    } finally {
+      client.release();
+    }
+  }
+
   // MIXING (header + tape_step_mixing)
   if (code === 'mixing') {
     const {
@@ -2346,6 +2402,7 @@ gets triggered when the tape_recipe_line_actuals are saved
 // UPDATE
 
 // DELETE (cascade when the tape is deleted)
+
 
 // -------- TAPE PROCESS STEPS (MIXING) --------
 
