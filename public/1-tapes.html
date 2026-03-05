@@ -79,25 +79,25 @@
     <form name="tape-form" hidden autocomplete="on">
 
       <div class="form-actions" style="display:flex; gap:.5rem; align-items:center; margin:.5rem 0 1rem 0;">
-        <button type="button" id="saveBtn">Создать ленту</button>
-        <button type="button" id="clearBtn">Выйти</button>
+        <button type="button" id="clearBtn">Выход</button>
       </div>
-  
+
+      <input
+        type="text"
+        name="name"
+        id="tape-name-input"
+        hidden
+      />
+      <h2></h2>
+      <div id="live-since-last-step" aria-live="polite"></div>
+
       <!-- FormData ignores fields without `name` -->
       <details id="0-general-info" open>
-        <summary>Общая информация о ленте</summary>
+        <summary>Общая информация 
+          <span id="dirty-general-info" style="display:none; margin-left:8px;">● не сохранено</span>
+        </summary>
       
         <fieldset id="tapes-general-info">
-          <input
-            type="text"
-            name="name"
-            id="tape-name-input"
-            hidden
-          />
-          <h2></h2>
-          <div id="live-since-last-step" aria-live="polite"></div>
-
-
           <label for="tape-created-by">Кто добавил</label>
           <select id="tape-created-by" name="created_by" required>
             <option value="">— выбрать пользователя —</option>
@@ -112,22 +112,18 @@
             <option value="">— выбрать проект —</option>
           </select><br>
 
+          <label for="notes">Примечания: </label>
+          <textarea id="notes" name="notes" placeholder="Общие комментарии о ленте и процессе ее приготовления"></textarea>
+
+          <hr>
+
           <label for="tape_type">Тип электродной ленты</label>
           <select id="tape_type" name="tape_type" required>
             <option value="">— выбрать тип —</option>
             <option value="cathode">Катод</option>
             <option value="anode">Анод</option>
           </select><br>
-          
-          <label for="notes">Примечания: </label>
-          <textarea id="notes" name="notes" placeholder="Общие комментарии о ленте и процессе ее приготовления"></textarea>
-        </fieldset>
-      </details>
-      
-      <details id="0-tape-recipe-materials" closed>
-        <summary>Рецепт ленты</summary>
 
-        <fieldset id="tape-recipe-and-materials">
           <label for="tape-recipe-id">Рецепт</label>
           <select id="tape-recipe-id" name="tape_recipe_id" required>
             <option value="">— выбрать рецепт —</option>
@@ -149,24 +145,34 @@
             type="number"
             step="0.0001"
             min="0"
-            placeholder="например 10.0000">
-
-          <hr>
-          <div id="recipe-lines-container"></div>
+            placeholder="например 10.0000"><br>
           
-          <hr class="section-divider">
-          <details id="calculations-expanded">
-            <summary><strong>Расчёт состава (расширенный вид)</strong></summary><br>
-            <div id="expanded-calculation-container"></div>
-          </details>
+          <button type="button" id="saveBtn">Создать ленту</button>
         </fieldset>
       </details>
+      
+      <details id="0-tape-recipe-materials" hidden>
+        <summary>Рецепт ленты
+          <span id="dirty-recipe-materials" style="display:none; margin-left:8px;">● не сохранено</span>
+        </summary>
+        <div id="recipe-lines-container"></div>
+        
+        <hr class="section-divider">
+        <details id="calculations-expanded">
+          <summary>Расчёт состава (расширенный вид)</summary><br>
+          <div id="expanded-calculation-container"></div>
+        </details>
+      </details>
 
-      <details id="0-drying_materials">
-        <summary>Подготовка материалов</summary>
+      <details id="0-drying_materials" hidden>
+        <summary>Этап 0: Подготовка материалов
+          <span id="dirty-drying_materials" style="display:none; margin-left:8px;">● не сохранено</span>
+        </summary>
 
         <fieldset id="0-drying_am">
-          <legend>0. Сушка активного материала в шкафу</legend>
+          <legend>0. Сушка активного материала в шкафу
+            <span id="dirty-drying_am" style="display:none; margin-left:8px;">● не сохранено</span>
+          </legend>
 
           <!-- кто/когда -->
           <label for="0-drying_am-operator">Оператор: </label>
@@ -203,10 +209,15 @@
         </fieldset>
       </details>
 
-      <details id="1-slurry">
-        <summary>I. Приготовление электродной пасты</summary>
+      <details id="1-slurry" hidden>
+        <summary>Этап I: Приготовление электродной пасты
+          <span id="dirty-slurry" style="display:none; margin-left:8px;">● не сохранено</span>
+        </summary>
+        
         <fieldset id="1-weighing">
-          <legend>I.1. Замес пасты</legend>
+          <legend>I.1. Замес пасты
+            <span id="dirty-weighing" style="display:none; margin-left:8px;">● не сохранено</span>
+          </legend>
           <div class="time-since" id="1-weighing-delay" aria-live="polite"></div>
 
           <!-- кто/когда -->
@@ -246,7 +257,9 @@
         </fieldset>
 
         <fieldset id="1-mixing">
-          <legend>I.2. Перемешивание пасты</legend>
+          <legend>I.2. Перемешивание пасты
+            <span id="dirty-mixing" style="display:none; margin-left:8px;">● не сохранено</span>
+          </legend>
           <div class="time-since" id="1-mixing-delay" aria-live="polite"></div>
 
           <!-- кто/когда -->
@@ -344,13 +357,18 @@
         </fieldset>
       </details>
 
-      <details id="2-tape">
-        <summary>II. Приготовление электродной ленты</summary>
+      <details id="2-tape" hidden>
+        <summary>Этап II: Приготовление электродной ленты
+          <span id="dirty-tape" style="display:none; margin-left:8px;">● не сохранено</span>
+        </summary>
+        
         <fieldset id="2-tape-f">
           <legend class="visually-hidden">II. Приготовление электродной ленты</legend>
 
           <fieldset id="2-coating">
-            <legend>II.1. Нанесение</legend>
+            <legend>II.1. Нанесение
+              <span id="dirty-coating" style="display:none; margin-left:8px;">● не сохранено</span>
+            </legend>
             <div class="time-since" id="2-coating-delay" aria-live="polite"></div>
 
             <!-- кто/когда -->
@@ -406,7 +424,9 @@
           </fieldset>
 
           <fieldset id="2a-drying_tape">
-            <legend>II.2. Сушка ленты в шкафу (до каландрирования)</legend>
+            <legend>II.2. Сушка ленты в шкафу (до каландрирования)
+              <span id="dirty-drying_tape" style="display:none; margin-left:8px;">● не сохранено</span>
+            </legend>
             <div class="time-since" id="2a-drying_tape-delay" aria-live="polite"></div>
 
             <!-- кто/когда -->
@@ -445,7 +465,9 @@
           </fieldset>
 
           <fieldset id="2-calendering">
-            <legend>II.3. Каландрирование</legend>
+            <legend>II.3. Каландрирование
+              <span id="dirty-calendering" style="display:none; margin-left:8px;">● не сохранено</span>
+            </legend>
             <div class="time-since" id="2-calendering-delay" aria-live="polite"></div>
 
             <!-- кто/когда -->
@@ -502,7 +524,7 @@
             <label for="2-calendering-other_params">Дополнительные параметры: </label>
             <textarea id="2-calendering-other_params"></textarea><br>
 
-            <label>Внешний вид:</label><br>
+            <h5>Внешний вид:</h5>
 
             <input type="checkbox" id="2-cal-shine" value="Блеск">
             <label for="2-cal-shine">Блеск</label><br>
@@ -525,7 +547,9 @@
           </fieldset>
 
           <fieldset id="2b-drying_pressed_tape">
-            <legend>II.4. Сушка готовой ленты в шкафу (после каландрирования)</legend>
+            <legend>II.4. Сушка готовой ленты в шкафу (после каландрирования)
+              <span id="dirty-drying_pressed_tape" style="display:none; margin-left:8px;">● не сохранено</span>
+            </legend>
             <div class="time-since" id="2b-drying_pressed_tape-delay" aria-live="polite"></div>
 
             <!-- кто/когда -->
@@ -1478,10 +1502,21 @@
           const editBtn = document.createElement('button');
           editBtn.textContent = '✏️';
 
-
           async function restoreDryingStep({ code, prefix }) {
 
             if (!currentTapeId) return;
+
+            document.getElementById('0-general-info').hidden = false;
+            document.getElementById('0-tape-recipe-materials').hidden = false;
+            document.getElementById('0-drying_materials').hidden = false;
+            document.getElementById('1-slurry').hidden = false;
+            document.getElementById('2-tape').hidden = false;
+
+            document.getElementById('0-general-info').open = false;
+            document.getElementById('0-tape-recipe-materials').open = false;
+            document.getElementById('0-drying_materials').open = false;
+            document.getElementById('1-slurry').open = false;
+            document.getElementById('2-tape').open = false;
 
             const res = await fetch(
               `/api/tapes/${currentTapeId}/steps/by-code/${code}`
@@ -1536,6 +1571,7 @@
           editBtn.onclick = async() => {
             mode = 'edit';
             currentTapeId = t.tape_id;
+            window.isRestoringTape = true
 
             // --- RESTORE DRYING STEP ---
             await Promise.all([
@@ -1829,12 +1865,21 @@
             refreshDryingPressedTapeDelay();
 
             // --- END OF STEP RESTORATION ---
-
+            window.isRestoringTape = false;
+            
             if (saveBtn) saveBtn.textContent = 'Сохранить изменения';
 
             showForm();
+
+            if (!currentTapeId) {
+              document.getElementById('0-tape-recipe-materials').hidden = true;
+              document.getElementById('0-drying_materials').hidden = true;
+              document.getElementById('1-slurry').hidden = true;
+              document.getElementById('2-tape').hidden = true;
+            }
             
             const currentName = (t.name || '').trim();
+            window.isRestoringTape = true;
 
             title.textContent = currentName || '— без названия —';
             nameInput.value = currentName;
@@ -1884,7 +1929,9 @@
               // They are cleared at the end of the recipe change handler
               // after fetchRecipeLines/render completes.
             }
+            window.isRestoringTape = false;
           };
+          
 
           const duplicateBtn = document.createElement('button');
           duplicateBtn.textContent = '📄';
@@ -1934,6 +1981,78 @@
         console.error(err);
       }
 
+      // -------- Unsaved changes (dirty flags) --------
+
+      const dirtySteps = {
+        general_info: false,
+        recipe_materials: false,
+        drying_materials: false,
+        drying_am: false,
+        slurry: false,
+        weighing: false,
+        mixing: false,
+        tape: false,
+        coating: false,
+        drying_tape: false,
+        calendering: false,
+        drying_pressed_tape: false
+      };
+
+      function setStepDirty(stepCode, isDirty) {
+        // Ignore programmatic restore for General Info (edit-mode loading)
+        if (stepCode === 'general_info' && window.isRestoringTape && isDirty) return;
+
+        dirtySteps[stepCode] = Boolean(isDirty);
+
+        const markerId =
+          stepCode === 'general_info' ? 'dirty-general-info'
+          : stepCode === 'recipe_materials' ? 'dirty-recipe-materials'
+          : stepCode === 'drying_materials' ? 'dirty-drying_materials'
+          : stepCode === 'drying_am' ? 'dirty-drying_am'
+          : stepCode === 'slurry' ? 'dirty-slurry'
+          : stepCode === 'weighing' ? 'dirty-weighing'
+          : stepCode === 'mixing' ? 'dirty-mixing'
+          : stepCode === 'tape' ? 'dirty-tape'
+          : stepCode === 'coating' ? 'dirty-coating'
+          : stepCode === 'drying_tape' ? 'dirty-drying_tape'
+          : stepCode === 'calendering' ? 'dirty-calendering'
+          : stepCode === 'drying_pressed_tape' ? 'dirty-drying_pressed_tape'
+          : null;
+
+        const el = markerId ? document.getElementById(markerId) : null;
+        if (el) el.style.display = dirtySteps[stepCode] ? 'inline' : 'none';
+      }
+
+      function anyDirty() {
+        return Object.values(dirtySteps).some(Boolean);
+      }
+
+      // Warn on tab close / reload when anything is dirty
+      window.addEventListener('beforeunload', (e) => {
+        if (!anyDirty()) return;
+        e.preventDefault();
+        e.returnValue = '';
+      });
+
+      // Mark general info dirty on any user edits inside the General Info block
+      (() => {
+        const generalDetails = document.getElementById('0-general-info');
+        if (!generalDetails) return;
+
+        const fields = generalDetails.querySelectorAll('input, select, textarea');
+
+        fields.forEach(el => {
+
+          const mark = () => {
+            if (window.isRestoringTape) return;  // ignore programmatic restore
+            setStepDirty('general_info', true);
+          };
+
+          el.addEventListener('input', mark);
+          el.addEventListener('change', mark);
+
+        });
+      })();
       // -------- Time since previous step (helpers) --------
 
       function readDateTimeFromInputs(dateId, timeId) {
@@ -2350,11 +2469,41 @@
             const created = await createTape(data);
 
             await loadTapes();
-            resetForm();   // close + clear
+            // keep the form open: switch to edit mode so step buttons keep working
+            currentTapeId = created.tape_id;
+            mode = 'edit';
+            saveBtn.textContent = 'Сохранить изменения';
+
+            document.getElementById('0-tape-recipe-materials').hidden = false;
+            document.getElementById('0-drying_materials').hidden = false;
+            document.getElementById('1-slurry').hidden = false;
+            document.getElementById('2-tape').hidden = false;
+
+            document.getElementById('0-tape-recipe-materials').open = true;
+            document.getElementById('0-drying_materials').open = true;
+
+            document.getElementById('1-slurry').open = false;
+            document.getElementById('2-tape').open = false;
+
+            setStepDirty('general_info', false);
+            setStepDirty('recipe_materials', false);
+            setStepDirty('drying_materials', false);
+            setStepDirty('drying_am', false);
+            setStepDirty('slurry', false);
+            setStepDirty('weighing', false);
+            setStepDirty('mixing', false);
+            setStepDirty('tape', false);
+            setStepDirty('coating', false);
+            setStepDirty('drying_tape', false);
+            setStepDirty('calendering', false);
+            setStepDirty('drying_pressed_tape', false);
+
+            alert('Изменения сохранены');
             return;
           }
 
           if (mode === 'edit') {
+
             // 1. Update tape general info
             await updateTape(currentTapeId, data);
 
@@ -2404,8 +2553,21 @@
               });
             }
 
+            setStepDirty('general_info', false);
+            setStepDirty('recipe_materials', false);
+            setStepDirty('drying_materials', false);
+            setStepDirty('drying_am', false);
+            setStepDirty('slurry', false);
+            setStepDirty('weighing', false);
+            setStepDirty('mixing', false);
+            setStepDirty('tape', false);
+            setStepDirty('coating', false);
+            setStepDirty('drying_tape', false);
+            setStepDirty('calendering', false);
+            setStepDirty('drying_pressed_tape', false);
+
             await loadTapes();
-            resetForm();
+            alert('Изменения сохранены');
             return;
           }
         } catch (err) {
@@ -2413,7 +2575,28 @@
         }
       });
       
-      clearBtn.addEventListener('click', resetForm);
+      clearBtn.addEventListener('click', () => {
+        if (anyDirty()) {
+          const ok = confirm('Changes not saved. Are you sure you want to leave?');
+          if (!ok) return;
+        }
+
+        // user chose to leave → clear flags so beforeunload doesn’t keep firing
+        setStepDirty('general_info', false);
+        setStepDirty('recipe_materials', false);
+        setStepDirty('drying_materials', false);
+        setStepDirty('drying_am', false);
+        setStepDirty('slurry', false);
+        setStepDirty('weighing', false);
+        setStepDirty('mixing', false);
+        setStepDirty('tape', false);
+        setStepDirty('coating', false);
+        setStepDirty('drying_tape', false);
+        setStepDirty('calendering', false);
+        setStepDirty('drying_pressed_tape', false);
+
+        resetForm();
+      });
 
       // -------- Drying step helpers (generic for all drying blocks) --------
 
@@ -2649,6 +2832,7 @@
           return;
         }
 
+        setStepDirty('mixing', false);
         alert('Этап перемешивания сохранён');
       };
 
@@ -2814,8 +2998,6 @@
         }
       });
 
-
-
       // -------- Init --------
       
       hideForm();
@@ -2901,6 +3083,60 @@
           el.addEventListener('change', refreshDryingPressedTapeDelay);
         });      
 
+      // Mark mixing as dirty on any change inside the mixing fieldset
+      (() => {
+        const fs = document.getElementById('1-mixing');
+        if (!fs) return;
+
+        fs.addEventListener('input', () => setStepDirty('mixing', true));
+        fs.addEventListener('change', () => setStepDirty('mixing', true));
+      })();
+
+      // Mark recipe/materials as dirty on any edit in the actuals table
+      (() => {
+        const tbody = document.getElementById('slurry-actuals-body');
+        if (!tbody) return;
+
+        const mark = () => {
+          if (window.isRestoringTape) return; // do not mark dirty during restore
+          setStepDirty('recipe_materials', true);
+        };
+
+        tbody.addEventListener('input', mark);
+        tbody.addEventListener('change', mark);
+      })();
+    
+      // Generic dirty wiring for the remaining step fieldsets
+      (() => {
+
+        const map = {
+          '0-drying_materials': 'drying_materials',
+          '0-drying_am': 'drying_am',
+          '1-slurry': 'slurry',
+          '1-weighing': 'weighing',
+          '2-tape': 'tape',
+          '2-coating': 'coating',
+          '2-drying_tape': 'drying_tape',
+          '2-calendering': 'calendering',
+          '2-drying_pressed_tape': 'drying_pressed_tape'
+        };
+
+        Object.entries(map).forEach(([elementId, stepCode]) => {
+
+          const el = document.getElementById(elementId);
+          if (!el) return;
+
+          const mark = () => {
+            if (window.isRestoringTape) return;
+            setStepDirty(stepCode, true);
+          };
+
+          el.addEventListener('input', mark);
+          el.addEventListener('change', mark);
+
+        });
+
+      })();
     </script>
   </body>
 </html>
