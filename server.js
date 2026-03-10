@@ -2808,6 +2808,7 @@ app.post('/api/electrode-cut-batches', async (req, res) => {
 // UPDATE
 app.put('/api/electrode-cut-batches/:id', async (req, res) => {
   const cutBatchId = Number(req.params.id);
+
   const {
     shape,
     diameter_mm,
@@ -2816,8 +2817,12 @@ app.put('/api/electrode-cut-batches/:id', async (req, res) => {
     comments
   } = req.body;
 
-  if (!Number.isInteger(cutBatchId)) {
-    return res.status(400).json({ error: 'Некорректный ID' });
+  if (!Number.isInteger(cutBatchId) || cutBatchId <= 0) {
+    return res.status(400).json({ error: 'Некорректный ID партии' });
+  }
+
+  if (shape && !['circle','rectangle'].includes(shape)) {
+    return res.status(400).json({ error: 'Некорректная форма электрода' });
   }
 
   try {
@@ -2843,11 +2848,12 @@ app.put('/api/electrode-cut-batches/:id', async (req, res) => {
       ]
     );
 
-    if (result.rows.length === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Партия не найдена' });
     }
 
     res.json(result.rows[0]);
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
@@ -2865,10 +2871,15 @@ app.get('/api/tapes/:id/electrode-cut-batches', async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT *
-      FROM electrode_cut_batches
-      WHERE tape_id = $1
-      ORDER BY created_at DESC
+      SELECT
+        b.*,
+        d.start_time AS drying_start,
+        d.end_time AS drying_end
+      FROM electrode_cut_batches b
+      LEFT JOIN electrode_drying d
+        ON d.cut_batch_id = b.cut_batch_id
+      WHERE b.tape_id = $1
+      ORDER BY b.created_at DESC
       `,
       [tapeId]
     );
@@ -2896,38 +2907,6 @@ app.get('/api/electrode-cut-batches/:id', async (req, res) => {
       WHERE cut_batch_id = $1
       `,
       [cutBatchId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Партия не найдена' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Ошибка сервера' });
-  }
-});
-
-
-// UPDATE cut batch comments
-app.put('/api/electrode-cut-batches/:id/comments', async (req, res) => {
-  const cutBatchId = Number(req.params.id);
-  const { comments } = req.body;
-
-  if (!Number.isInteger(cutBatchId)) {
-    return res.status(400).json({ error: 'Некорректный ID' });
-  }
-
-  try {
-    const result = await pool.query(
-      `
-      UPDATE electrode_cut_batches
-      SET comments = $1
-      WHERE cut_batch_id = $2
-      RETURNING *
-      `,
-      [comments || null, cutBatchId]
     );
 
     if (result.rows.length === 0) {

@@ -418,7 +418,11 @@
 
         workspace.hidden = true;
         batchTitle.textContent = '';
+        
+        document.getElementById('electrodes-created_by').value = '';
+        document.getElementById('electrodes-comments').value = '';
         document.getElementById('electrodes-body').innerHTML = '';
+        
         appendElectrodeRow();
 
         document.querySelectorAll('input[name="electrodes-shape"]').forEach(r => {
@@ -609,7 +613,8 @@
         const reason = prompt('Причина списания');
 
         if (!reason) return;
-
+        
+        // existing batch: update batch, then delete old electrodes, then insert current electrodes
         await fetch(`/api/electrodes/${electrode.electrode_id}/status`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -1175,12 +1180,6 @@
             width_mm: document.getElementById('electrodes-width').value || null
           };
 
-          // delete existing electrodes for the batch to avoid duplication
-          await fetch(`/api/electrode-cut-batches/${currentCutBatchId}/electrodes`, {
-            method: 'DELETE'
-          });
-
-          // insert the current rows from the UI
           const res = await fetch('/api/electrode-cut-batches', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1188,18 +1187,28 @@
           });
 
           const batch = await res.json();
-
           currentCutBatchId = batch.cut_batch_id;
 
+        } else {
+
+          await fetch(`/api/electrode-cut-batches/${currentCutBatchId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              shape: document.querySelector('input[name="electrodes-shape"]:checked')?.value || null,
+              diameter_mm: document.getElementById('electrodes-diameter').value || null,
+              length_mm: document.getElementById('electrodes-length').value || null,
+              width_mm: document.getElementById('electrodes-width').value || null,
+              comments: document.getElementById('electrodes-comments').value || null
+            })
+          });
         }
 
-        await fetch(`/api/electrode-cut-batches/${currentCutBatchId}/comments`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            comments: document.getElementById('electrodes-comments').value || null
-          })
-        });
+        if (currentCutBatchId) {
+          await fetch(`/api/electrode-cut-batches/${currentCutBatchId}/electrodes`, {
+            method: 'DELETE'
+          });
+        }
 
         /* ---------- SAVE ELECTRODES ---------- */
 
@@ -1214,6 +1223,7 @@
           const cup = row.querySelector('.electrode-cup')?.value || null;
           const comments = row.querySelector('.electrode-comments')?.value || null;
 
+          // New batch: create batch, then insert electrodes
           await fetch('/api/electrodes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1266,7 +1276,8 @@
 
         hasChanges = false;
         alert('Партия сохранена');
-
+        
+        await loadCutBatches(tapeId);
       });
       
       
