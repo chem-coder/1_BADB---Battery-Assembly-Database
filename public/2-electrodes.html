@@ -134,7 +134,8 @@
               <table id="electrodes-table" border="1" cellpadding="6">
                 <thead>
                   <tr>
-                    <th>#</th>
+                    <th>№</th>
+                    <th>ID №</th>
                     <th>Масса, г</th>
                     <th>Стаканчик №</th>
                     <th>Комментарии</th>
@@ -569,13 +570,23 @@
         const body = document.getElementById('electrodes-body');
         body.innerHTML = '';
 
-        electrodes.forEach(e => {
+        electrodes.forEach((e, index) => {
 
           const tr = document.createElement('tr');
-          tr.dataset.electrodeId = e.electrode_id;
 
-          const numberCell = document.createElement('td');
-          numberCell.textContent = e.electrode_id;
+          /* row number */
+
+          const rowCell = document.createElement('td');
+          rowCell.textContent = index + 1;
+          tr.appendChild(rowCell);
+
+          /* electrode id */
+
+          const idCell = document.createElement('td');
+          idCell.textContent = e.electrode_id;
+          tr.appendChild(idCell);
+
+          tr.dataset.electrodeId = e.electrode_id;
 
           const massCell = document.createElement('td');
           const massInput = document.createElement('input');
@@ -657,7 +668,7 @@
 
           actionCell.appendChild(deleteBtn);
 
-          tr.appendChild(numberCell);
+          tr.appendChild(idCell);
           tr.appendChild(massCell);
           tr.appendChild(cupCell);
           tr.appendChild(commentCell);

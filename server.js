@@ -3199,7 +3199,10 @@ app.get('/api/electrode-cut-batches/:id/electrodes', async (req, res) => {
       SELECT *
       FROM electrodes
       WHERE cut_batch_id = $1
-      ORDER BY electrode_id
+      ORDER BY
+        status_code ASC,
+        electrode_mass_g ASC,
+        electrode_id ASC
       `,
       [cutBatchId]
     );
