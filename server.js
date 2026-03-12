@@ -3517,6 +3517,12 @@ app.delete('/api/electrode-drying/:id', async (req, res) => {
 });
 
 
+// -------- BATTERY --------
+
+// CREATE
+// READ
+// UPDATE
+// DELETE
 
 
 
