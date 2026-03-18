@@ -1,0 +1,1167 @@
+    const roleSelect = document.getElementById('electrode-role');
+    const tapeSelect = document.getElementById('electrodes-tape_id');
+    const workflow = document.getElementById('cutting-workflow');
+    const addCutBatchBtn = document.getElementById('add-cut-batch-btn');
+    const workspace = document.getElementById('electrode-workspace');
+    const batchTitle = document.getElementById('batch-title');
+    
+    let currentCutBatchId = null;
+    let hasChanges = false;
+    let tapes = [];
+    
+    const roleRu = {
+      cathode: 'катод',
+      anode: 'анод'
+    };
+    
+    roleSelect.addEventListener('change', () => {
+      if (currentCutBatchId) return;
+      renderTapeOptions();
+    });
+    
+    tapeSelect.addEventListener('change', async () => {
+      if (currentCutBatchId) return;
+      const projectSelect = document.getElementById('electrodes-project_id');
+      const list = document.getElementById('cut-batches-list');
+      const msg = document.getElementById('no-batches-msg');
+      
+      if (!tapeSelect.value) {
+        workflow.hidden = true;
+        addCutBatchBtn.hidden = true;
+        clearElectrodeWorkspace();
+        list.innerHTML = '';
+        msg.style.display = 'block';
+        return;
+      }
+      
+      const selectedOption = tapeSelect.selectedOptions[0];
+      
+      if (selectedOption && selectedOption.value) {
+        roleSelect.value = selectedOption.dataset.role || '';
+        projectSelect.value = selectedOption.dataset.projectId || '';
+        
+        renderTapeOptions();
+        tapeSelect.value = selectedOption.value;
+      }
+      
+      if (tapeSelect.value && projectSelect.value) {
+        workflow.hidden = false;
+        addCutBatchBtn.hidden = false;
+        clearElectrodeWorkspace();
+        await loadCutBatches(Number(tapeSelect.value));
+      } else {
+        workflow.hidden = true;
+        addCutBatchBtn.hidden = true;
+        clearElectrodeWorkspace();
+      }
+    });
+    
+    document.getElementById('electrodes-project_id')
+    .addEventListener('change', async () => {
+      if (currentCutBatchId) return;
+      
+      renderTapeOptions();
+      
+      if (tapeSelect.value && document.getElementById('electrodes-project_id').value) {
+        workflow.hidden = false;
+        addCutBatchBtn.hidden = false;
+        clearElectrodeWorkspace();
+        await loadCutBatches(Number(tapeSelect.value));
+      } else {
+        workflow.hidden = true;
+        addCutBatchBtn.hidden = true;
+        clearElectrodeWorkspace();
+      }
+    });
+    
+    document.getElementById('electrodes-created_by')
+    .addEventListener('change', () => {
+      if (currentCutBatchId) return;
+      
+      const projectSelect = document.getElementById('electrodes-project_id');
+      
+      if (tapeSelect.value && projectSelect.value) {
+        workflow.hidden = false;
+        addCutBatchBtn.hidden = false;
+      } else {
+        workflow.hidden = true;
+        addCutBatchBtn.hidden = true;
+        clearElectrodeWorkspace();
+      }
+    });
+    
+    
+    // -------- Reference dropdowns --------
+    
+    async function loadTapes() {
+      
+      const res = await fetch('/api/tapes/for-electrodes');
+      tapes = await res.json();
+      
+      renderTapeOptions();
+    }
+    
+    function renderTapeOptions() {
+      
+      const select = document.getElementById('electrodes-tape_id');
+      
+      const role = roleSelect.value;
+      const project = document.getElementById('electrodes-project_id').value;
+      
+      const filtered = tapes.filter(t =>
+        (!role || t.role === role) &&
+        (!project || t.project_id == project)
+      );
+      
+      select.innerHTML = '<option value="">— выбрать ленту —</option>';
+      
+      const cathodeGroup = document.createElement('optgroup');
+      cathodeGroup.label = 'Катоды';
+      
+      const anodeGroup = document.createElement('optgroup');
+      anodeGroup.label = 'Аноды';
+      
+      filtered.forEach(t => {
+        
+        const option = document.createElement('option');
+        option.value = String(t.tape_id);
+        option.dataset.role = t.role;
+        option.dataset.projectId = String(t.project_id);
+        
+        const date = t.finished_at || '—';          
+        const roleLabel = roleRu[t.role] || t.role;
+        
+        option.textContent = `#${t.tape_id} | ${t.name} (${roleLabel}) | ${date} | ${t.created_by}`;
+        
+        if (t.role === 'cathode') {
+          cathodeGroup.appendChild(option);
+        } else if (t.role === 'anode') {
+          anodeGroup.appendChild(option);
+        }
+        
+      });
+      
+      if (cathodeGroup.children.length) select.appendChild(cathodeGroup);
+      if (anodeGroup.children.length) select.appendChild(anodeGroup);
+      
+    }
+    
+    async function loadProjects() {
+      const select = document.getElementById('electrodes-project_id');
+      const res = await fetch('/api/projects?project_id=0');
+      const data = await res.json();
+      
+      select.innerHTML = '<option value="">— выбрать проект —</option>';
+      
+      data.forEach(p => {
+        const option = document.createElement('option');
+        option.value = p.project_id;
+        option.textContent = p.name;
+        select.appendChild(option);
+      });
+    }
+    
+    async function loadUsers() {
+      const select = document.getElementById('electrodes-created_by');
+      const res = await fetch('/api/users');
+      const data = await res.json();
+      
+      select.innerHTML = '<option value="">— выбрать пользователя —</option>';
+      
+      data.forEach(u => {
+        const option = document.createElement('option');
+        option.value = u.user_id;
+        option.textContent = u.full_name || u.name;
+        select.appendChild(option);
+      });
+    }
+    
+    function clearElectrodeWorkspace() {
+      currentCutBatchId = null;
+      hasChanges = false;
+      
+      workspace.hidden = true;
+      batchTitle.textContent = '';
+      
+      document.getElementById('electrodes-created_by').value = '';
+      document.getElementById('electrodes-comments').value = '';
+      document.getElementById('electrodes-body').innerHTML = '';
+      
+      appendElectrodeRow();
+      
+      document.querySelectorAll('input[name="electrodes-shape"]').forEach(r => {
+        r.checked = false;
+      });
+      
+      document.getElementById('electrodes-geom-circle').hidden = true;
+      document.getElementById('electrodes-geom-rect').hidden = true;
+      
+      document.getElementById('electrodes-diameter').value = '';
+      document.getElementById('electrodes-length').value = '';
+      document.getElementById('electrodes-width').value = '';
+      document.getElementById('electrodes-area').textContent = '';
+      
+      document.getElementById('foil-mass').value = '';
+      document.getElementById('foil-mass-body').innerHTML = '';
+      
+      appendFoilMassRow();
+      clearDryingBlock();
+    }
+    
+    function populateBatchWorkspace(batch) {
+      workspace.hidden = false;
+      currentCutBatchId = batch.cut_batch_id;
+      hasChanges = false;
+      batchTitle.textContent = `Batch ${batch.cut_batch_id}`;
+      
+      document.getElementById('electrodes-created_by').value = batch.created_by ?? '';
+      document.getElementById('electrodes-comments').value = batch.comments ?? '';
+      
+      const shapeRadio = document.querySelector(
+        `input[name="electrodes-shape"][value="${batch.shape}"]`
+      );
+      
+      document.querySelectorAll('input[name="electrodes-shape"]').forEach(r => {
+        r.checked = false;
+      });
+      
+      if (shapeRadio) {
+        shapeRadio.checked = true;
+      }
+      
+      const isCircle = batch.shape === 'circle';
+      const isRect = batch.shape === 'rectangle';
+      
+      document.getElementById('electrodes-geom-circle').hidden = !isCircle;
+      document.getElementById('electrodes-geom-rect').hidden = !isRect;
+      
+      document.getElementById('electrodes-diameter').value =
+      batch.diameter_mm ?? '';
+      
+      document.getElementById('electrodes-length').value =
+      batch.length_mm ?? '';
+      
+      document.getElementById('electrodes-width').value =
+      batch.width_mm ?? '';
+      
+      document.getElementById('foil-mass').value = '';
+      loadFoilMassMeasurements(batch.cut_batch_id);
+      
+      if (isCircle && batch.diameter_mm) {
+        const d = Number(batch.diameter_mm);
+        const area = Math.PI * Math.pow(d / 2, 2);
+        document.getElementById('electrodes-area').textContent = area.toFixed(2);
+      } else if (isRect && batch.length_mm && batch.width_mm) {
+        const area = Number(batch.length_mm) * Number(batch.width_mm);
+        document.getElementById('electrodes-area').textContent = area.toFixed(2);
+      } else {
+        document.getElementById('electrodes-area').textContent = '';
+      }
+    }
+    
+    async function loadCutBatches(tapeId) {
+      const res = await fetch(`/api/tapes/${tapeId}/electrode-cut-batches`);
+      const batches = await res.json();
+      
+      const list = document.getElementById('cut-batches-list');
+      const msg = document.getElementById('no-batches-msg');
+      
+      list.innerHTML = '';
+      batchTitle.textContent = '';
+      
+      if (!batches.length) {
+        msg.style.display = 'block';
+        clearElectrodeWorkspace();
+        return;
+      }
+      
+      msg.style.display = 'none';
+      
+      batches.forEach(batch => {
+        const li = document.createElement('li');
+        
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.style.textAlign = 'left';
+        btn.style.width = '100%';
+        
+        let status = '🟡 в работе';
+        
+        if (batch.drying_start && !batch.drying_end) {
+          status = '🟠 сушится';
+        }
+        
+        if (batch.drying_end) {
+          status = '🟢 готово';
+        }
+        
+        const dateText = batch.created_at
+        ? new Date(batch.created_at).toLocaleDateString('ru-RU')
+        : '—';
+        
+        const count = Number(batch.electrode_count) || 0;
+        const electrodeWord =
+        count % 10 === 1 && count % 100 !== 11 ? 'электрод' :
+        [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? 'электрода' :
+        'электродов';
+        
+        btn.textContent =
+        `Партия ${batch.cut_batch_id} — ${dateText} — ${count} ${electrodeWord} — ${status}`;
+        
+        btn.onclick = () => selectBatch(batch);
+        
+        li.appendChild(btn);
+        list.appendChild(li);
+      });
+    }
+    
+    async function loadElectrodes(cutBatchId) {
+      
+      const res = await fetch(`/api/electrodes/electrode-cut-batches/${cutBatchId}/electrodes`);
+      const electrodes = await res.json();
+      
+      renderElectrodes(electrodes);
+      
+    }
+    
+    function renderElectrodes(electrodes) {
+      
+      const body = document.getElementById('electrodes-body');
+      body.innerHTML = '';
+      
+      electrodes.forEach((e, index) => {
+        
+        const tr = document.createElement('tr');
+        
+        /* row number */
+        
+        const indexCell = document.createElement('td');
+        indexCell.className = 'row-index';
+        indexCell.textContent = index + 1;
+        tr.appendChild(indexCell);
+        
+        const rowCell = document.createElement('td');
+        rowCell.textContent = e.number_in_batch ?? '';
+        
+        tr.dataset.electrodeId = e.electrode_id;
+        
+        const massCell = document.createElement('td');
+        const massInput = document.createElement('input');
+        massInput.type = 'number';
+        massInput.step = '0.0001';
+        massInput.min = '0';
+        massInput.className = 'electrode-mass';
+        massInput.value = e.electrode_mass_g ?? '';
+        massInput.addEventListener('change', async () => {
+          await updateElectrode(e.electrode_id, {
+            electrode_mass_g: massInput.value || null
+          });
+          await loadElectrodes(currentCutBatchId);
+        });
+        massCell.appendChild(massInput);
+        
+        const cupCell = document.createElement('td');
+        const cupInput = document.createElement('input');
+        cupInput.type = 'number';
+        cupInput.step = '1';
+        cupInput.min = '0';
+        cupInput.className = 'electrode-cup';
+        cupInput.value = e.cup_number ?? '';
+        cupInput.addEventListener('change', async () => {
+          await updateElectrode(e.electrode_id, {
+            cup_number: cupInput.value || null
+          });
+          await loadElectrodes(currentCutBatchId);
+        });
+        cupCell.appendChild(cupInput);
+        
+        const commentCell = document.createElement('td');
+        const commentInput = document.createElement('input');
+        commentInput.type = 'text';
+        commentInput.className = 'electrode-comments';
+        commentInput.value = e.comments || '';
+        commentInput.addEventListener('change', async () => {
+          await updateElectrode(e.electrode_id, {
+            comments: commentInput.value || null
+          });
+          await loadElectrodes(currentCutBatchId);
+        });
+        commentCell.appendChild(commentInput);
+        
+        const statusCell = document.createElement('td');
+        statusCell.textContent = renderStatus(e);
+        
+        const actionCell = document.createElement('td');
+        
+        /* SCRAP button (only if available) */
+        
+        if (e.status_code === 1) {
+          const scrapBtn = document.createElement('button');
+          scrapBtn.type = 'button';
+          scrapBtn.textContent = '❌';
+          scrapBtn.title = 'Списать';
+          
+          scrapBtn.onclick = async () => {
+            await scrapElectrode(e);
+          };
+          
+          actionCell.appendChild(scrapBtn);
+        }
+        
+        /* DELETE button */
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.textContent = '🗑️';
+        deleteBtn.title = 'Удалить';
+        
+        deleteBtn.onclick = async () => {
+          const ok = confirm(`Удалить электрод ${e.electrode_id}?`);
+          if (!ok) return;
+          
+          await deleteElectrode(e.electrode_id);
+          await loadElectrodes(currentCutBatchId);
+        };
+        
+        actionCell.appendChild(deleteBtn);
+        
+        tr.appendChild(rowCell);
+        tr.appendChild(massCell);
+        tr.appendChild(cupCell);
+        tr.appendChild(commentCell);
+        tr.appendChild(statusCell);
+        tr.appendChild(actionCell);
+        
+        body.appendChild(tr);
+        
+      });
+      
+    }
+    
+    function renderStatus(e) {
+      
+      if (e.status_code === 1) {
+        return '✅ доступен';
+      }
+      
+      if (e.status_code === 2) {
+        return `🔋 использован в батарее ${e.used_in_battery_id}`;
+      }
+      
+      if (e.status_code === 3) {
+        return `❌ списан: ${e.scrapped_reason}`;
+      }
+      
+      return '';
+    }
+    
+    async function updateElectrode(electrodeId, payload) {
+      const res = await fetch(`/api/electrodes/${electrodeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Ошибка обновления электрода');
+        throw new Error(err.error || 'Ошибка обновления электрода');
+      }
+      
+      return res.json();
+    }
+    
+    async function deleteElectrode(electrodeId) {
+      const res = await fetch(`/api/electrodes/${electrodeId}`, {
+        method: 'DELETE'
+      });
+      
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Ошибка удаления электрода');
+        throw new Error(err.error || 'Ошибка удаления электрода');
+      }
+      
+      return res.json();
+    }
+    
+    async function scrapElectrode(electrode) {
+      
+      const reason = prompt('Причина списания');
+      
+      if (!reason) return;
+      
+      const res = await fetch(`/api/electrodes/${electrode.electrode_id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status_code: 3,
+          scrapped_reason: reason,
+          used_in_battery_id: null
+        })
+      });
+      
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Ошибка списания электрода');
+        return;
+      }
+      
+      await loadElectrodes(electrode.cut_batch_id);
+      
+    }
+    
+    async function selectBatch(batch) {
+      populateBatchWorkspace(batch);
+      await loadElectrodes(batch.cut_batch_id);
+      await loadDrying(batch.cut_batch_id);
+    }
+    
+    addCutBatchBtn.addEventListener('click', () => {
+      currentCutBatchId = null;
+      clearElectrodeWorkspace();
+      workspace.hidden = false;
+      batchTitle.textContent = 'Новая партия';
+    });
+    
+    /* ---------- ELECTRODE GEOMETRY ---------- */
+    
+    const shapeRadios = document.querySelectorAll('input[name="electrodes-shape"]');
+    
+    const geomCircle = document.getElementById('electrodes-geom-circle');
+    const geomRect = document.getElementById('electrodes-geom-rect');
+    
+    const diameterInput = document.getElementById('electrodes-diameter');
+    const lengthInput = document.getElementById('electrodes-length');
+    const widthInput = document.getElementById('electrodes-width');
+    
+    const areaField = document.getElementById('electrodes-area');
+    
+    function updateGeometryVisibility() {
+      const shape = document.querySelector('input[name="electrodes-shape"]:checked')?.value;
+      
+      geomCircle.hidden = true;
+      geomRect.hidden = true;
+      
+      if (shape === 'circle') {
+        geomCircle.hidden = false;
+        
+        setTimeout(() => {
+          diameterInput.focus();
+        }, 0);
+      }
+      
+      if (shape === 'rectangle') {
+        geomRect.hidden = false;
+        
+        setTimeout(() => {
+          lengthInput.focus();
+        }, 0);
+      }
+      
+      computeElectrodeArea();
+    }
+    
+    function computeElectrodeArea() {
+      
+      const shape = document.querySelector('input[name="electrodes-shape"]:checked')?.value;
+      
+      let area = null;
+      
+      if (shape === 'circle') {
+        
+        const d = Number(diameterInput.value);
+        
+        if (d > 0) {
+          area = Math.PI * Math.pow(d / 2, 2);
+        }
+        
+      }
+      
+      if (shape === 'rectangle') {
+        
+        const L = Number(lengthInput.value);
+        const W = Number(widthInput.value);
+        
+        if (L > 0 && W > 0) {
+          area = L * W;
+        }
+        
+      }
+      
+      if (area !== null) {
+        areaField.textContent = area.toFixed(2);
+      } else {
+        areaField.textContent = '';
+      }
+      
+    }
+    
+    /* shape change */
+    shapeRadios.forEach(radio => {
+      radio.addEventListener('change', updateGeometryVisibility);
+    });
+    
+    /* dimension changes */
+    diameterInput.addEventListener('input', computeElectrodeArea);
+    lengthInput.addEventListener('input', computeElectrodeArea);
+    widthInput.addEventListener('input', computeElectrodeArea);
+    
+    /* ---------- FOIL MASS MEASUREMENTS ---------- */
+    
+    const foilMassInput = document.getElementById('foil-mass');
+    const foilMassBody = document.getElementById('foil-mass-body');
+    const addFoilMassRowBtn = document.getElementById('add-foil-mass-row-btn');
+    
+    function renumberFoilMassRows() {
+      const rows = foilMassBody.querySelectorAll('tr');
+      
+      rows.forEach((row, index) => {
+        const numberCell = row.querySelector('.foil-row-number');
+        if (numberCell) {
+          numberCell.textContent = index + 1;
+        }
+      });
+    }
+    
+    function recalculateFoilMassAverage() {
+      const inputs = foilMassBody.querySelectorAll('.foil-mass-value');
+      const values = Array.from(inputs)
+      .map(input => Number(input.value))
+      .filter(v => Number.isFinite(v) && v > 0);
+      
+      if (!values.length) {
+        foilMassInput.value = '';
+        return;
+      }
+      
+      const avg = values.reduce((sum, v) => sum + v, 0) / values.length;
+      foilMassInput.value = avg.toFixed(4);
+    }
+    
+    function appendFoilMassRow(value = '') {
+      const tr = document.createElement('tr');
+      
+      const numberTd = document.createElement('td');
+      numberTd.className = 'foil-row-number';
+      
+      const inputTd = document.createElement('td');
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.step = '0.0001';
+      input.min = '0';
+      input.className = 'foil-mass-value';
+      input.value = value !== null && value !== undefined ? value : '';
+      
+      inputTd.appendChild(input);
+      
+      const actionTd = document.createElement('td');
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '🗑️';
+      
+      actionTd.appendChild(removeBtn);
+      
+      tr.appendChild(numberTd);
+      tr.appendChild(inputTd);
+      tr.appendChild(actionTd);
+      
+      foilMassBody.appendChild(tr);
+      renumberFoilMassRows();
+      recalculateFoilMassAverage();
+      
+      input.addEventListener('input', recalculateFoilMassAverage);
+      
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          appendFoilMassRow();
+          const rows = foilMassBody.querySelectorAll('.foil-mass-value');
+          rows[rows.length - 1].focus();
+        }
+      });
+      
+      removeBtn.addEventListener('click', () => {
+        tr.remove();
+        
+        if (!foilMassBody.querySelector('tr')) {
+          appendFoilMassRow();
+          return;
+        }
+        
+        renumberFoilMassRows();
+        recalculateFoilMassAverage();
+      });
+      
+      return tr;
+    }
+    
+    async function loadFoilMassMeasurements(cutBatchId) {
+      foilMassBody.innerHTML = '';
+      foilMassInput.value = '';
+      
+      const res = await fetch(`/api/electrodes/electrode-cut-batches/${cutBatchId}/foil-masses`);
+      
+      if (!res.ok) {
+        appendFoilMassRow();
+        return;
+      }
+      
+      const measurements = await res.json();
+      
+      if (!measurements.length) {
+        appendFoilMassRow();
+        return;
+      }
+      
+      measurements.forEach(m => {
+        appendFoilMassRow(m.mass_g);
+      });
+      
+      recalculateFoilMassAverage();
+    }
+    
+    addFoilMassRowBtn.addEventListener('click', () => {
+      appendFoilMassRow();
+      const rows = foilMassBody.querySelectorAll('.foil-mass-value');
+      rows[rows.length - 1].focus();
+    });
+    
+    
+    /* ---------- ELECTRODE ENTRY ROWS ---------- */
+    
+    const electrodesBody = document.getElementById('electrodes-body');
+    const addElectrodeRowBtn = document.getElementById('add-electrode-row-btn');
+    
+    function renumberElectrodeRows() {
+      
+      const rows = electrodesBody.querySelectorAll('tr');
+      
+      rows.forEach((row, index) => {
+        
+        const indexCell = row.querySelector('.row-index');
+        if (indexCell) {
+          indexCell.textContent = index + 1;
+        }
+        
+      });
+      
+    }
+    
+    function appendElectrodeRow(data = {}) {
+      
+      const tr = document.createElement('tr');
+      
+      const indexCell = document.createElement('td');
+      indexCell.className = 'row-index';
+      tr.appendChild(indexCell);
+      
+      tr.dataset.mass = data.electrode_mass_g || '';
+      tr.dataset.cup = data.cup_number || '';
+      tr.dataset.comments = data.comments || '';
+      
+      const numTd = document.createElement('td');
+      numTd.className = 'electrode-row-number';
+      
+      const massTd = document.createElement('td');
+      const massInput = document.createElement('input');
+      massInput.type = 'number';
+      massInput.step = '0.0001';
+      massInput.min = '0';
+      massInput.required = true;
+      massInput.className = 'electrode-mass';
+      if (data.electrode_mass_g) {
+        massInput.value = data.electrode_mass_g;
+      }
+      
+      massTd.appendChild(massInput);
+      massInput.addEventListener('input', () => {
+        tr.dataset.mass = massInput.value;
+      });
+      
+      const cupTd = document.createElement('td');
+      const cupInput = document.createElement('input');
+      cupInput.type = 'number';
+      cupInput.step = '1';
+      cupInput.min = '0';
+      cupInput.className = 'electrode-cup';
+      if (data.cup_number) {
+        cupInput.value = data.cup_number;
+      }
+      
+      cupTd.appendChild(cupInput);
+      cupInput.addEventListener('input', () => {
+        tr.dataset.cup = cupInput.value;
+      });
+      
+      const commentTd = document.createElement('td');
+      const commentInput = document.createElement('input');
+      commentInput.type = 'text';
+      commentInput.className = 'electrode-comments';
+      if (data.comments) {
+        commentInput.value = data.comments;
+      }
+      
+      commentTd.appendChild(commentInput);
+      commentInput.addEventListener('input', () => {
+        tr.dataset.comments = commentInput.value;
+      });
+      
+      const statusTd = document.createElement('td');
+      statusTd.textContent = 'новый';
+      
+      const actionTd = document.createElement('td');
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.textContent = '🗑️';
+      actionTd.appendChild(removeBtn);
+      
+      tr.appendChild(numTd);
+      tr.appendChild(massTd);
+      tr.appendChild(cupTd);
+      tr.appendChild(commentTd);
+      tr.appendChild(statusTd);
+      tr.appendChild(actionTd);
+      
+      electrodesBody.appendChild(tr);
+      
+      renumberElectrodeRows();
+      
+      massInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          appendElectrodeRow();
+          const inputs = electrodesBody.querySelectorAll('.electrode-mass');
+          inputs[inputs.length - 1].focus();
+        }
+      });
+      
+      removeBtn.addEventListener('click', () => {
+        tr.remove();
+        
+        if (!electrodesBody.querySelector('tr')) {
+          appendElectrodeRow();
+          return;
+        }
+        
+        renumberElectrodeRows();
+      });
+      
+    }
+    
+    addElectrodeRowBtn.addEventListener('click', () => {
+      
+      appendElectrodeRow();
+      
+      const inputs = electrodesBody.querySelectorAll('.electrode-mass');
+      
+      inputs[inputs.length - 1].focus();
+      
+    });
+    
+    
+    /* ---------- ELECTRODE DRYING ---------- */
+    
+    const dryingStartDate = document.getElementById('electrodes-drying-start-date');
+    const dryingStartTime = document.getElementById('electrodes-drying-start-time');
+    
+    const dryingEndDate = document.getElementById('electrodes-drying-end-date');
+    const dryingEndTime = document.getElementById('electrodes-drying-end-time');
+    
+    const dryingTemp = document.getElementById('electrodes-drying-temperature');
+    const dryingOther = document.getElementById('electrodes-drying-other-parameters');
+    const dryingComments = document.getElementById('electrodes-drying-comments');
+    
+    const dryingStartNowBtn = document.getElementById('electrodes-drying-start-now-button');
+    const dryingEndNowBtn = document.getElementById('electrodes-drying-end-now-button');
+    
+    
+    function setNow(dateInput, timeInput) {
+      
+      const now = new Date();
+      
+      const date = now.toISOString().slice(0,10);
+      const time = now.toTimeString().slice(0,5);
+      
+      dateInput.value = date;
+      timeInput.value = time;
+      
+    }
+    
+    dryingStartNowBtn.addEventListener('click', () => {
+      setNow(dryingStartDate, dryingStartTime);
+    });
+    
+    dryingEndNowBtn.addEventListener('click', () => {
+      setNow(dryingEndDate, dryingEndTime);
+    });
+    
+    function clearDryingBlock() {
+      
+      dryingStartDate.value = '';
+      dryingStartTime.value = '';
+      
+      dryingEndDate.value = '';
+      dryingEndTime.value = '';
+      
+      dryingTemp.value = '';
+      dryingOther.value = '';
+      dryingComments.value = '';
+      
+    }
+    
+    function buildDryingPayload() {
+      
+      let startTime = null;
+      let endTime = null;
+      
+      if (dryingStartDate.value && dryingStartTime.value) {
+        startTime = `${dryingStartDate.value}T${dryingStartTime.value}`;
+      }
+      
+      if (dryingEndDate.value && dryingEndTime.value) {
+        endTime = `${dryingEndDate.value}T${dryingEndTime.value}`;
+      }
+      
+      return {
+        
+        cut_batch_id: currentCutBatchId,
+        
+        start_time: startTime,
+        
+        end_time: endTime,
+        
+        temperature_c: dryingTemp.value || null,
+        
+        other_parameters: dryingOther.value || null,
+        
+        comments: dryingComments.value || null
+        
+      };
+      
+    }
+    
+    async function loadDrying(cutBatchId) {
+      
+      clearDryingBlock();
+      
+      const res = await fetch(`/api/electrodes/electrode-cut-batches/${cutBatchId}/drying`);
+      
+      if (!res.ok) return;
+      
+      const d = await res.json();
+      
+      if (!d) return;
+      
+      if (d.start_time) {
+        
+        const start = new Date(d.start_time);
+        
+        dryingStartDate.value = start.toISOString().slice(0,10);
+        dryingStartTime.value = start.toTimeString().slice(0,5);
+        
+      }
+      
+      if (d.end_time) {
+        
+        const end = new Date(d.end_time);
+        
+        dryingEndDate.value = end.toISOString().slice(0,10);
+        dryingEndTime.value = end.toTimeString().slice(0,5);
+        
+      }
+      
+      dryingTemp.value = d.temperature_c ?? '';
+      dryingOther.value = d.other_parameters ?? '';
+      dryingComments.value = d.comments ?? '';
+      
+    }
+    
+    /* ---------- CHECK UNSAVED DATA ---------- */
+    
+    function hasUnsavedChanges() {
+      return hasChanges;
+    }
+    
+    // -------- Events --------
+    
+    /* ---------- EXIT BATCH ---------- */
+    
+    const exitBatchBtn = document.getElementById('exitBatchBtn');
+    
+    exitBatchBtn.addEventListener('click', () => {
+      
+      if (hasUnsavedChanges()) {
+        
+        const confirmExit = confirm('Есть несохранённые изменения. Выйти?');
+        
+        if (!confirmExit) {
+          return;
+        }
+        
+      }
+      
+      clearElectrodeWorkspace();
+      
+      workflow.hidden = true;
+      workspace.hidden = true;
+      
+      roleSelect.value = '';
+      document.getElementById('electrodes-project_id').value = '';
+      tapeSelect.value = '';
+      
+      const list = document.getElementById('cut-batches-list');
+      const msg = document.getElementById('no-batches-msg');
+      
+      list.innerHTML = '';
+      msg.style.display = 'block';
+      
+    });
+    
+    /* ---------- SAVE BATCH ---------- */
+    
+    const saveBtn = document.getElementById('saveBtn');
+    
+    saveBtn.addEventListener('click', async () => {
+      
+      const tapeId = Number(tapeSelect.value);
+      const createdBy = Number(document.getElementById('electrodes-created_by').value);
+      
+      if (!tapeId || !createdBy) {
+        alert('Не выбрана лента или оператор');
+        return;
+      }
+      
+      /* ---------- CREATE BATCH IF NEEDED ---------- */
+      
+      if (!currentCutBatchId) {
+        
+        const shape = document.querySelector('input[name="electrodes-shape"]:checked')?.value;
+        
+        const payload = {
+          tape_id: tapeId,
+          created_by: createdBy,
+          comments: document.getElementById('electrodes-comments').value || null,
+          shape,
+          diameter_mm: document.getElementById('electrodes-diameter').value || null,
+          length_mm: document.getElementById('electrodes-length').value || null,
+          width_mm: document.getElementById('electrodes-width').value || null
+        };
+        
+        const res = await fetch('/api/electrodes/electrode-cut-batches', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        
+        const batch = await res.json();
+        currentCutBatchId = batch.cut_batch_id;
+        
+      } else {
+        
+        await fetch(`/api/electrodes/electrode-cut-batches/${currentCutBatchId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shape: document.querySelector('input[name="electrodes-shape"]:checked')?.value || null,
+            diameter_mm: document.getElementById('electrodes-diameter').value || null,
+            length_mm: document.getElementById('electrodes-length').value || null,
+            width_mm: document.getElementById('electrodes-width').value || null,
+            comments: document.getElementById('electrodes-comments').value || null
+          })
+        });
+      }
+      
+      /* ---------- SAVE NEW ELECTRODES ONLY ---------- */
+      
+      const rows = document.querySelectorAll('#electrodes-body tr');
+      
+      for (const row of rows) {
+        
+        if (row.dataset.electrodeId) {
+          continue;
+        }
+        
+        const mass = row.dataset.mass;
+        
+        if (!mass) continue;
+        
+        const cup = row.dataset.cup || null;
+        const comments = row.dataset.comments || null;
+        
+        const res = await fetch('/api/electrodes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cut_batch_id: currentCutBatchId,
+            electrode_mass_g: mass,
+            cup_number: cup,
+            comments
+          })
+        });
+        
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          alert(err.error || 'Ошибка создания электрода');
+          return;
+        }
+        
+      }
+      
+      /* ---------- SAVE FOIL MASSES ---------- */
+      
+      await fetch(`/api/electrodes/electrode-cut-batches/${currentCutBatchId}/foil-masses`, {
+        method: 'DELETE'
+      });
+      const foilInputs = document.querySelectorAll('.foil-mass-value');
+      
+      for (const input of foilInputs) {
+        
+        const value = input.value;
+        
+        if (!value) continue;
+        
+        await fetch('/api/electrodes/electrode-cut-batches/' + currentCutBatchId + '/foil-masses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cut_batch_id: currentCutBatchId,
+            mass_g: value
+          })
+        });
+      }
+      
+      /* ---------- SAVE DRYING ---------- */
+      
+      const dryingPayload = buildDryingPayload();
+      
+      if (dryingPayload.start_time || dryingPayload.end_time || dryingPayload.temperature_c) {
+        
+        await fetch(`/api/electrodes/electrode-cut-batches/${currentCutBatchId}/drying`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dryingPayload)
+        });
+        
+      }
+      
+      hasChanges = false;
+      alert('Партия сохранена');
+      
+      await loadCutBatches(tapeId);
+      await loadElectrodes(currentCutBatchId);
+    });
+    
+    
+    // -------- Init --------
+    
+    loadProjects();
+    loadUsers();
+    loadTapes();
+    appendFoilMassRow();
+    
+    document.querySelectorAll('input, textarea, select').forEach(el => {
+      el.addEventListener('input', () => {
+        hasChanges = true;
+      });
+    });

@@ -1,744 +1,111 @@
-<!--
-BAL = battery_assembly_log
-Created by Dalia K. Maraoulaite 
-Analytical Division for 
-Lab KhIT - RENERA
-Jan 28, 2026
--->
-
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0" />
-  <title>Протокол сборки аккумуляторов</title>
-  <link rel="stylesheet" type="text/css" href="styles.css">
-  <style>
-    /* =========================================
-    Locked assembly inputs (electrodes saved)
-    ========================================= */
-
-    #battery_project_id:disabled,
-    #battery_created_by:disabled,
-    #battery_form_factor:disabled,
-    #cathode_tape_id:disabled,
-    #cathode_cut_batch_id:disabled,
-    #anode_tape_id:disabled,
-    #anode_cut_batch_id:disabled {
-
-      background-color: #f3f3f3;
-      color: #666;
-      border-color: #ccc;
-      cursor: not-allowed;
-
-    }
-
-    #battery_project_id:disabled:hover,
-    #battery_created_by:disabled:hover,
-    #battery_form_factor:disabled:hover,
-    #cathode_tape_id:disabled:hover,
-    #cathode_cut_batch_id:disabled:hover,
-    #anode_tape_id:disabled:hover,
-    #anode_cut_batch_id:disabled:hover {
-
-      background-color: #f3f3f3;
-
-    }
-
-    /* =========================================
-      Assembly locked indicator
-      ========================================= */
-
-    .assembly_locked_banner {
-      margin-top: 6px;
-      padding: 6px 10px;
-      font-size: 12px;
-      border-radius: 4px;
-      background: #f3f3f3;
-      border: 1px solid #ddd;
-      color: #444;
-      display: none;
-    }
-
-    .assembly_locked_banner.visible {
-      display: inline-block;
-    }
-
-    .assembly_locked_banner::before {
-      content: "🔒 ";
-    }
-  </style>
-</head>
-
-<body data-page="BAL">
-  <div class="container">
-    <header>
-      <h1>Протокол сборки аккумуляторa</h1>
-      <!-- Navigation button without text -->
-      <a href="index.html" aria-label="Главная"><svg viewBox="0 0 24 24" width="24" height="24">
-        <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z"
-        fill="currentColor"/>
-      </svg></a>
-    </header>
-    
-    <form name="battery_assembly_log_form" autocomplete="on">
-
-      <div id="battery_header" hidden>
-
-        <h2 id="battery_title">
-          Аккумулятор <span id="battery_id_label">—</span>
-        </h2>
-
-        <p class="battery_meta">
-
-          <span>
-            <strong>Проект:</strong>
-            <span id="battery_project_label">—</span>
-          </span>
-
-          <span>
-            <strong>Форм-фактор:</strong>
-            <span id="battery_formfactor_label">—</span>
-          </span>
-
-          <span>
-            <strong>Оператор:</strong>
-            <span id="battery_operator_label">—</span>
-          </span>
-
-        </p>
-      </div>
-
-      <div id="assembly_locked_banner" class="assembly_locked_banner">
-        Электродная конфигурация сохранена — параметры батареи зафиксированы
-      </div>
-
-      <fieldset id="battery_meta" data-table="batteries">
-        <legend>1 Общая информация об аккумуляторе</legend>
-
-        <label for="battery_project_id">Проект</label>
-        <select id="battery_project_id" name="project_id" required>
-          <option value="">— выбрать проект —</option>
-        </select>
-        <a href="/reference/projects.html" target="_blank" class="ref-link">
-          Управление проектами
-        </a><br>
-
-        <label for="battery_created_by">Оператор</label>
-        <select id="battery_created_by" name="created_by" required>
-          <option value="">— выбрать пользователя —</option>
-        </select>
-        <a href="/reference/users.html" target="_blank" class="ref-link">
-          Управление пользователями
-        </a><br>
-
-        <label for="battery_form_factor">Форм-фактор</label>
-        <select id="battery_form_factor" name="form_factor" required>
-          <option value="">— выбрать —</option>
-          <option value="coin">Монеточный</option>
-          <option value="pouch">Пакетный</option>
-          <option value="cylindrical">Цилиндрический</option>
-        </select><br>
-
-        <label for="battery_notes">Заметки</label>
-        <textarea
-          id="battery_notes"
-          name="battery_notes"
-          placeholder="Общие комментарии по сборке"
-        ></textarea><br>
-
-        <button type="button" id="battery_create_btn">Создать аккумулятор</button>
-      </fieldset>
-
-
-      <div id="battery_workspace" hidden>
-        
-        <fieldset id="battery_config">
-
-          <legend>2 Конфигурация элемента</legend>
-
-          <fieldset id="coin_config" data-table="battery_coin_config" hidden>
-            <label for="coin_cell_mode">Тип элемента</label>
-            <select id="coin_cell_mode" name="coin_cell_mode">
-              <option value="">— выбрать —</option>
-              <option value="half_cell">Полуячейка против Li</option>
-              <option value="full_cell">Полный элемент</option>
-            </select><br>
-
-            <label for="coin_size_code">Размер монетки</label>
-            <select id="coin_size_code" name="coin_size_code">
-              <option value="2032">2032</option>
-              <option value="2025">2025</option>
-              <option value="2016">2016</option>
-            </select><br>
-
-            <div id="coin_half_cell_type_block" hidden>
-              <label for="coin_half_cell_type">Тип полуячейки</label>
-              <select id="coin_half_cell_type" name="half_cell_type">
-                <option value="">— выбрать —</option>
-                <option value="cathode_vs_li">Катод vs Li</option>
-                <option value="anode_vs_li">Анод vs Li</option>
-              </select><br>
-
-              <div id="li-foil_block">
-                <label for="li_foil_notes">
-                  Li-фольга (поставщик / партия / толщина / обработка)
-                </label>
-
-                <textarea
-                  id="li_foil_notes"
-                  name="li_foil_notes"
-                  rows="2"
-                ></textarea>
-              </div>
-            </div>
-          </fieldset>
-
-          <fieldset id="pouch_config" data-table="battery_pouch_config" hidden>
-            <label for="pouch_format_code">Тип пакетного элемента</label>
-            <select id="pouch_format_code" name="pouch_format_code">
-              <option value="">— выбрать —</option>
-              <option value="single_stack">Одностековый</option>
-              <option value="multi_stack">Многостековый</option>
-            </select><br>
-
-            <label for="pouch_notes">Заметки</label>
-            <textarea
-              id="pouch_notes"
-              name="pouch_notes"
-              placeholder="Комментарии по пакетному элементу"
-            ></textarea>
-          </fieldset>
-
-          <fieldset id="cyl_config" data-table="battery_cyl_config" hidden>
-            <label for="cyl_size_code">Типоразмер цилиндрического элемента</label>
-            <select id="cyl_size_code" name="cyl_size_code">
-              <option value="">— выбрать —</option>
-              <option value="18650">18650</option>
-              <option value="21700">21700</option>
-            </select><br>
-
-            <label for="cyl_notes">Заметки</label>
-            <textarea
-              id="cyl_notes"
-              name="cyl_notes"
-              placeholder="Комментарии по цилиндрическому элементу"
-            ></textarea>
-          </fieldset>
-
-          <button
-            type="button"
-            class="btn_secondary"
-            onclick="saveBatteryConfig()"
-          >
-            Сохранить конфигурацию
-          </button>
-  
-        </fieldset>
-        
-        <fieldset id="battery_electrodes">
-
-            <legend>3 Электроды</legend>
-
-            <!-- Electrode source selection -->
-            <fieldset id="battery_electrode_sources" data-table="battery_electrode_sources">
-              <legend>Источник электродов</legend>
-
-              <div class="electrode_source" id="cathode_source_block" data-electrode-role="cathode">
-                <label for="cathode_tape_id">Катодная лента</label>
-                <select id="cathode_tape_id" name="cathode_tape_id">
-                  <option value="">— выбрать ленту —</option>
-                </select><br>
-
-                <label for="cathode_cut_batch_id">Партия вырезанных электродов</label>
-                <select id="cathode_cut_batch_id" name="cathode_cut_batch_id">
-                  <option value="">— выбрать партию —</option>
-                </select><br>
-
-                <label for="cathode_source_notes">Заметки</label>
-                <textarea
-                  id="cathode_source_notes"
-                  name="cathode_source_notes"
-                  placeholder="Комментарии по катодной партии"
-                ></textarea>
-              </div>
-
-              <div class="electrode_source" id="anode_source_block" data-electrode-role="anode">
-                <label for="anode_tape_id">Анодная лента</label>
-                <select id="anode_tape_id" name="anode_tape_id">
-                  <option value="">— выбрать ленту —</option>
-                </select><br>
-
-                <label for="anode_cut_batch_id">Партия вырезанных электродов</label>
-                <select id="anode_cut_batch_id" name="anode_cut_batch_id">
-                  <option value="">— выбрать партию —</option>
-                </select><br>
-
-                <label for="anode_source_notes">Заметки</label>
-                <textarea
-                  id="anode_source_notes"
-                  name="anode_source_notes"
-                  placeholder="Комментарии по анодной партии"
-                ></textarea>
-              </div>
-
-              <button type="button" class="btn_secondary" onclick="saveElectrodeSources()">
-                Сохранить источники электродов
-              </button>
-
-            </fieldset>
-
-            <!-- Electrode selection for stack -->
-            <fieldset id="battery_stack_builder">
-              <legend>Формирование стека</legend>
-
-              <p>Выберите электроды для данного элемента.</p>
-
-              <div class="stack_cathode_block">
-                <h4>Катоды</h4>
-
-                <table class="stack_table">
-                  <thead>
-                    <tr>
-                      <th>№</th>
-                      <th>ID электрода</th>
-                      <th>m, g</th>
-                      <th>Выбрать</th>
-                    </tr>
-                  </thead>
-
-                  <tbody id="stack_cathode_table_body" data-role="cathode">
-                  </tbody>
-                </table>
-              </div>
-
-              <div class="stack_anode_block">
-                <h4>Аноды</h4>
-
-                <table class="stack_table">
-                  <thead>
-                    <tr>
-                      <th>№</th>
-                      <th>ID электрода</th>
-                      <th>m, g</th>
-                      <th>Выбрать</th>
-                    </tr>
-                  </thead>
-
-                  <tbody id="stack_anode_table_body" data-role="anode">
-                  </tbody>
-                </table>
-              </div>
-
-              <h4>Электроды в элементе</h4>
-
-              <table class="stack_table">
-                <thead>
-                  <tr>
-                    <th>Позиция</th>
-                    <th>ID электрода</th>
-                    <th>Роль</th>
-                    <th>m, g</th>
-                  </tr>
-                </thead>
-
-                <tbody id="battery_stack_summary_body">
-                </tbody>
-              </table>
-
-              <button
-                type="button"
-                class="btn_secondary"
-                onclick="saveElectrodeStack()"
-              >
-                Сохранить стек электродов
-              </button>
-            
-            </fieldset>
-
-        </fieldset>
-        
-        <fieldset id="battery_separator" data-table="battery_sep_config">
-          <legend>4 Сепаратор</legend>
-
-          <label for="separator_id">Сепаратор</label>
-          <select id="separator_id" name="separator_id">
-            <option value="">— выбрать сепаратор —</option>
-          </select>
-          <a href="/reference/separators.html" target="_blank" class="ref-link">
-            Управление сепараторами
-          </a><br>
-
-          <label for="separator_notes">Заметки</label>
-          <textarea
-            id="separator_notes"
-            name="separator_notes"
-            placeholder="Комментарии по сепаратору"
-          ></textarea>
-        </fieldset>
-
-        <fieldset id="battery_electrolyte" data-table="battery_electrolyte">
-          <legend>5 Электролит</legend>
-
-          <label for="electrolyte_id">Электролит</label>
-          <select id="electrolyte_id" name="electrolyte_id">
-            <option value="">— выбрать электролит —</option>
-          </select>
-          <a href="/reference/electrolytes.html" target="_blank" class="ref-link">
-            Управление электролитами
-          </a><br>
-
-          <label for="electrolyte_notes">Заметки</label>
-          <textarea
-            id="electrolyte_notes"
-            name="electrolyte_notes"
-            placeholder="Комментарии по электролиту"
-          ></textarea>
-        </fieldset>
-
-        <fieldset id="battery_assembly">
-          <legend>6 Параметры сборки</legend>
-
-          <fieldset id="coin_assembly" data-formfactor="coin" data-table="battery_coin_config">
-            <legend>Параметры монеточного элемента</legend>
-
-            <fieldset id="coin_layout">
-              <legend>Схема расположения сепаратора и электролита</legend>
-
-              <label>
-                <input type="radio" name="coin_layout" value="SEE">
-                S-E-E
-              </label><br>
-
-              <label>
-                <input type="radio" name="coin_layout" value="ESE">
-                E-S-E
-              </label><br>
-
-              <label>
-                <input type="radio" name="coin_layout" value="EES">
-                E-E-S
-              </label><br>
-
-              <label>
-                <input type="radio" name="coin_layout" value="ES">
-                E-S
-              </label><br>
-
-              <label>
-                <input type="radio" name="coin_layout" value="SE">
-                S-E
-              </label><br>
-
-              <label>
-                <input type="radio" name="coin_layout" value="other">
-                Другое
-              </label>
-
-              <input
-                type="text"
-                id="coin_layout_other"
-                name="coin_layout_other"
-                placeholder="Введите схему"
-              >
-
-              <br><br>
-
-              <label for="coin_layout_notes">Заметки по схеме</label>
-              <textarea
-                id="coin_layout_notes"
-                name="coin_layout_notes"
-                placeholder="Комментарии по расположению сепаратора и электродов"
-              ></textarea>
-
-            </fieldset>
-
-            <!--Дозирование электролита-->
-            <fieldset>
-              <legend>Дозирование электролита</legend>
-
-              <label for="electrolyte_drop_count">Количество капель</label>
-              <input
-                id="electrolyte_drop_count"
-                name="electrolyte_drop_count"
-                type="number"
-                step="1"
-                min="0"
-              ><br>
-
-              <label for="electrolyte_drop_volume">Объём одной капли</label>
-              <input
-                id="electrolyte_drop_volume"
-                name="electrolyte_drop_volume"
-                type="number"
-                step="0.1"
-                min="0"
-              >
-              <span>, мкл</span><br>
-
-            </fieldset>
-
-            <!--Total electrolyte volume-->
-            <fieldset>
-              <legend>Общий объём электролита</legend>
-
-              <label for="electrolyte_total_ul">Общий объём</label>
-              <input
-                id="electrolyte_total_ul"
-                name="electrolyte_total_ul"
-                type="number"
-                step="0.1"
-                min="0"
-              >
-              <span>, мкл</span><br>
-            </fieldset>
-
-            <!--Спэйсер-->
-            <fieldset>
-              <legend>Спэйсер</legend>
-
-              <label for="spacer_thickness_mm">Толщина спэйсера</label>
-              <input
-                id="spacer_thickness_mm"
-                name="spacer_thickness_mm"
-                type="number"
-                step="0.01"
-                min="0"
-              >
-              <span>, мм</span><br>
-
-              <label for="spacer_count">Количество спэйсеров</label>
-              <input
-                id="spacer_count"
-                name="spacer_count"
-                type="number"
-                min="0"
-              ><br>
-
-              <label for="spacer_notes">Заметки</label>
-              <textarea
-                id="spacer_notes"
-                name="spacer_notes"
-                placeholder="Комментарии по спэйсеру"
-              ></textarea>
-
-            </fieldset>
-
-          </fieldset>
-
-          <fieldset id="pouch_assembly" data-formfactor="pouch" data-table="battery_pouch_config">
-            <legend>Параметры сборки пауча</legend>
-            <p>Space for future pouch parameters</p>
-            <fieldset>
-              <legend>Общий объём электролита</legend>
-
-              <label for="electrolyte_total_ul">Общий объём</label>
-              <input
-                id="electrolyte_total_ul"
-                name="electrolyte_total_ul"
-                type="number"
-                step="0.1"
-                min="0"
-              >
-              <span>, мкл</span><br>
-            </fieldset>
-          </fieldset>
-
-          <fieldset id="cyl_assembly" data-formfactor="cylindrical" data-table="battery_cyl_config">
-            <legend>Параметры сборки цилиндра</legend>
-            <p>Space for future cylinder parameters</p>
-            <fieldset>
-            <legend>Общий объём электролита</legend>
-
-            <label for="electrolyte_total_ul">Общий объём</label>
-            <input
-              id="electrolyte_total_ul"
-              name="electrolyte_total_ul"
-              type="number"
-              step="0.1"
-              min="0"
-            >
-            <span>, мкл</span><br>
-          </fieldset>
-          </fieldset>          
-        </fieldset>
-                
-        <fieldset id="battery_qc" data-table="battery_qc">
-          <legend>7 Выходной контроль</legend>
-
-          <label for="qc_ocv_v">НРЦ</label>
-          <input
-            id="qc_ocv_v"
-            name="ocv_v"
-            type="number"
-            step="0.001"
-          ><span>, В</span><br>
-
-          <label for="qc_esr_mohm">ESR</label>
-          <input
-            id="qc_esr_mohm"
-            name="esr_mohm"
-            type="number"
-            step="0.001"
-          ><span>, мОм</span><br>
-
-          <label for="qc_notes">Заметки</label>
-          <textarea
-            id="qc_notes"
-            name="qc_notes"
-            placeholder="Комментарии по выходному контролю"
-          ></textarea>
-        </fieldset>
-
-        <fieldset id="battery_electrochem">
-          <legend>8 Электрохимия</legend>
-
-          <p class="tiny_note">
-            Здесь можно привязать файлы испытаний (циклирование, CV, EIS).
-          </p>
-
-          <label for="electrochem_files">
-            Файлы испытаний
-          </label>
-          <input
-            id="electrochem_files"
-            name="electrochem_files"
-            type="file"
-            multiple
-          ><br>
-
-          <label for="electrochem_notes">Заметки</label>
-          <textarea
-            id="electrochem_notes"
-            name="electrochem_notes"
-            placeholder="Комментарии по электрохимическим испытаниям"
-          ></textarea>
-
-        </fieldset>
-      </div>
-      
-    </form>
-
-    <div class="save_message" aria-live="polite"></div>
-
-    <fieldset id="batteries_list_block">
-      <legend>Список аккумуляторов</legend>
-      <ul id="batteriesList" class="users-list"></ul>
-    </fieldset>
-  </div>
-  
-  <script>  
-    
     // -------- State and helpers --------
     
     const projectSelect = document.getElementById('battery_project_id');
     const createdBySelect = document.getElementById('battery_created_by');
-
+    
     let currentBatteryId = null;
     let batteries = [];
     let tapes = [];
-
+    
     let cathodeBatches = [];
     let anodeBatches = [];
-
+    
     let cathodeTapes = [];
     let anodeTapes = [];
-
+    
     let cathodeElectrodes = [];
     let anodeElectrodes = [];
-
+    
     let selectedCathodes = [];
     let selectedAnodes = [];
     
     // -------- API helpers --------
     
     // -------- FORM SERIALIZATION --------
-
+    
     function serializeFieldset(fieldset) {
-
+      
       const data = {};
       const elements = fieldset.querySelectorAll('input, select, textarea');
-
+      
       elements.forEach(el => {
-
+        
         if (!el.name) return;
-
+        
         if (el.type === 'checkbox') {
           data[el.name] = el.checked;
         } else if (el.type === 'radio') {
-
+          
           if (el.checked) {
             data[el.name] = el.value;
           }
-
+          
         } else {
-
+          
           data[el.name] = el.value || null;
-
+          
         }
-
+        
       });
-
+      
       return data;
-
+      
     }
-
+    
     function populateFieldset(fieldset, data) {
-
+      
       if (!fieldset || !data) return;
-
+      
       fieldset.querySelectorAll('[name]').forEach(el => {
-
+        
         const key = el.name;
-
+        
         if (!(key in data)) return;
-
+        
         if (el.type === 'checkbox') {
           el.checked = Boolean(data[key]);
         } else {
           el.value = data[key] ?? '';
         }
-
+        
       });
-
+      
     }
-
-
-
+    
+    
+    
     // -------- GENERIC API SAVE --------
-
+    
     async function saveSection(url, payload) {
-
+      
       const res = await fetch(url, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
+      
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'API error');
       }
-
+      
       return res.json();
-
+      
     }
-
-
-
+    
+    
+    
     // -------- SAVE Helpers --------
     
     async function saveBatteryConfig() {
-
+      
       const coinFs  = document.getElementById('coin_config');
       const pouchFs = document.getElementById('pouch_config');
       const cylFs   = document.getElementById('cyl_config');
-
+      
       let fieldset;
       let table;
-
+      
       if (!coinFs.hidden) {
         fieldset = coinFs;
         table = 'battery_coin_config';
@@ -752,15 +119,15 @@ Jan 28, 2026
         alert('No configuration section is active.');
         return;
       }
-
+      
       const payload = serializeFieldset(fieldset);
-
+      
       let res = await fetch(`/api/batteries/${table}/${currentBatteryId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
+      
       if (res.status === 404) {
         res = await fetch(`/api/batteries/${table}`, {
           method: 'POST',
@@ -771,110 +138,110 @@ Jan 28, 2026
           })
         });
       }
-
+      
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         alert('Failed to save configuration: ' + (err.error || res.status));
         return;
       }
-
+      
       alert('Configuration saved.');
     }
-
-
-
+    
+    
+    
     async function saveElectrodeSources() {
-
+      
       if (!currentBatteryId) {
         alert('Сначала создайте элемент.');
         return;
       }
-
+      
       const payload = {
         battery_id: currentBatteryId,
-
+        
         cathode_tape_id: document.getElementById('cathode_tape_id')?.value || null,
         cathode_cut_batch_id: document.getElementById('cathode_cut_batch_id')?.value || null,
         cathode_source_notes: document.getElementById('cathode_source_notes')?.value || null,
-
+        
         anode_tape_id: document.getElementById('anode_tape_id')?.value || null,
         anode_cut_batch_id: document.getElementById('anode_cut_batch_id')?.value || null,
         anode_source_notes: document.getElementById('anode_source_notes')?.value || null
       };
-
+      
       const res = await fetch('/api/batteries/battery_electrode_sources', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
+      
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         alert('Ошибка сохранения источников электродов: ' + (err.error || res.status));
         return;
       }
-
+      
       alert('Источники электродов сохранены.');
     }
-
+    
     async function saveElectrodeStack() {
-
+      
       if (!currentBatteryId) {
         alert('Сначала создайте элемент.');
         return;
       }
-
+      
       const stack = buildStackPayload();
-
+      
       if (!stack || stack.length === 0) {
         alert('Стек электродов пуст.');
         return;
       }
-
+      
       const res = await fetch(`/api/batteries/battery_electrodes/${currentBatteryId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(stack)
       });
-
+      
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         alert('Ошибка сохранения стека: ' + (err.error || res.status));
         return;
       }
-
+      
       alert('Стек электродов сохранён.');
     }
-
+    
     
     async function updateBatteryMeta(id, data) {
-
+      
       const res = await fetch(`/api/batteries/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
       });
-
+      
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Ошибка обновления аккумулятора');
       }
-
+      
       return res.json();
-
+      
     }
-
-
-
+    
+    
+    
     // -------- LOAD Helpers --------
-
+    
     async function loadProjects() {
       
       const current = projectSelect.value;
-
+      
       const res = await fetch('/api/projects?project_id=0');
       const data = await res.json();
-
+      
       console.log('loadProjects current before rebuild =', projectSelect.value);
       projectSelect.innerHTML =
       '<option value="">— выбрать проект —</option>';
@@ -889,15 +256,15 @@ Jan 28, 2026
         projectSelect.appendChild(option);
         
       });
-
+      
       projectSelect.value = current;
       
     }
-
+    
     async function loadUsers() {
-  
+      
       const current = createdBySelect.value;
-
+      
       const res = await fetch('/api/users');
       const data = await res.json();
       
@@ -915,833 +282,833 @@ Jan 28, 2026
         createdBySelect.appendChild(option);
         
       });
-
+      
       createdBySelect.value = current;
       
     }
-  
+    
     async function loadBatteries() {
-
+      
       const res = await fetch('/api/batteries');
-
+      
       if (!res.ok) {
         console.error('Failed to load batteries');
         return;
       }
-
+      
       batteries = await res.json();
-
+      
       renderBatteriesList();
-
+      
     }
-
-
+    
+    
     async function loadSeparators() {
-
+      
       const res = await fetch('/api/separators');
-
+      
       if (!res.ok) {
         console.error('Failed to load separators');
         return;
       }
-
+      
       const data = await res.json();
-
+      
       const select = document.getElementById('separator_id');
       const current = select.value;
-
+      
       select.innerHTML =
-        '<option value="">— выбрать сепаратор —</option>';
-
+      '<option value="">— выбрать сепаратор —</option>';
+      
       data.forEach(s => {
-
+        
         const option = document.createElement('option');
-
+        
         option.value = s.sep_id;
-
+        
         option.textContent =
-          `#${s.sep_id} | ${s.name || '—'}`;
-
+        `#${s.sep_id} | ${s.name || '—'}`;
+        
         select.appendChild(option);
-
+        
       });
-
+      
       select.value = current;
-
+      
     }
-
+    
     async function loadElectrolytes() {
-
+      
       const res = await fetch('/api/electrolytes');
-
+      
       if (!res.ok) {
         console.error('Failed to load electrolytes');
         return;
       }
-
+      
       const data = await res.json();
-
+      
       const select = document.getElementById('electrolyte_id');
       const current = select.value;
-
+      
       select.innerHTML =
-        '<option value="">— выбрать электролит —</option>';
-
+      '<option value="">— выбрать электролит —</option>';
+      
       data.forEach(e => {
-
+        
         const option = document.createElement('option');
-
+        
         option.value = e.electrolyte_id;
-
+        
         option.textContent =
-          `#${e.electrolyte_id} | ${e.name || '—'}`;
-
+        `#${e.electrolyte_id} | ${e.name || '—'}`;
+        
         select.appendChild(option);
-
+        
       });
-
+      
       select.value = current;
-
+      
     }
-
-
+    
+    
     async function loadTapes() {
-
+      
       const res = await fetch('/api/tapes/for-electrodes');
-
+      
       if (!res.ok) {
         console.error('Failed to load tapes');
         return;
       }
-
+      
       tapes = await res.json();
-
+      
       renderTapeOptions();
-
+      
     }
     
     
     async function loadCathodeBatches(tapeId) {
-
+      
       const res =
-        await fetch(`/api/tapes/${tapeId}/electrode-cut-batches`);
-
+      await fetch(`/api/tapes/${tapeId}/electrode-cut-batches`);
+      
       if (!res.ok) {
         console.error('Failed to load cathode batches');
         return;
       }
-
+      
       cathodeBatches = await res.json();
-
+      
       renderCathodeBatchOptions();
-
+      
     }
     
     async function loadAnodeBatches(tapeId) {
-
+      
       const res =
-        await fetch(`/api/tapes/${tapeId}/electrode-cut-batches`);
-
+      await fetch(`/api/tapes/${tapeId}/electrode-cut-batches`);
+      
       if (!res.ok) {
         console.error('Failed to load anode batches');
         return;
       }
-
+      
       anodeBatches = await res.json();
-
+      
       renderAnodeBatchOptions();
-
+      
     }
-
-
+    
+    
     async function loadCathodeElectrodes(batchId) {
-
+      
       const res =
-        await fetch(`/api/electrodes/electrode-cut-batches/${batchId}/electrodes`);
-
+      await fetch(`/api/electrodes/electrode-cut-batches/${batchId}/electrodes`);
+      
       if (!res.ok) {
         console.error('Failed to load cathode electrodes');
         return;
       }
-
+      
       cathodeElectrodes = (await res.json()).filter(e => e.status_code === 1);
-
+      
       renderCathodeElectrodeTable();
-
+      
     }
     
     async function loadAnodeElectrodes(batchId) {
-
+      
       const res =
-        await fetch(`/api/electrodes/electrode-cut-batches/${batchId}/electrodes`);
-
+      await fetch(`/api/electrodes/electrode-cut-batches/${batchId}/electrodes`);
+      
       if (!res.ok) {
         console.error('Failed to load anode electrodes');
         return;
       }
-
+      
       anodeElectrodes = (await res.json()).filter(e => e.status_code === 1);
-
+      
       renderAnodeElectrodeTable();
-
+      
     }
-
-
+    
+    
     // Load saved battery data
     async function loadElectrodeSources(batteryId) {
-
+      
       const res = await fetch(`/api/batteries/battery_electrode_sources/${batteryId}`);
-
+      
       if (!res.ok) {
         console.error('Failed to load electrode sources');
         return;
       }
-
+      
       const data = await res.json();
-
+      
       if (!data) return;
-
+      
       const cathodeTape = document.getElementById('cathode_tape_id');
       const cathodeBatch = document.getElementById('cathode_cut_batch_id');
-
+      
       const anodeTape = document.getElementById('anode_tape_id');
       const anodeBatch = document.getElementById('anode_cut_batch_id');
-
+      
       cathodeTape.value = data.cathode_tape_id || '';
       anodeTape.value = data.anode_tape_id || '';
-
+      
       if (data.cathode_tape_id) {
         await loadCathodeBatches(data.cathode_tape_id);
         cathodeBatch.value = data.cathode_cut_batch_id || '';
       }
-
+      
       if (data.anode_tape_id) {
         await loadAnodeBatches(data.anode_tape_id);
         anodeBatch.value = data.anode_cut_batch_id || '';
       }
-
+      
     }
-
+    
     async function loadElectrodeStack(batteryId) {
-
+      
       const res = await fetch(`/api/batteries/battery_electrodes/${batteryId}`);
-
+      
       if (!res.ok) return;
-
+      
       const stack = await res.json();
-
+      
       if (!stack || stack.length === 0) return;
-
+      
       // reset current selections
       selectedCathodes = [];
       selectedAnodes = [];
-
+      
       for (const row of stack) {
-
+        
         const electrode = {
           electrode_id: row.electrode_id,
           electrode_mass_g: row.electrode_mass_g ?? null
         };
-
+        
         if (row.role === 'cathode') {
           selectedCathodes.push(electrode);
         }
-
+        
         if (row.role === 'anode') {
           selectedAnodes.push(electrode);
         }
-
+        
       }
-
+      
       renderStackPreview();
-
+      
     }
-
-
+    
+    
     // Load a battery for editing
     async function loadBatteryAssembly(batteryId) {
-
+      
       const res = await fetch(`/api/batteries/${batteryId}/assembly`);
-
+      
       if (!res.ok) {
         console.error('Failed to load battery assembly');
         return;
       }
-
+      
       const data = await res.json();
-
+      
       populateFieldset(
         document.getElementById('coin_config'),
         data.coin_config
       );
-
+      
       populateFieldset(
         document.getElementById('pouch_config'),
         data.pouch_config
       );
-
+      
       populateFieldset(
         document.getElementById('cyl_config'),
         data.cyl_config
       );
-
+      
       document.getElementById('battery_form_factor')
-        .dispatchEvent(new Event('change'));
-
+      .dispatchEvent(new Event('change'));
+      
       document.getElementById('coin_cell_mode')
-        .dispatchEvent(new Event('change'));
-
+      .dispatchEvent(new Event('change'));
+      
       document.getElementById('coin_half_cell_type')
-        .dispatchEvent(new Event('change'));
-
+      .dispatchEvent(new Event('change'));
+      
       const battery = data.battery;
-
+      
       /* restore header */
-
+      
       document.getElementById('battery_project_id').value =
-        battery.project_id ?? '';
-
+      battery.project_id ?? '';
+      
       document.getElementById('battery_created_by').value =
-        battery.created_by ?? '';
-
+      battery.created_by ?? '';
+      
       document.getElementById('battery_form_factor').value =
-        battery.form_factor ?? '';
-
+      battery.form_factor ?? '';
+      
       document.getElementById('battery_notes').value =
-        battery.notes ?? '';
-
+      battery.notes ?? '';
+      
       /* restore stack */
-
+      
       if (Array.isArray(data.electrodes) && data.electrodes.length > 0) {
-
+        
         selectedCathodes = [];
         selectedAnodes = [];
-
+        
         data.electrodes.forEach(row => {
-
+          
           const electrode = {
             electrode_id: row.electrode_id,
             electrode_mass_g: row.electrode_mass_g ?? null
           };
-
+          
           if (row.role === 'cathode') {
             selectedCathodes.push(electrode);
           }
-
+          
           if (row.role === 'anode') {
             selectedAnodes.push(electrode);
           }
         });
       }
-
+      
       /* restore tape sources first */
-
+      
       let savedCathodeBatchId = '';
       let savedAnodeBatchId = '';
-
+      
       if (Array.isArray(data.electrode_sources)) {
-
+        
         data.electrode_sources.forEach(src => {
-
+          
           if (src.role === 'cathode') {
-
+            
             if (src.tape_id) {
               document.getElementById('cathode_tape_id').value =
-                src.tape_id;
+              src.tape_id;
             }
-
+            
             if (src.cut_batch_id) {
               savedCathodeBatchId = String(src.cut_batch_id);
             }
-
+            
           }
-
+          
           if (src.role === 'anode') {
-
+            
             if (src.tape_id) {
               document.getElementById('anode_tape_id').value =
-                src.tape_id;
+              src.tape_id;
             }
-
+            
             if (src.cut_batch_id) {
               savedAnodeBatchId = String(src.cut_batch_id);
             }
-
+            
           }
-
+          
         });
-
+        
       }
-
+      
       /* load batches from restored tapes */
-
+      
       const cathodeTapeId =
-        document.getElementById('cathode_tape_id').value;
-
+      document.getElementById('cathode_tape_id').value;
+      
       if (cathodeTapeId) {
         await loadCathodeBatches(cathodeTapeId);
       }
-
+      
       const anodeTapeId =
-        document.getElementById('anode_tape_id').value;
-
+      document.getElementById('anode_tape_id').value;
+      
       if (anodeTapeId) {
         await loadAnodeBatches(anodeTapeId);
       }
-
+      
       /* restore saved batch selections */
-
+      
       if (savedCathodeBatchId) {
         document.getElementById('cathode_cut_batch_id').value =
-          savedCathodeBatchId;
+        savedCathodeBatchId;
       }
-
+      
       if (savedAnodeBatchId) {
         document.getElementById('anode_cut_batch_id').value =
-          savedAnodeBatchId;
+        savedAnodeBatchId;
       }
-
+      
       /* load electrodes for restored batches */
-
+      
       if (savedCathodeBatchId) {
         await loadCathodeElectrodes(savedCathodeBatchId);
       }
-
+      
       if (savedAnodeBatchId) {
         await loadAnodeElectrodes(savedAnodeBatchId);
       }
-
+      
       /* restore checkbox state */
-
+      
       await loadElectrodeStack(currentBatteryId);
-
+      
       document
-        .querySelectorAll('#stack_cathode_table_body input[type="checkbox"]')
-        .forEach(cb => {
-
-          const id = Number(cb.value);
-
-          if (selectedCathodes.some(e => e.electrode_id === id)) {
-            cb.checked = true;
-          }
-
-        });
-
+      .querySelectorAll('#stack_cathode_table_body input[type="checkbox"]')
+      .forEach(cb => {
+        
+        const id = Number(cb.value);
+        
+        if (selectedCathodes.some(e => e.electrode_id === id)) {
+          cb.checked = true;
+        }
+        
+      });
+      
       document
-        .querySelectorAll('#stack_anode_table_body input[type="checkbox"]')
-        .forEach(cb => {
-
-          const id = Number(cb.value);
-
-          if (selectedAnodes.some(e => e.electrode_id === id)) {
-            cb.checked = true;
-          }
-
-        });
+      .querySelectorAll('#stack_anode_table_body input[type="checkbox"]')
+      .forEach(cb => {
+        
+        const id = Number(cb.value);
+        
+        if (selectedAnodes.some(e => e.electrode_id === id)) {
+          cb.checked = true;
+        }
+        
+      });
       
       renderStackSummary();
-
+      
       /* freeze upstream inputs if electrodes exist */
-
+      
       const lock = Array.isArray(data.electrodes) && data.electrodes.length > 0;
-
+      
       document.getElementById('battery_project_id').disabled = lock;
       document.getElementById('battery_created_by').disabled = lock;
       document.getElementById('battery_form_factor').disabled = lock;
-
+      
       document.getElementById('cathode_tape_id').disabled = lock;
       document.getElementById('cathode_cut_batch_id').disabled = lock;
-
+      
       document.getElementById('anode_tape_id').disabled = lock;
       document.getElementById('anode_cut_batch_id').disabled = lock;
-
+      
       const banner = document.getElementById('assembly_locked_banner');
-
+      
       if (banner) {
         banner.classList.toggle('visible', lock);
       }
-
+      
     }
-
-
+    
+    
     // -------- Rendering --------
     
     function renderBatteriesList() {
-
+      
       const list = document.getElementById('batteriesList');
-
+      
       list.innerHTML = '';
-
+      
       batteries.forEach(b => {
-
+        
         const li = document.createElement('li');
         const btn = document.createElement('button');
-
+        
         btn.type = 'button';
         const status =
-          b.is_complete ? '✓ готово' : '⚠ не завершён';
-
+        b.is_complete ? '✓ готово' : '⚠ не завершён';
+        
         btn.textContent =
-          `#${b.battery_id} | ${status} | ${b.project_name || '—'} | ${b.form_factor}`;
-
+        `#${b.battery_id} | ${status} | ${b.project_name || '—'} | ${b.form_factor}`;
+        
         btn.addEventListener('click', () => {
           populateBatteryForm(b);
         });
-
+        
         li.appendChild(btn);
         list.appendChild(li);
-
+        
       });
-
+      
     }
-
+    
     function renderTapeOptions() {
-
+      
       const projectId =
-        document.getElementById('battery_project_id').value;
-
+      document.getElementById('battery_project_id').value;
+      
       const cathodeSelect =
-        document.getElementById('cathode_tape_id');
-
+      document.getElementById('cathode_tape_id');
+      
       const anodeSelect =
-        document.getElementById('anode_tape_id');
-
+      document.getElementById('anode_tape_id');
+      
       cathodeSelect.innerHTML =
-        '<option value="">— выбрать ленту —</option>';
-
+      '<option value="">— выбрать ленту —</option>';
+      
       anodeSelect.innerHTML =
-        '<option value="">— выбрать ленту —</option>';
-
+      '<option value="">— выбрать ленту —</option>';
+      
       const filtered = tapes.filter(t =>
         !projectId || t.project_id == projectId
       );
-
+      
       filtered.forEach(t => {
-
+        
         const option = document.createElement('option');
-
+        
         option.value = t.tape_id;
-
+        
         option.textContent =
-          `#${t.tape_id} | ${t.name} | ${t.created_by}`;
-
+        `#${t.tape_id} | ${t.name} | ${t.created_by}`;
+        
         if (t.role === 'cathode') {
           cathodeSelect.appendChild(option.cloneNode(true));
         }
-
+        
         if (t.role === 'anode') {
           anodeSelect.appendChild(option.cloneNode(true));
         }
-
+        
       });
-
+      
     }
-
-
+    
+    
     function renderCathodeBatchOptions() {
-
+      
       const select =
-        document.getElementById('cathode_cut_batch_id');
-
+      document.getElementById('cathode_cut_batch_id');
+      
       select.innerHTML =
-        '<option value="">— выбрать партию —</option>';
-
+      '<option value="">— выбрать партию —</option>';
+      
       cathodeBatches.forEach(b => {
-
+        
         const option = document.createElement('option');
-
+        
         option.value = b.cut_batch_id;
-
+        
         option.textContent =
-          `#${b.cut_batch_id} | ${b.created_by}`;
-
+        `#${b.cut_batch_id} | ${b.created_by}`;
+        
         select.appendChild(option);
-
+        
       });
-
+      
     }
-
+    
     function renderAnodeBatchOptions() {
-
+      
       const select =
-        document.getElementById('anode_cut_batch_id');
-
+      document.getElementById('anode_cut_batch_id');
+      
       select.innerHTML =
-        '<option value="">— выбрать партию —</option>';
-
+      '<option value="">— выбрать партию —</option>';
+      
       anodeBatches.forEach(b => {
-
+        
         const option = document.createElement('option');
-
+        
         option.value = b.cut_batch_id;
-
+        
         option.textContent =
-          `#${b.cut_batch_id} | ${b.created_by}`;
-
+        `#${b.cut_batch_id} | ${b.created_by}`;
+        
         select.appendChild(option);
-
+        
       });
-
+      
     }
-
-
+    
+    
     function renderCathodeElectrodeTable() {
-
+      
       const body =
-        document.getElementById('stack_cathode_table_body');
-
+      document.getElementById('stack_cathode_table_body');
+      
       body.innerHTML = '';
-//      selectedCathodes = [];
-//     renderStackSummary();
-
+      //      selectedCathodes = [];
+      //     renderStackSummary();
+      
       cathodeElectrodes.forEach((e, index) => {
-
+        
         const tr = document.createElement('tr');
-
+        
         const numCell = document.createElement('td');
         numCell.textContent = index + 1;
         tr.appendChild(numCell);
-
+        
         const idCell = document.createElement('td');
         idCell.textContent = e.electrode_id;
         tr.appendChild(idCell);
-
+        
         const massCell = document.createElement('td');
         massCell.textContent = e.electrode_mass_g ?? '';
         tr.appendChild(massCell);
-
+        
         const selectCell = document.createElement('td');
-
+        
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-
-          checkbox.addEventListener('change', e => {
-
-            const electrodeId = Number(e.target.value);
-
-            if (e.target.checked) {
-
-              const electrode =
-                cathodeElectrodes.find(
-                  el => el.electrode_id === electrodeId
-                );
-
-              selectedCathodes.push(electrode);
-
-            } else {
-
-              selectedCathodes =
-                selectedCathodes.filter(
-                  el => el.electrode_id !== electrodeId
-                );
-
-            }
-
-            renderStackSummary();
-
-          });
-
-        checkbox.value = e.electrode_id;
-
-        if (e.status_code !== 1) {
-          checkbox.disabled = true;
-        }
-
-        selectCell.appendChild(checkbox);
-        tr.appendChild(selectCell);
-
-        body.appendChild(tr);
-
-      });
-
-    }
-
-    function renderAnodeElectrodeTable() {
-
-      const body =
-        document.getElementById('stack_anode_table_body');
-
-      body.innerHTML = '';
-//      selectedAnodes = [];
-//      renderStackSummary();
-
-      anodeElectrodes.forEach((e, index) => {
-
-        const tr = document.createElement('tr');
-
-        const numCell = document.createElement('td');
-        numCell.textContent = index + 1;
-        tr.appendChild(numCell);
-
-        const idCell = document.createElement('td');
-        idCell.textContent = e.electrode_id;
-        tr.appendChild(idCell);
-
-        const massCell = document.createElement('td');
-        massCell.textContent = e.electrode_mass_g ?? '';
-        tr.appendChild(massCell);
-
-        const selectCell = document.createElement('td');
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-
+        
         checkbox.addEventListener('change', e => {
-
+          
           const electrodeId = Number(e.target.value);
-
+          
           if (e.target.checked) {
-
+            
             const electrode =
-              anodeElectrodes.find(
-                el => el.electrode_id === electrodeId
-              );
-
-            selectedAnodes.push(electrode);
-
+            cathodeElectrodes.find(
+              el => el.electrode_id === electrodeId
+            );
+            
+            selectedCathodes.push(electrode);
+            
           } else {
-
-            selectedAnodes =
-              selectedAnodes.filter(
-                el => el.electrode_id !== electrodeId
-              );
-
+            
+            selectedCathodes =
+            selectedCathodes.filter(
+              el => el.electrode_id !== electrodeId
+            );
+            
           }
-
+          
           renderStackSummary();
-
+          
         });
-
+        
         checkbox.value = e.electrode_id;
         
         if (e.status_code !== 1) {
           checkbox.disabled = true;
         }
-
+        
         selectCell.appendChild(checkbox);
         tr.appendChild(selectCell);
-
+        
         body.appendChild(tr);
-
+        
       });
-
+      
     }
-
-
-    function renderStackSummary() {
-
+    
+    function renderAnodeElectrodeTable() {
+      
       const body =
-        document.getElementById('battery_stack_summary_body');
-
+      document.getElementById('stack_anode_table_body');
+      
       body.innerHTML = '';
-
+      //      selectedAnodes = [];
+      //      renderStackSummary();
+      
+      anodeElectrodes.forEach((e, index) => {
+        
+        const tr = document.createElement('tr');
+        
+        const numCell = document.createElement('td');
+        numCell.textContent = index + 1;
+        tr.appendChild(numCell);
+        
+        const idCell = document.createElement('td');
+        idCell.textContent = e.electrode_id;
+        tr.appendChild(idCell);
+        
+        const massCell = document.createElement('td');
+        massCell.textContent = e.electrode_mass_g ?? '';
+        tr.appendChild(massCell);
+        
+        const selectCell = document.createElement('td');
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        
+        checkbox.addEventListener('change', e => {
+          
+          const electrodeId = Number(e.target.value);
+          
+          if (e.target.checked) {
+            
+            const electrode =
+            anodeElectrodes.find(
+              el => el.electrode_id === electrodeId
+            );
+            
+            selectedAnodes.push(electrode);
+            
+          } else {
+            
+            selectedAnodes =
+            selectedAnodes.filter(
+              el => el.electrode_id !== electrodeId
+            );
+            
+          }
+          
+          renderStackSummary();
+          
+        });
+        
+        checkbox.value = e.electrode_id;
+        
+        if (e.status_code !== 1) {
+          checkbox.disabled = true;
+        }
+        
+        selectCell.appendChild(checkbox);
+        tr.appendChild(selectCell);
+        
+        body.appendChild(tr);
+        
+      });
+      
+    }
+    
+    
+    function renderStackSummary() {
+      
+      const body =
+      document.getElementById('battery_stack_summary_body');
+      
+      body.innerHTML = '';
+      
       const mode =
-        document.getElementById('coin_cell_mode')?.value;
-
+      document.getElementById('coin_cell_mode')?.value;
+      
       const halfType =
-        document.getElementById('coin_half_cell_type')?.value;
-
+      document.getElementById('coin_half_cell_type')?.value;
+      
       let cathodes = [...selectedCathodes];
       let anodes = [...selectedAnodes];
-
+      
       /* ---------- enforce selection rules ---------- */
-
+      
       if (mode === 'half_cell') {
-
+        
         if (halfType === 'cathode_vs_li') {
           cathodes = cathodes.slice(0, 1);
           anodes = [];
         }
-
+        
         if (halfType === 'anode_vs_li') {
           anodes = anodes.slice(0, 1);
           cathodes = [];
         }
-
+        
       }
-
+      
       if (mode === 'full_cell') {
-
+        
         cathodes = cathodes.slice(0, 1);
         anodes = anodes.slice(0, 1);
-
+        
       }
-
+      
       /* ---------- sort by mass (descending) ---------- */
-
+      
       cathodes.sort((a,b)=>b.electrode_mass_g-a.electrode_mass_g);
       anodes.sort((a,b)=>b.electrode_mass_g-a.electrode_mass_g);
-
+      
       /* ---------- interleave A-C-A-C ---------- */
-
+      
       const stack = [];
-
+      
       const max =
-        Math.max(cathodes.length, anodes.length);
-
+      Math.max(cathodes.length, anodes.length);
+      
       for (let i=0;i<max;i++){
-
+        
         if (anodes[i]) {
           stack.push({
             role:'Анод',
             ...anodes[i]
           });
         }
-
+        
         if (cathodes[i]) {
           stack.push({
             role:'Катод',
             ...cathodes[i]
           });
         }
-
+        
       }
-
+      
       /* ---------- render stack ---------- */
-
+      
       stack.forEach((e,index)=>{
-
+        
         const tr = document.createElement('tr');
-
+        
         const posCell = document.createElement('td');
         posCell.textContent = index+1;
         tr.appendChild(posCell);
-
+        
         const idCell = document.createElement('td');
         idCell.textContent = e.electrode_id;
         tr.appendChild(idCell);
-
+        
         const roleCell = document.createElement('td');
         roleCell.textContent = e.role;
         tr.appendChild(roleCell);
-
+        
         const massCell = document.createElement('td');
         massCell.textContent = e.electrode_mass_g ?? '';
         tr.appendChild(massCell);
-
+        
         body.appendChild(tr);
-
+        
       });
-
+      
     }
-
-
+    
+    
     
     // -------- Status helper --------
-
+    
     function buildStackPayload() {
-
+      
       const stack = [];
-
+      
       let position = 1;
-
+      
       const cathodes = [...selectedCathodes];
       const anodes = [...selectedAnodes];
-
+      
       const maxLen = Math.max(cathodes.length, anodes.length);
-
+      
       for (let i = 0; i < maxLen; i++) {
-
+        
         if (anodes[i]) {
           stack.push({
             electrode_id: anodes[i].electrode_id,
@@ -1749,7 +1116,7 @@ Jan 28, 2026
             position_index: position++
           });
         }
-
+        
         if (cathodes[i]) {
           stack.push({
             electrode_id: cathodes[i].electrode_id,
@@ -1757,33 +1124,33 @@ Jan 28, 2026
             position_index: position++
           });
         }
-
+        
       }
-
+      
       stack.forEach((row, index) => {
         row.position_index = index + 1;
       });
-
+      
       return stack;
-
+      
     }
-
+    
     function validateStackBalance() {
-
+      
       const formFactor =
-        document.getElementById('battery_form_factor').value;
-
+      document.getElementById('battery_form_factor').value;
+      
       const coinCellMode =
-        document.getElementById('coin_cell_mode').value;
-
+      document.getElementById('coin_cell_mode').value;
+      
       const cathodes = selectedCathodes.length;
       const anodes = selectedAnodes.length;
-
+      
       // For half-cells, balance does not apply
       if (formFactor === 'coin' && coinCellMode === 'half_cell') {
         return true;
       }
-
+      
       // For full cells / pouch / cylindrical, require equal counts
       if (cathodes !== anodes) {
         alert(
@@ -1792,150 +1159,150 @@ Jan 28, 2026
         );
         return false;
       }
-
+      
       return true;
-
+      
     }
-
+    
     function validateStackSelection() {
-
+      
       const formFactor =
-        document.getElementById('battery_form_factor').value;
-
+      document.getElementById('battery_form_factor').value;
+      
       const coinCellMode =
-        document.getElementById('coin_cell_mode').value;
-
+      document.getElementById('coin_cell_mode').value;
+      
       const halfCellType =
-        document.getElementById('coin_half_cell_type').value;
-
+      document.getElementById('coin_half_cell_type').value;
+      
       const cathodes = selectedCathodes.length;
       const anodes = selectedAnodes.length;
-
+      
       /* ----- coin half-cell rules ----- */
-
+      
       if (formFactor === 'coin' && coinCellMode === 'half_cell') {
-
+        
         if (halfCellType === 'cathode_vs_li') {
-
+          
           if (cathodes === 0) {
             alert('Выберите хотя бы один катод');
             return false;
           }
-
+          
           return true;
         }
-
+        
         if (halfCellType === 'anode_vs_li') {
-
+          
           if (anodes === 0) {
             alert('Выберите хотя бы один анод');
             return false;
           }
-
+          
           return true;
         }
-
+        
         alert('Выберите тип полуячейки');
         return false;
-
+        
       }
-
+      
       /* ----- full-cell / pouch / cylindrical rules ----- */
-
+      
       if (cathodes === 0) {
         alert('Выберите хотя бы один катод');
         return false;
       }
-
+      
       if (anodes === 0) {
         alert('Выберите хотя бы один анод');
         return false;
       }
-
+      
       if (!validateStackBalance()) {
         return false;
       }
-
+      
       return true;
-
-    }
-
-    function resetElectrodeSelection() {
-
-      selectedCathodes = [];
-      selectedAnodes = [];
-
-      cathodeElectrodes = [];
-      anodeElectrodes = [];
-
-      cathodeBatches = [];
-      anodeBatches = [];
-
-      document.getElementById('cathode_tape_id').value = '';
-      document.getElementById('anode_tape_id').value = '';
-
-      document.getElementById('cathode_cut_batch_id').innerHTML =
-        '<option value="">— выбрать партию —</option>';
-
-      document.getElementById('anode_cut_batch_id').innerHTML =
-        '<option value="">— выбрать партию —</option>';
-
-      document.getElementById('stack_cathode_table_body').innerHTML = '';
-      document.getElementById('stack_anode_table_body').innerHTML = '';
-
-      renderStackSummary();
-
+      
     }
     
-
-
+    function resetElectrodeSelection() {
+      
+      selectedCathodes = [];
+      selectedAnodes = [];
+      
+      cathodeElectrodes = [];
+      anodeElectrodes = [];
+      
+      cathodeBatches = [];
+      anodeBatches = [];
+      
+      document.getElementById('cathode_tape_id').value = '';
+      document.getElementById('anode_tape_id').value = '';
+      
+      document.getElementById('cathode_cut_batch_id').innerHTML =
+      '<option value="">— выбрать партию —</option>';
+      
+      document.getElementById('anode_cut_batch_id').innerHTML =
+      '<option value="">— выбрать партию —</option>';
+      
+      document.getElementById('stack_cathode_table_body').innerHTML = '';
+      document.getElementById('stack_anode_table_body').innerHTML = '';
+      
+      renderStackSummary();
+      
+    }
+    
+    
+    
     // -------- Events --------
-
+    
     // prevent default form submission
     document
-      .querySelector('form[name="battery_assembly_log_form"]')
-      .addEventListener('submit', (e) => {
-        e.preventDefault();
-      });
-
-
+    .querySelector('form[name="battery_assembly_log_form"]')
+    .addEventListener('submit', (e) => {
+      e.preventDefault();
+    });
+    
+    
     document.getElementById('battery_create_btn').onclick = async () => {
-
+      
       const projectId = document.getElementById('battery_project_id').value;
       const createdBy = document.getElementById('battery_created_by').value;
       const formFactor = document.getElementById('battery_form_factor').value;
       const batteryNotes = document.getElementById('battery_notes').value;
-
+      
       if (!projectId || !createdBy || !formFactor) {
         alert('Заполните проект, оператора и форм-фактор');
         return;
       }
-
+      
       try {
-
+        
         if (!currentBatteryId) {
-
+          
           const payload = {
             project_id: Number(projectId),
             created_by: Number(createdBy),
             form_factor: formFactor,
             battery_notes: batteryNotes || null
           };
-
+          
           const res = await fetch('/api/batteries', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
           });
-
+          
           if (!res.ok) {
             throw new Error('Ошибка создания аккумулятора');
           }
-
+          
           const battery = await res.json();
-
+          
           currentBatteryId = battery.battery_id;
-
+          
           unlockBatteryWorkspace({
             battery_id: battery.battery_id,
             project_id: battery.project_id,
@@ -1943,301 +1310,301 @@ Jan 28, 2026
             form_factor: battery.form_factor,
             notes: battery.battery_notes ?? null
           });
-
+          
           document.getElementById('battery_create_btn').textContent =
-            'Сохранить шапку';
-
+          'Сохранить шапку';
+          
           await loadTapes();
           await loadBatteries();
-
+          
           return;
         }
-
+        
         const headerPayload = {
           project_id: Number(projectId),
           created_by: Number(createdBy),
           form_factor: formFactor,
           battery_notes: batteryNotes || null
         };
-
+        
         const updatedBattery = await updateBatteryMeta(
           currentBatteryId,
           headerPayload
         );
-
+        
         unlockBatteryWorkspace(updatedBattery);
         await loadTapes();
         await loadBatteries();
-
+        
         alert('Шапка аккумулятора сохранена');
-
+        
       } catch (err) {
-
+        
         console.error(err);
         alert('Ошибка сохранения аккумулятора');
-
+        
       }
-
+      
     };
     
     async function populateBatteryForm(battery) {
-
+      
       currentBatteryId = battery.battery_id;
-
+      
       document.getElementById('battery_project_id').value =
-        battery.project_id ?? '';
-
+      battery.project_id ?? '';
+      
       document.getElementById('battery_created_by').value =
-        battery.created_by ?? '';
-
+      battery.created_by ?? '';
+      
       document.getElementById('battery_form_factor').value =
-        battery.form_factor ?? '';
-
+      battery.form_factor ?? '';
+      
       document.getElementById('battery_notes').value =
-        battery.notes ?? '';
-
+      battery.notes ?? '';
+      
       const btn = document.getElementById('battery_create_btn');
       btn.textContent = 'Сохранить изменения';
       btn.dataset.mode = 'update';
-
+      
       unlockBatteryWorkspace(battery);
-
+      
       document.getElementById('battery_form_factor').dispatchEvent(
         new Event('change')
       );
-
+      
       await loadTapes();
-
+      
       await loadBatteryAssembly(battery.battery_id);
-
+      
     }
-
+    
     
     function unlockBatteryWorkspace(battery) {
-
+      
       document.getElementById('battery_header').hidden = false;
       document.getElementById('battery_workspace').hidden = false;
-
+      
       document.getElementById('battery_id_label').textContent =
-        `#${battery.battery_id}`;
-
+      `#${battery.battery_id}`;
+      
       const projectSelect =
-        document.getElementById('battery_project_id');
-
+      document.getElementById('battery_project_id');
+      
       const operatorSelect =
-        document.getElementById('battery_created_by');
-
+      document.getElementById('battery_created_by');
+      
       const formFactorSelect =
-        document.getElementById('battery_form_factor');
-
+      document.getElementById('battery_form_factor');
+      
       document.getElementById('battery_project_label').textContent =
-        projectSelect.selectedOptions[0]?.textContent || '—';
-
+      projectSelect.selectedOptions[0]?.textContent || '—';
+      
       document.getElementById('battery_formfactor_label').textContent =
-        formFactorSelect.selectedOptions[0]?.textContent || '—';
-
+      formFactorSelect.selectedOptions[0]?.textContent || '—';
+      
       document.getElementById('battery_operator_label').textContent =
-        operatorSelect.selectedOptions[0]?.textContent || '—';
-
+      operatorSelect.selectedOptions[0]?.textContent || '—';
+      
     }
-
+    
     
     const formFactorSelect =
-      document.getElementById('battery_form_factor');
-
+    document.getElementById('battery_form_factor');
+    
     formFactorSelect.addEventListener('change', () => {
-
+      
       const coinConfig = document.getElementById('coin_config');
       const pouchConfig = document.getElementById('pouch_config');
       const cylConfig = document.getElementById('cyl_config');
-
+      
       const coinAssembly = document.getElementById('coin_assembly');
       const pouchAssembly = document.getElementById('pouch_assembly');
       const cylAssembly = document.getElementById('cyl_assembly');
-
+      
       const totalVolumeInput =
-        document.getElementById('electrolyte_total_ul');
-
+      document.getElementById('electrolyte_total_ul');
+      
       coinConfig.hidden = true;
       pouchConfig.hidden = true;
       cylConfig.hidden = true;
-
+      
       coinAssembly.hidden = true;
       pouchAssembly.hidden = true;
       cylAssembly.hidden = true;
-
+      
       if (formFactorSelect.value === 'coin') {
         coinConfig.hidden = false;
         coinAssembly.hidden = false;
         totalVolumeInput.readOnly = true;
       }
-
+      
       if (formFactorSelect.value === 'pouch') {
         pouchConfig.hidden = false;
         pouchAssembly.hidden = false;
         totalVolumeInput.readOnly = false;
       }
-
+      
       if (formFactorSelect.value === 'cylindrical') {
         cylConfig.hidden = false;
         cylAssembly.hidden = false;
         totalVolumeInput.readOnly = false;
       }
-
+      
     });
-
-
+    
+    
     const coinCellModeSelect =
-      document.getElementById('coin_cell_mode');
-
+    document.getElementById('coin_cell_mode');
+    
     const halfCellTypeSelect =
-      document.getElementById('coin_half_cell_type');
-  
+    document.getElementById('coin_half_cell_type');
+    
     coinCellModeSelect.addEventListener('change', () => {
-
+      
       const halfTypeBlock =
-        document.getElementById('coin_half_cell_type_block');
-
+      document.getElementById('coin_half_cell_type_block');
+      
       if (coinCellModeSelect.value === 'half_cell') {
         halfTypeBlock.hidden = false;
       } else {
         halfTypeBlock.hidden = true;
       }
-
+      
     });
-
+    
     halfCellTypeSelect.addEventListener('change', () => { 
-
+      
       const cathodeBlock =
-        document.getElementById('cathode_source_block');
-
+      document.getElementById('cathode_source_block');
+      
       const anodeBlock =
-        document.getElementById('anode_source_block');
-
+      document.getElementById('anode_source_block');
+      
       const liFoilBlock =
-        document.getElementById('li-foil_block');
-
+      document.getElementById('li-foil_block');
+      
       cathodeBlock.hidden = false;
       anodeBlock.hidden = false;
       liFoilBlock.hidden = true;
-
+      
       if (halfCellTypeSelect.value === 'cathode_vs_li') {
-
+        
         anodeBlock.hidden = true;
         liFoilBlock.hidden = false;
-
+        
       }
-
+      
       if (halfCellTypeSelect.value === 'anode_vs_li') {
-
+        
         cathodeBlock.hidden = true;
         liFoilBlock.hidden = false;
-
+        
       }
-
+      
       resetElectrodeSelection();
-
+      
     });
-
+    
     document
-      .getElementById('battery_project_id')
-      .addEventListener('change', () => {
-        console.log('battery_project_id changed to', document.getElementById('battery_project_id').value);
-        resetElectrodeSelection();
-        loadTapes();
-        console.log('battery_project_id changed to', document.getElementById('battery_project_id').value);
-      });
+    .getElementById('battery_project_id')
+    .addEventListener('change', () => {
+      console.log('battery_project_id changed to', document.getElementById('battery_project_id').value);
+      resetElectrodeSelection();
+      loadTapes();
+      console.log('battery_project_id changed to', document.getElementById('battery_project_id').value);
+    });
+    
+    document
+    .getElementById('cathode_tape_id')
+    .addEventListener('change', e => {
       
-    document
-      .getElementById('cathode_tape_id')
-      .addEventListener('change', e => {
-
-        const tapeId = e.target.value;
-
-        if (!tapeId) return;
-
-        loadCathodeBatches(tapeId);
-
-      });
-
-    document
-      .getElementById('anode_tape_id')
-      .addEventListener('change', e => {
-
-        const tapeId = e.target.value;
-
-        if (!tapeId) return;
-
-        loadAnodeBatches(tapeId);
-
-      });
+      const tapeId = e.target.value;
       
+      if (!tapeId) return;
+      
+      loadCathodeBatches(tapeId);
+      
+    });
+    
     document
-      .getElementById('cathode_cut_batch_id')
-      .addEventListener('change', e => {
-
-        const batchId = e.target.value;
-
-        if (!batchId) return;
-
-        loadCathodeElectrodes(batchId);
-
-      });
-
+    .getElementById('anode_tape_id')
+    .addEventListener('change', e => {
+      
+      const tapeId = e.target.value;
+      
+      if (!tapeId) return;
+      
+      loadAnodeBatches(tapeId);
+      
+    });
+    
     document
-      .getElementById('anode_cut_batch_id')
-      .addEventListener('change', e => {
-
-        const batchId = e.target.value;
-
-        if (!batchId) return;
-
-        loadAnodeElectrodes(batchId);
-
-      });
-
+    .getElementById('cathode_cut_batch_id')
+    .addEventListener('change', e => {
+      
+      const batchId = e.target.value;
+      
+      if (!batchId) return;
+      
+      loadCathodeElectrodes(batchId);
+      
+    });
+    
+    document
+    .getElementById('anode_cut_batch_id')
+    .addEventListener('change', e => {
+      
+      const batchId = e.target.value;
+      
+      if (!batchId) return;
+      
+      loadAnodeElectrodes(batchId);
+      
+    });
+    
     const dropCountInput =
-      document.getElementById('electrolyte_drop_count');
-
+    document.getElementById('electrolyte_drop_count');
+    
     const dropVolumeInput =
-      document.getElementById('electrolyte_drop_volume');
-
+    document.getElementById('electrolyte_drop_volume');
+    
     const totalVolumeInput =
-      document.getElementById('electrolyte_total_ul');
-
+    document.getElementById('electrolyte_total_ul');
+    
     function updateElectrolyteVolume() {
-
+      
       const formFactor =
-        document.getElementById('battery_form_factor').value;
-
+      document.getElementById('battery_form_factor').value;
+      
       if (formFactor !== 'coin') return;
-
+      
       const count = Number(dropCountInput.value);
       const volume = Number(dropVolumeInput.value);
-
+      
       if (!count || !volume) {
         totalVolumeInput.value = '';
         return;
       }
-
+      
       totalVolumeInput.value = (count * volume).toFixed(2);
-
+      
     }
-
+    
     dropCountInput.addEventListener('input', updateElectrolyteVolume);
     dropVolumeInput.addEventListener('input', updateElectrolyteVolume);
-
-
-
+    
+    
+    
     // -------- Init --------
-
+    
     window.addEventListener('focus', () => {
-
+      
       loadUsers();
       loadProjects();
       loadSeparators();
       loadElectrolytes();
-
+      
     });
     
     loadProjects();
@@ -2245,7 +1612,3 @@ Jan 28, 2026
     loadBatteries();
     loadSeparators();
     loadElectrolytes();
-
-  </script>
-</body>
-</html>

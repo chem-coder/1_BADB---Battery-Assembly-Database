@@ -11,7 +11,7 @@ router.get('/test', async (req, res) => {
 
 // -------- ELECTRODE CUT BATCHES --------
 // CREATE cut batch
-app.post('/electrode-cut-batches', async (req, res) => {
+router.post('/electrode-cut-batches', async (req, res) => {
     const {
     tape_id,
     created_by,
@@ -62,7 +62,7 @@ app.post('/electrode-cut-batches', async (req, res) => {
 });
 
 // UPDATE
-app.put('/electrode-cut-batches/:id', async (req, res) => {
+router.put('/electrode-cut-batches/:id', async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   const {
@@ -117,7 +117,7 @@ app.put('/electrode-cut-batches/:id', async (req, res) => {
 });
 
 // GET cut batch by ID
-app.get('/electrode-cut-batches/:id', async (req, res) => {
+router.get('/electrode-cut-batches/:id', async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -146,7 +146,7 @@ app.get('/electrode-cut-batches/:id', async (req, res) => {
 });
 
 // DELETE cut batch (and cascade delete electrodes and measurements)
-app.delete('/electrode-cut-batches/:id', async (req, res) => {
+router.delete('/electrode-cut-batches/:id', async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -169,7 +169,7 @@ app.delete('/electrode-cut-batches/:id', async (req, res) => {
 
 
 // GET electrodes by batch
-app.get('/electrode-cut-batches/:id/electrodes', async (req, res) => {
+router.get('/electrode-cut-batches/:id/electrodes', async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -202,7 +202,7 @@ app.get('/electrode-cut-batches/:id/electrodes', async (req, res) => {
 // -------- FOIL MASS MEASUREMENTS --------
 
 // ADD measurement
-app.post('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
+router.post('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
   const cutBatchId = Number(req.params.id);
   const { mass_g } = req.body;
   const mass = Number(mass_g);
@@ -229,7 +229,7 @@ app.post('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
 });
 
 // GET measurements
-app.get('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
+router.get('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -255,7 +255,7 @@ app.get('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
 });
 
 // DELETE all measurements for a batch
-app.delete('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
+router.delete('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -282,7 +282,7 @@ app.delete('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
 // These don't seem to appear anywhere... 
 // THere are no foil-measurements routes in the html files... 
 // UPDATE measurement
-app.put('/foil-measurements/:id', async (req, res) => {
+router.put('/foil-measurements/:id', async (req, res) => {
   const measurementId = Number(req.params.id);
   const { mass_g } = req.body;
 
@@ -313,7 +313,7 @@ app.put('/foil-measurements/:id', async (req, res) => {
 });
 
 // DELETE measurement
-app.delete('/foil-measurements/:id', async (req, res) => {
+router.delete('/foil-measurements/:id', async (req, res) => {
   const measurementId = Number(req.params.id);
 
   if (!Number.isInteger(measurementId)) {
@@ -338,7 +338,7 @@ app.delete('/foil-measurements/:id', async (req, res) => {
 // -------- ELECTRODES --------
 
 // CREATE electrode
-app.post('/', async (req, res) => {
+router.post('/', async (req, res) => {
   const {
     cut_batch_id,
     electrode_mass_g,
@@ -398,7 +398,7 @@ app.post('/', async (req, res) => {
 });
 
 // UPDATE electrode status
-app.put('/:id/status', async (req, res) => {
+router.put('/:id/status', async (req, res) => {
   const electrodeId = Number(req.params.id);
   const { status_code, used_in_battery_id, scrapped_reason } = req.body;
 
@@ -448,7 +448,7 @@ app.put('/:id/status', async (req, res) => {
 });
 
 // UPDATE electrode fields (mass, cup, comments)
-app.put('/:id', async (req, res) => {
+router.put('/:id', async (req, res) => {
 
   const electrodeId = Number(req.params.id);
   const {
@@ -497,7 +497,7 @@ app.put('/:id', async (req, res) => {
 });
 
 // DELETE single electrode
-app.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req, res) => {
 
   const electrodeId = Number(req.params.id);
 
@@ -549,7 +549,7 @@ app.delete('/:id', async (req, res) => {
 // -------- ELECTRODE DRYING --------
 
 // CREATE or UPDATE drying record (UPSERT)
-app.post('/electrode-cut-batches/:id/drying', async (req, res) => {
+router.post('/electrode-cut-batches/:id/drying', async (req, res) => {
 
   const cutBatchId = Number(req.params.id);
 
@@ -611,7 +611,7 @@ app.post('/electrode-cut-batches/:id/drying', async (req, res) => {
 });
 
 // GET drying records by batch
-app.get('/electrode-cut-batches/:id/drying', async (req, res) => {
+router.get('/electrode-cut-batches/:id/drying', async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -637,7 +637,7 @@ app.get('/electrode-cut-batches/:id/drying', async (req, res) => {
 });
 
 // PUT update drying record
-app.put('/electrode-drying/:id', async (req, res) => {
+router.put('/electrode-drying/:id', async (req, res) => {
   const dryingId = Number(req.params.id);
   const { start_time, end_time, temperature_c, other_parameters, comments } = req.body;
 
@@ -679,7 +679,7 @@ app.put('/electrode-drying/:id', async (req, res) => {
 });
 
 // DELETE drying record
-app.delete('/electrode-drying/:id', async (req, res) => {
+router.delete('/electrode-drying/:id', async (req, res) => {
   const dryingId = Number(req.params.id);
 
   if (!Number.isInteger(dryingId)) {

@@ -12,7 +12,7 @@ router.get('/test', async (req, res) => {
 // --------  RECIPE LINE ACTUALS -------- 
 
 // CREATE
-app.post('/:id/actuals', async (req, res) => {
+router.post('/:id/actuals', async (req, res) => {
   const tapeId = Number(req.params.id);
 
   if (!Number.isInteger(tapeId)) {
@@ -66,7 +66,7 @@ app.post('/:id/actuals', async (req, res) => {
 });
 
 // READ
-app.get('/:id/actuals', async (req, res) => {
+router.get('/:id/actuals', async (req, res) => {
   const tapeId = Number(req.params.id);
 
   if (!Number.isInteger(tapeId)) {
@@ -104,7 +104,7 @@ app.get('/:id/actuals', async (req, res) => {
 // -------- TAPES --------
 
 // CREATE tape
-app.post('/', async (req, res) => {
+router.post('/', async (req, res) => {
   const {
     name,
     project_id,
@@ -162,7 +162,7 @@ app.post('/', async (req, res) => {
 });
 
 // READ
-app.get('/', async (req, res) => {
+router.get('/', async (req, res) => {
   const { role } = req.query;
 
   try {
@@ -220,7 +220,7 @@ app.get('/', async (req, res) => {
 });
 
 // EDIT
-app.put('/:id', async (req, res) => {
+router.put('/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     return res.status(400).json({ error: 'Некорректный ID' });
@@ -283,7 +283,7 @@ app.put('/:id', async (req, res) => {
 });
 
 // DELETE
-app.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req, res) => {
   const id = Number(req.params.id);
 
   try {
@@ -304,7 +304,7 @@ app.delete('/:id', async (req, res) => {
 // --------- GENERAL/GENERIC STEP READING (for any operation type) --------
 
 // WRITE (dispatcher): POST /:id/steps/by-code/:code
-app.post('/:id/steps/by-code/:code', async (req, res) => {
+router.post('/:id/steps/by-code/:code', async (req, res) => {
   const tapeId = Number(req.params.id);
   const code = String(req.params.code || '').trim();
 
@@ -755,7 +755,7 @@ app.post('/:id/steps/by-code/:code', async (req, res) => {
 });
 
 // READ
-app.get('/:id/steps/by-code/:code', async (req, res) => {
+router.get('/:id/steps/by-code/:code', async (req, res) => {
   const tapeId = Number(req.params.id);
   const code = String(req.params.code || '').trim();
 
@@ -865,7 +865,7 @@ app.get('/:id/steps/by-code/:code', async (req, res) => {
 
 // -------- TAPES FOR ELECTRODE CUTTING DROPDOWN --------
 
-app.get('/for-electrodes', async (req, res) => {
+router.get('/for-electrodes', async (req, res) => {
 
   try {
 
@@ -922,7 +922,7 @@ app.get('/for-electrodes', async (req, res) => {
 // -------- ELECTRODE CUT BATCHES BY TAPE --------
 
 // GET cut batches by tape
-app.get('/api/tapes/:id/electrode-cut-batches', async (req, res) => {
+router.get('/:id/electrode-cut-batches', async (req, res) => {
   const tapeId = Number(req.params.id);
 
   if (!Number.isInteger(tapeId)) {
