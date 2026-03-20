@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const pool = require('./db');
 
 const app = express();
@@ -18,8 +19,9 @@ const electrodesRoutes = require('./routes/electrodes');
 
 
 // middleware
-app.use(express.json());    // w/o this, req.body would be undefined
+app.use(express.json({ limit: '50mb' }));    // w/o this, req.body would be undefined
 app.use(express.static('public'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();

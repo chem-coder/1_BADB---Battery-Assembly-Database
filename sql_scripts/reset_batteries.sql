@@ -29,7 +29,8 @@ TRUNCATE TABLE
   battery_cyl_config,
   battery_sep_config,
   battery_electrolyte,
-  battery_qc
+  battery_qc,
+  battery_electrochem
 RESTART IDENTITY;
 
 -- 3. Now, delete the batteries

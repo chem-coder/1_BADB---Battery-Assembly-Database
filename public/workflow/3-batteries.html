@@ -15,6 +15,8 @@
       #battery_project_id:disabled,
       #battery_created_by:disabled,
       #battery_form_factor:disabled,
+      #coin_cell_mode:disabled,
+      #coin_size_code:disabled,
       #cathode_tape_id:disabled,
       #cathode_cut_batch_id:disabled,
       #anode_tape_id:disabled,
@@ -30,6 +32,8 @@
       #battery_project_id:disabled:hover,
       #battery_created_by:disabled:hover,
       #battery_form_factor:disabled:hover,
+      #coin_cell_mode:disabled:hover,
+      #coin_size_code:disabled:hover,
       #cathode_tape_id:disabled:hover,
       #cathode_cut_batch_id:disabled:hover,
       #anode_tape_id:disabled:hover,
@@ -60,6 +64,27 @@
 
       .assembly_locked_banner::before {
         content: "🔒 ";
+      }
+
+      .dirty_marker {
+        display: none;
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #fff0f0;
+        border: 1px solid #e0b4b4;
+        color: #8f2f2f;
+        font-size: 12px;
+        font-weight: 600;
+        vertical-align: middle;
+      }
+
+      .dirty_marker.visible {
+        display: inline-block;
+      }
+
+      #battery_stack_builder.locked {
+        opacity: 0.7;
       }
     </style>
   </head>
@@ -108,7 +133,7 @@
         </div>
 
         <fieldset id="battery_meta" data-table="batteries">
-          <legend>1 Общая информация об аккумуляторе</legend>
+          <legend>1 Общая информация об аккумуляторе <span id="dirty-battery-meta" class="dirty_marker">Не сохранено</span></legend>
 
           <label for="battery_project_id">Проект</label>
           <select id="battery_project_id" name="project_id" required>
@@ -149,7 +174,7 @@
           
           <fieldset id="battery_config">
 
-            <legend>2 Конфигурация элемента</legend>
+            <legend>2 Конфигурация элемента <span id="dirty-battery-config" class="dirty_marker">Не сохранено</span></legend>
 
             <fieldset id="coin_config" data-formfactor="coin" hidden>
               <label for="coin_cell_mode">Тип элемента</label>
@@ -170,8 +195,8 @@
                 <label for="coin_half_cell_type">Тип полуячейки</label>
                 <select id="coin_half_cell_type" name="half_cell_type">
                   <option value="" selected>— выбрать —</option>
-                  <option value="cathode_vs_li">Катод vs Li</option>
-                  <option value="anode_vs_li">Анод vs Li</option>
+                  <option value="cathode_vs_li">Катодный материал || Li/Li⁺</option>
+                  <option value="anode_vs_li">Анодный материал || Li/Li⁺</option>
                 </select><br>
 
                 <div id="li-foil_block">
@@ -229,7 +254,7 @@
 
               <!-- Electrode source selection -->
               <fieldset id="battery_electrode_sources" data-table="battery_electrode_sources">
-                <legend>Источник электродов</legend>
+                <legend>Источник электродов <span id="dirty-electrode-sources" class="dirty_marker">Не сохранено</span></legend>
 
                 <div class="electrode_source" id="cathode_source_block" data-electrode-role="cathode">
                   <label for="cathode_tape_id">Катодная лента</label>
@@ -276,8 +301,8 @@
               </fieldset>
 
               <!-- Electrode selection for stack -->
-              <fieldset id="battery_stack_builder">
-                <legend>Формирование стека</legend>
+              <fieldset id="battery_stack_builder" data-stack-locked="false">
+                <legend>Формирование стека <span id="dirty-battery-stack" class="dirty_marker">Не сохранено</span></legend>
 
                 <p>Выберите электроды для данного элемента.</p>
 
@@ -346,7 +371,7 @@
           </fieldset>
 
           <fieldset id="battery_assembly">
-            <legend>6 Параметры сборки</legend>
+            <legend>6 Параметры сборки <span id="dirty-battery-assembly" class="dirty_marker">Не сохранено</span></legend>
 
             <fieldset id="coin_assembly" data-formfactor="coin">
               <legend>Параметры монеточного элемента</legend>
@@ -453,6 +478,7 @@
                   type="number"
                   step="1"
                   min="0"
+                  value="2"
                 ><br>
 
                 <label for="electrolyte_drop_volume">Объём одной капли</label>
@@ -462,6 +488,7 @@
                   type="number"
                   step="0.1"
                   min="0"
+                  value="50"
                 >
                 <span>, мкл</span><br>
 
@@ -493,6 +520,7 @@
                   type="number"
                   step="0.01"
                   min="0"
+                  value="0.50"
                 >
                 <span>, мм</span><br>
 
@@ -502,6 +530,7 @@
                   name="spacer_count"
                   type="number"
                   min="0"
+                  value="2"
                 ><br>
 
                 <label for="spacer_notes">Заметки</label>
@@ -667,7 +696,7 @@
           </fieldset>
                   
           <fieldset id="battery_qc" data-table="battery_qc">
-            <legend>7 Выходной контроль</legend>
+            <legend>7 Выходной контроль <span id="dirty-battery-qc" class="dirty_marker">Не сохранено</span></legend>
 
             <label for="qc_ocv_v">НРЦ</label>
             <input
@@ -692,6 +721,16 @@
               placeholder="Комментарии по выходному контролю"
             ></textarea><br>
 
+            <label for="battery_status">Статус аккумулятора</label>
+            <select id="battery_status" name="status" disabled>
+              <option value="">В сборке</option>
+              <option value="assembled">Собран</option>
+              <option value="testing">На тестировании</option>
+              <option value="completed">Завершён</option>
+              <option value="failed">Брак</option>
+              <option value="disassembled">Разобран</option>
+            </select><br>
+
             <button
               type="button"
               class="btn_secondary"
@@ -703,7 +742,7 @@
           </fieldset>
 
           <fieldset id="battery_electrochem">
-            <legend>8 Электрохимия</legend>
+            <legend>8 Электрохимия <span id="dirty-battery-electrochem" class="dirty_marker">Не сохранено</span></legend>
 
             <p class="tiny_note">
               Здесь можно будет добавить внутреннюю ссылку на файлы испытаний (циклирование, CV, EIS).
@@ -719,6 +758,8 @@
               multiple
             ><br>
 
+            <p id="electrochem_files_saved" class="tiny_note"></p>
+
             <label for="electrochem_notes">Заметки</label>
             <textarea
               id="electrochem_notes"
@@ -726,10 +767,10 @@
               placeholder="Комментарии по электрохимическим испытаниям"
             ></textarea><br>
 
-            <button disabled
+            <button
               type="button"
               class="btn_secondary"
-              onclick="saveBatteryConfig()"
+              onclick="saveBatteryElectrochem()"
             >
               Сохранить результаты электрохимических испытаний
             </button>

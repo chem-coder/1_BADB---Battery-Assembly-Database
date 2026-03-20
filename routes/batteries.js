@@ -1,6 +1,46 @@
 const express = require('express');
+const fs = require('fs/promises');
+const path = require('path');
 const router = express.Router();
 const pool = require('../db');
+
+async function ensureBatteryAssembledStatus(batteryId) {
+  await pool.query(
+    `
+    WITH readiness AS (
+      SELECT
+        (
+          EXISTS (SELECT 1 FROM battery_coin_config c WHERE c.battery_id = $1)
+          OR EXISTS (SELECT 1 FROM battery_pouch_config p WHERE p.battery_id = $1)
+          OR EXISTS (SELECT 1 FROM battery_cyl_config cy WHERE cy.battery_id = $1)
+        ) AS has_config,
+        EXISTS (
+          SELECT 1 FROM battery_electrode_sources es WHERE es.battery_id = $1
+        ) AS has_sources,
+        EXISTS (
+          SELECT 1 FROM battery_electrodes el WHERE el.battery_id = $1
+        ) AS has_electrodes,
+        EXISTS (
+          SELECT 1 FROM battery_sep_config s WHERE s.battery_id = $1
+        ) AS has_separator,
+        EXISTS (
+          SELECT 1 FROM battery_electrolyte e WHERE e.battery_id = $1
+        ) AS has_electrolyte
+    )
+    UPDATE batteries b
+    SET status = 'assembled'
+    FROM readiness r
+    WHERE b.battery_id = $1
+      AND b.status IS NULL
+      AND r.has_config
+      AND r.has_sources
+      AND r.has_electrodes
+      AND r.has_separator
+      AND r.has_electrolyte
+    `,
+    [batteryId]
+  );
+}
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -274,6 +314,7 @@ router.post('/battery_coin_config', async (req, res) => {
     li_foil_notes,
     spacer_thickness_mm,
     spacer_count,
+    spacer_notes,
     coin_layout,
     electrolyte_drop_count,
     electrolyte_drop_volume,
@@ -292,12 +333,13 @@ router.post('/battery_coin_config', async (req, res) => {
         li_foil_notes,
         spacer_thickness_mm,
         spacer_count,
+        spacer_notes,
         coin_layout,
         electrolyte_drop_count,
         electrolyte_drop_volume,
         coin_layout_notes
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *
       `,
       [
@@ -308,6 +350,7 @@ router.post('/battery_coin_config', async (req, res) => {
         li_foil_notes || null,
         spacer_thickness_mm != null ? Number(spacer_thickness_mm) : null,
         spacer_count != null ? Number(spacer_count) : null,
+        spacer_notes || null,
         coin_layout || null,
         electrolyte_drop_count != null ? Number(electrolyte_drop_count) : null,
         electrolyte_drop_volume != null ? Number(electrolyte_drop_volume) : null,
@@ -344,7 +387,14 @@ router.get('/battery_coin_config/:battery_id', async (req, res) => {
         coin_cell_mode,
         coin_size_code,
         half_cell_type,
-        li_foil_notes
+        li_foil_notes,
+        spacer_thickness_mm,
+        spacer_count,
+        spacer_notes,
+        coin_layout,
+        electrolyte_drop_count,
+        electrolyte_drop_volume,
+        coin_layout_notes
       FROM battery_coin_config
       WHERE battery_id = $1
       `,
@@ -370,19 +420,17 @@ router.get('/battery_coin_config/:battery_id', async (req, res) => {
 router.patch('/battery_coin_config/:battery_id', async (req, res) => {
 
   const batteryId = Number(req.params.battery_id);
-
-  const {
-    coin_cell_mode,
-    coin_size_code,
-    half_cell_type,
-    li_foil_notes,
-    spacer_thickness_mm,
-    spacer_count,
-    coin_layout,
-    electrolyte_drop_count,
-    electrolyte_drop_volume,
-    coin_layout_notes
-  } = req.body;
+  const hasCoinCellMode = Object.prototype.hasOwnProperty.call(req.body, 'coin_cell_mode');
+  const hasCoinSizeCode = Object.prototype.hasOwnProperty.call(req.body, 'coin_size_code');
+  const hasHalfCellType = Object.prototype.hasOwnProperty.call(req.body, 'half_cell_type');
+  const hasLiFoilNotes = Object.prototype.hasOwnProperty.call(req.body, 'li_foil_notes');
+  const hasSpacerThickness = Object.prototype.hasOwnProperty.call(req.body, 'spacer_thickness_mm');
+  const hasSpacerCount = Object.prototype.hasOwnProperty.call(req.body, 'spacer_count');
+  const hasSpacerNotes = Object.prototype.hasOwnProperty.call(req.body, 'spacer_notes');
+  const hasCoinLayout = Object.prototype.hasOwnProperty.call(req.body, 'coin_layout');
+  const hasDropCount = Object.prototype.hasOwnProperty.call(req.body, 'electrolyte_drop_count');
+  const hasDropVolume = Object.prototype.hasOwnProperty.call(req.body, 'electrolyte_drop_volume');
+  const hasCoinLayoutNotes = Object.prototype.hasOwnProperty.call(req.body, 'coin_layout_notes');
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
@@ -394,17 +442,18 @@ router.patch('/battery_coin_config/:battery_id', async (req, res) => {
       `
       UPDATE battery_coin_config
       SET
-        coin_cell_mode = $1,
-        coin_size_code = $2,
-        half_cell_type = $3,
-        li_foil_notes = $4,
-        spacer_thickness_mm = $5,
-        spacer_count = $6,
-        coin_layout = $7,
-        electrolyte_drop_count = $8,
-        electrolyte_drop_volume =$9,
-        coin_layout_notes = $10
-      WHERE battery_id = $11
+        coin_cell_mode = CASE WHEN $1 THEN $2 ELSE coin_cell_mode END,
+        coin_size_code = CASE WHEN $3 THEN $4 ELSE coin_size_code END,
+        half_cell_type = CASE WHEN $5 THEN $6 ELSE half_cell_type END,
+        li_foil_notes = CASE WHEN $7 THEN $8 ELSE li_foil_notes END,
+        spacer_thickness_mm = CASE WHEN $9 THEN $10 ELSE spacer_thickness_mm END,
+        spacer_count = CASE WHEN $11 THEN $12 ELSE spacer_count END,
+        spacer_notes = CASE WHEN $13 THEN $14 ELSE spacer_notes END,
+        coin_layout = CASE WHEN $15 THEN $16 ELSE coin_layout END,
+        electrolyte_drop_count = CASE WHEN $17 THEN $18 ELSE electrolyte_drop_count END,
+        electrolyte_drop_volume = CASE WHEN $19 THEN $20 ELSE electrolyte_drop_volume END,
+        coin_layout_notes = CASE WHEN $21 THEN $22 ELSE coin_layout_notes END
+      WHERE battery_id = $23
       RETURNING
         battery_id,
         coin_cell_mode,
@@ -413,22 +462,43 @@ router.patch('/battery_coin_config/:battery_id', async (req, res) => {
         li_foil_notes,
         spacer_thickness_mm,
         spacer_count,
+        spacer_notes,
         coin_layout,
         electrolyte_drop_count,
         electrolyte_drop_volume,
         coin_layout_notes
       `,
       [
-        coin_cell_mode || null,
-        coin_size_code || null,
-        half_cell_type || null,
-        li_foil_notes || null,
-        spacer_thickness_mm != null ? Number(spacer_thickness_mm) : null,
-        spacer_count != null ? Number(spacer_count) : null,
-        coin_layout || null,
-        electrolyte_drop_count != null ? Number(electrolyte_drop_count) : null,
-        electrolyte_drop_volume != null ? Number(electrolyte_drop_volume) : null,
-        coin_layout_notes || null,
+        hasCoinCellMode,
+        hasCoinCellMode ? (req.body.coin_cell_mode || null) : null,
+        hasCoinSizeCode,
+        hasCoinSizeCode ? (req.body.coin_size_code || null) : null,
+        hasHalfCellType,
+        hasHalfCellType ? (req.body.half_cell_type || null) : null,
+        hasLiFoilNotes,
+        hasLiFoilNotes ? (req.body.li_foil_notes || null) : null,
+        hasSpacerThickness,
+        hasSpacerThickness ? (
+          req.body.spacer_thickness_mm != null ? Number(req.body.spacer_thickness_mm) : null
+        ) : null,
+        hasSpacerCount,
+        hasSpacerCount ? (
+          req.body.spacer_count != null ? Number(req.body.spacer_count) : null
+        ) : null,
+        hasSpacerNotes,
+        hasSpacerNotes ? (req.body.spacer_notes || null) : null,
+        hasCoinLayout,
+        hasCoinLayout ? (req.body.coin_layout || null) : null,
+        hasDropCount,
+        hasDropCount ? (
+          req.body.electrolyte_drop_count != null ? Number(req.body.electrolyte_drop_count) : null
+        ) : null,
+        hasDropVolume,
+        hasDropVolume ? (
+          req.body.electrolyte_drop_volume != null ? Number(req.body.electrolyte_drop_volume) : null
+        ) : null,
+        hasCoinLayoutNotes,
+        hasCoinLayoutNotes ? (req.body.coin_layout_notes || null) : null,
         batteryId
       ]
     );
@@ -1556,6 +1626,138 @@ router.patch('/battery_qc/:battery_id', async (req, res) => {
 });
 
 
+// Save battery electrochem data
+router.post('/battery_electrochem', async (req, res) => {
+
+  const {
+    battery_id,
+    entries
+  } = req.body;
+
+  const batteryId = Number(battery_id);
+
+  if (!Number.isInteger(batteryId)) {
+    return res.status(400).json({ error: 'Некорректный battery_id' });
+  }
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return res.status(400).json({ error: 'Не переданы файлы электрохимических испытаний' });
+  }
+
+  try {
+
+    const uploadDir = path.join(__dirname, '..', 'uploads', 'electrochem');
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    for (const entry of entries) {
+      const originalName = entry.file_name || 'electrochem_file';
+      const safeName = String(originalName).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storedName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
+      const relativePath = `/uploads/electrochem/${storedName}`;
+      const absolutePath = path.join(uploadDir, storedName);
+
+      if (!entry.file_content_base64) {
+        throw new Error('Не передано содержимое файла');
+      }
+
+      const buffer = Buffer.from(entry.file_content_base64, 'base64');
+      await fs.writeFile(absolutePath, buffer);
+
+      await pool.query(
+        `
+        INSERT INTO battery_electrochem (
+          battery_id,
+          file_name,
+          file_link,
+          electrochem_notes
+        )
+        VALUES ($1,$2,$3,$4)
+        `,
+        [
+          batteryId,
+          originalName,
+          relativePath,
+          entry.electrochem_notes || null
+        ]
+      );
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        battery_electrochem_id,
+        battery_id,
+        file_name,
+        file_link,
+        electrochem_notes,
+        uploaded_at
+      FROM battery_electrochem
+      WHERE battery_id = $1
+      ORDER BY battery_electrochem_id
+      `,
+      [batteryId]
+    );
+
+    res.status(200).json(result.rows);
+
+  } catch (err) {
+
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сохранения электрохимических испытаний' });
+
+  }
+
+});
+
+// Read battery electrochem data
+router.get('/battery_electrochem/:battery_id', async (req, res) => {
+
+  const batteryId = Number(req.params.battery_id);
+
+  if (!Number.isInteger(batteryId)) {
+    return res.status(400).json({ error: 'Некорректный battery_id' });
+  }
+
+  try {
+
+    const result = await pool.query(
+      `
+      SELECT
+        battery_electrochem_id,
+        battery_id,
+        file_name,
+        file_link,
+        electrochem_notes,
+        uploaded_at
+      FROM battery_electrochem
+      WHERE battery_id = $1
+      ORDER BY battery_electrochem_id
+      `,
+      [batteryId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json(null);
+    }
+
+    res.json(result.rows);
+
+  } catch (err) {
+
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка загрузки электрохимических испытаний' });
+
+  }
+
+});
+
+// Update battery electrochem data
+router.patch('/battery_electrochem/:battery_id', async (req, res) => {
+  res.status(405).json({ error: 'Используйте POST для добавления новых файлов электрохимических испытаний' });
+
+});
+
+
 
 // ---------- LOAD THE FULL BATTERY RECORD ----------
 
@@ -1569,6 +1771,8 @@ router.get('/:id/assembly', async (req, res) => {
   }
 
   try {
+
+    await ensureBatteryAssembledStatus(batteryId);
 
     const result = await pool.query(
       `
@@ -1621,6 +1825,16 @@ router.get('/:id/assembly', async (req, res) => {
           SELECT row_to_json(q)
           FROM battery_qc q
           WHERE q.battery_id = $1
+        ),
+
+        'electrochem',
+        (
+          SELECT COALESCE(
+            jsonb_agg(to_jsonb(ec) ORDER BY ec.battery_electrochem_id),
+            '[]'::jsonb
+          )
+          FROM battery_electrochem ec
+          WHERE ec.battery_id = $1
         ),
 
         'electrode_sources',

@@ -16,6 +16,10 @@ let anodeElectrodes = [];
 
 let selectedCathodes = [];
 let selectedAnodes = [];
+let stackReadOnly = false;
+let lastSavedSectionStates = {};
+let isRestoringBattery = false;
+let savedElectrochemEntries = [];
 
 // -------- API helpers --------
 
@@ -62,12 +66,489 @@ function populateFieldset(fieldset, data) {
     
     if (el.type === 'checkbox') {
       el.checked = Boolean(data[key]);
+    } else if (el.type === 'radio') {
+      el.checked = String(el.value) === String(data[key]);
     } else {
       el.value = data[key] ?? '';
     }
     
   });
   
+}
+
+function clearFieldset(fieldset) {
+  
+  if (!fieldset) return;
+  
+  fieldset.querySelectorAll('[name]').forEach(el => {
+    
+    if (el.type === 'checkbox' || el.type === 'radio') {
+      el.checked = false;
+    } else {
+      el.value = '';
+    }
+    
+  });
+  
+}
+
+function markSectionsSaved(sectionKeys) {
+  sectionKeys.forEach(sectionKey => {
+    lastSavedSectionStates[sectionKey] = captureSectionState(sectionKey);
+  });
+  updateDirtyFlags();
+}
+
+function markBatteryStateSaved() {
+  lastSavedSectionStates = captureAllSectionStates();
+  updateDirtyFlags();
+}
+
+function hasUnsavedBatteryChanges() {
+  return Object.keys(captureAllSectionStates()).some(sectionKey => {
+    return captureSectionState(sectionKey) !== lastSavedSectionStates[sectionKey];
+  });
+}
+
+async function refreshBatteryReferenceData() {
+  await Promise.all([
+    loadUsers(),
+    loadProjects(),
+    loadSeparators(),
+    loadElectrolytes()
+  ]);
+
+  updateElectrolyteVolume();
+}
+
+function captureNamedState(root) {
+  
+  if (!root) return 'null';
+  
+  const fields = Array.from(root.querySelectorAll('[name]')).map(el => {
+    if (el.type === 'checkbox' || el.type === 'radio') {
+      return {
+        name: el.name,
+        type: el.type,
+        value: el.value,
+        checked: el.checked
+      };
+    }
+
+    return {
+      name: el.name,
+      type: el.type,
+      value: el.value ?? ''
+    };
+  });
+
+  return JSON.stringify(fields);
+}
+
+function getActiveConfigFieldset() {
+  const formFactor = document.getElementById('battery_form_factor').value;
+  
+  if (formFactor === 'coin') return document.getElementById('coin_config');
+  if (formFactor === 'pouch') return document.getElementById('pouch_config');
+  if (formFactor === 'cylindrical') return document.getElementById('cyl_config');
+  
+  return null;
+}
+
+function getActiveAssemblyFieldset() {
+  const formFactor = document.getElementById('battery_form_factor').value;
+  
+  if (formFactor === 'coin') return document.getElementById('coin_assembly');
+  if (formFactor === 'pouch') return document.getElementById('pouch_assembly');
+  if (formFactor === 'cylindrical') return document.getElementById('cyl_assembly');
+  
+  return null;
+}
+
+function captureSectionState(sectionKey) {
+  if (sectionKey === 'battery_meta') {
+    return captureNamedState(document.getElementById('battery_meta'));
+  }
+
+  if (sectionKey === 'battery_config') {
+    return captureNamedState(getActiveConfigFieldset());
+  }
+
+  if (sectionKey === 'electrode_sources') {
+    return captureNamedState(document.getElementById('battery_electrode_sources'));
+  }
+
+  if (sectionKey === 'battery_stack') {
+    return JSON.stringify({
+      selectedCathodes: selectedCathodes.map(e => ({
+        electrode_id: e.electrode_id,
+        electrode_mass_g: e.electrode_mass_g ?? null
+      })),
+      selectedAnodes: selectedAnodes.map(e => ({
+        electrode_id: e.electrode_id,
+        electrode_mass_g: e.electrode_mass_g ?? null
+      }))
+    });
+  }
+
+  if (sectionKey === 'battery_assembly') {
+    return captureNamedState(getActiveAssemblyFieldset());
+  }
+
+  if (sectionKey === 'battery_qc') {
+    return captureNamedState(document.getElementById('battery_qc'));
+  }
+
+  if (sectionKey === 'battery_electrochem') {
+    return JSON.stringify({
+      electrochem_notes: document.getElementById('electrochem_notes')?.value ?? '',
+      electrochem_files: document.getElementById('electrochem_files')?.value ?? '',
+      saved_entries: savedElectrochemEntries
+    });
+  }
+
+  return 'null';
+}
+
+function captureAllSectionStates() {
+  return {
+    battery_meta: captureSectionState('battery_meta'),
+    battery_config: captureSectionState('battery_config'),
+    electrode_sources: captureSectionState('electrode_sources'),
+    battery_stack: captureSectionState('battery_stack'),
+    battery_assembly: captureSectionState('battery_assembly'),
+    battery_qc: captureSectionState('battery_qc'),
+    battery_electrochem: captureSectionState('battery_electrochem')
+  };
+}
+
+function setSectionDirty(sectionKey, isDirty) {
+  const markerId =
+  sectionKey === 'battery_meta' ? 'dirty-battery-meta'
+  : sectionKey === 'battery_config' ? 'dirty-battery-config'
+  : sectionKey === 'electrode_sources' ? 'dirty-electrode-sources'
+  : sectionKey === 'battery_stack' ? 'dirty-battery-stack'
+  : sectionKey === 'battery_assembly' ? 'dirty-battery-assembly'
+  : sectionKey === 'battery_qc' ? 'dirty-battery-qc'
+  : sectionKey === 'battery_electrochem' ? 'dirty-battery-electrochem'
+  : null;
+  
+  const el = markerId ? document.getElementById(markerId) : null;
+  
+  if (el) {
+    el.classList.toggle('visible', Boolean(isDirty));
+  }
+}
+
+function clearDirtyFlags() {
+  [
+    'battery_meta',
+    'battery_config',
+    'electrode_sources',
+    'battery_stack',
+    'battery_assembly',
+    'battery_qc',
+    'battery_electrochem'
+  ].forEach(sectionKey => {
+    setSectionDirty(sectionKey, false);
+  });
+}
+
+function updateDirtyFlags() {
+  Object.keys(captureAllSectionStates()).forEach(sectionKey => {
+    const current = captureSectionState(sectionKey);
+    const saved = lastSavedSectionStates[sectionKey];
+    setSectionDirty(sectionKey, current !== saved);
+  });
+}
+
+function getBatterySelectionMode() {
+  const formFactor = document.getElementById('battery_form_factor')?.value;
+  const coinMode = document.getElementById('coin_cell_mode')?.value;
+
+  return {
+    formFactor,
+    coinMode
+  };
+}
+
+function setStackReadOnly(isReadOnly) {
+  stackReadOnly = Boolean(isReadOnly);
+
+  document
+  .querySelectorAll(
+    '#stack_cathode_table_body input[type="checkbox"], #stack_anode_table_body input[type="checkbox"]'
+  )
+  .forEach(cb => {
+    cb.disabled = stackReadOnly || cb.dataset.available !== 'true';
+  });
+
+  const stackBuilder = document.getElementById('battery_stack_builder');
+
+  if (stackBuilder) {
+    stackBuilder.dataset.stackLocked = stackReadOnly ? 'true' : 'false';
+    stackBuilder.classList.toggle('locked', stackReadOnly);
+  }
+}
+
+function updateElectrodeCheckboxStates() {
+  const { formFactor, coinMode } = getBatterySelectionMode();
+
+  const cathodeCheckboxes = Array.from(
+    document.querySelectorAll('#stack_cathode_table_body input[type="checkbox"]')
+  );
+
+  const anodeCheckboxes = Array.from(
+    document.querySelectorAll('#stack_anode_table_body input[type="checkbox"]')
+  );
+
+  if (stackReadOnly) {
+    cathodeCheckboxes.forEach(cb => { cb.disabled = true; });
+    anodeCheckboxes.forEach(cb => { cb.disabled = true; });
+    return;
+  }
+
+  cathodeCheckboxes.forEach(cb => {
+    cb.disabled = cb.dataset.available !== 'true';
+  });
+
+  anodeCheckboxes.forEach(cb => {
+    cb.disabled = cb.dataset.available !== 'true';
+  });
+
+  if (formFactor === 'pouch' || formFactor === 'cylindrical') {
+    return;
+  }
+
+  if (formFactor === 'coin' && coinMode === 'half_cell') {
+    const selectedTotal =
+    selectedCathodes.length + selectedAnodes.length;
+
+    if (selectedTotal === 0) return;
+
+    const selectedCathodeIds =
+    selectedCathodes.map(e => e.electrode_id);
+
+    const selectedAnodeIds =
+    selectedAnodes.map(e => e.electrode_id);
+
+    cathodeCheckboxes.forEach(cb => {
+      if (cb.dataset.available !== 'true') return;
+
+      if (!selectedCathodeIds.includes(Number(cb.value))) {
+        cb.disabled = true;
+      }
+    });
+
+    anodeCheckboxes.forEach(cb => {
+      if (cb.dataset.available !== 'true') return;
+
+      if (!selectedAnodeIds.includes(Number(cb.value))) {
+        cb.disabled = true;
+      }
+    });
+
+    return;
+  }
+
+  if (formFactor === 'coin' && coinMode === 'full_cell') {
+    if (selectedCathodes.length > 0) {
+      const selectedCathodeIds =
+      selectedCathodes.map(e => e.electrode_id);
+
+      cathodeCheckboxes.forEach(cb => {
+        if (cb.dataset.available !== 'true') return;
+
+        if (!selectedCathodeIds.includes(Number(cb.value))) {
+          cb.disabled = true;
+        }
+      });
+    }
+
+    if (selectedAnodes.length > 0) {
+      const selectedAnodeIds =
+      selectedAnodes.map(e => e.electrode_id);
+
+      anodeCheckboxes.forEach(cb => {
+        if (cb.dataset.available !== 'true') return;
+
+        if (!selectedAnodeIds.includes(Number(cb.value))) {
+          cb.disabled = true;
+        }
+      });
+    }
+  }
+}
+
+function applySavedElectrodeState(data) {
+  const hasSavedElectrodes =
+  Array.isArray(data.electrodes) && data.electrodes.length > 0;
+
+  setStackReadOnly(hasSavedElectrodes);
+  updateElectrodeCheckboxStates();
+}
+
+function resetElectrodeUiState() {
+  setStackReadOnly(false);
+  updateElectrodeCheckboxStates();
+}
+
+function hasMeaningfulValue(value) {
+  return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
+function hasCoinConfigDownstreamSelections() {
+  const sourceSelected =
+  hasMeaningfulValue(document.getElementById('cathode_tape_id')?.value) ||
+  hasMeaningfulValue(document.getElementById('cathode_cut_batch_id')?.value) ||
+  hasMeaningfulValue(document.getElementById('anode_tape_id')?.value) ||
+  hasMeaningfulValue(document.getElementById('anode_cut_batch_id')?.value);
+  
+  const sourceSelectionSaved =
+  captureSectionState('electrode_sources') === lastSavedSectionStates.electrode_sources;
+
+  return sourceSelected && sourceSelectionSaved;
+}
+
+function isCommentField(el) {
+  return Boolean(el?.name) && (
+    el.name === 'battery_notes' ||
+    el.name === 'qc_notes' ||
+    el.name === 'electrochem_notes' ||
+    el.name.endsWith('_notes')
+  );
+}
+
+function hasSavedQcLock() {
+  const ocvValue = document.getElementById('qc_ocv_v')?.value;
+  const esrValue = document.getElementById('qc_esr_mohm')?.value;
+  const qcSaved =
+  captureSectionState('battery_qc') === lastSavedSectionStates.battery_qc;
+
+  return hasMeaningfulValue(ocvValue) && hasMeaningfulValue(esrValue) && qcSaved;
+}
+
+function isBatteryAssemblyComplete(data) {
+  const hasConfig =
+  Boolean(data.coin_config || data.pouch_config || data.cyl_config);
+
+  const hasSources =
+  Array.isArray(data.electrode_sources) && data.electrode_sources.length > 0;
+
+  const hasElectrodes =
+  Array.isArray(data.electrodes) && data.electrodes.length > 0;
+
+  const hasAssembly =
+  Boolean(data.separator) && Boolean(data.electrolyte);
+
+  return hasConfig && hasSources && hasElectrodes && hasAssembly;
+}
+
+function syncBatteryStatusSelect(battery, assemblyData) {
+  const select = document.getElementById('battery_status');
+
+  if (!select) return;
+
+  const complete = isBatteryAssemblyComplete(assemblyData);
+
+  if (!complete) {
+    select.disabled = true;
+    select.value = '';
+    return;
+  }
+
+  select.disabled = false;
+  select.value = battery.status || 'assembled';
+}
+
+async function refreshBatteryStatusState() {
+  if (!currentBatteryId) return;
+
+  const res = await fetch(`/api/batteries/${currentBatteryId}/assembly`);
+
+  if (!res.ok) {
+    throw new Error('Не удалось обновить статус батареи');
+  }
+
+  const assemblyData = await res.json();
+  syncBatteryStatusSelect(assemblyData.battery, assemblyData);
+}
+
+async function saveBatteryStatus() {
+  if (!currentBatteryId) return;
+
+  const status = document.getElementById('battery_status').value || null;
+
+  const res = await fetch(`/api/batteries/${currentBatteryId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Ошибка сохранения статуса батареи');
+  }
+
+  return res.json();
+}
+
+function updateBatteryLocks() {
+  const hasElectrodes = selectedCathodes.length > 0 || selectedAnodes.length > 0;
+  
+  document.getElementById('battery_project_id').disabled = hasElectrodes;
+  document.getElementById('battery_created_by').disabled = hasElectrodes;
+  document.getElementById('battery_form_factor').disabled = hasElectrodes;
+  document.getElementById('cathode_tape_id').disabled = hasElectrodes;
+  document.getElementById('cathode_cut_batch_id').disabled = hasElectrodes;
+  document.getElementById('anode_tape_id').disabled = hasElectrodes;
+  document.getElementById('anode_cut_batch_id').disabled = hasElectrodes;
+  
+  const coinConfigLocked =
+  document.getElementById('battery_form_factor').value === 'coin' &&
+  (hasElectrodes || hasCoinConfigDownstreamSelections());
+  
+  document.getElementById('coin_cell_mode').disabled = coinConfigLocked;
+  document.getElementById('coin_size_code').disabled = coinConfigLocked;
+  document.getElementById('coin_half_cell_type').disabled = coinConfigLocked;
+  
+  const banner = document.getElementById('assembly_locked_banner');
+  
+  if (banner) {
+    banner.classList.toggle('visible', hasElectrodes);
+  }
+
+  const qcLocked = hasSavedQcLock();
+
+  document
+  .querySelectorAll('form[name="battery_assembly_log_form"] input, form[name="battery_assembly_log_form"] select, form[name="battery_assembly_log_form"] textarea')
+  .forEach(el => {
+    if (!el.name) return;
+
+    if (el.closest('#battery_electrochem')) {
+      el.disabled = false;
+      el.readOnly = false;
+      return;
+    }
+
+    if (el.id === 'battery_status') {
+      el.readOnly = false;
+      return;
+    }
+
+    if (isCommentField(el)) {
+      el.disabled = false;
+      el.readOnly = false;
+      return;
+    }
+
+    if (qcLocked) {
+      el.disabled = true;
+      el.readOnly = true;
+    } else {
+      el.readOnly = false;
+    }
+  });
 }
 
 
@@ -142,6 +623,9 @@ async function saveBatteryConfig() {
     return;
   }
   
+  markSectionsSaved(['battery_config']);
+  await refreshBatteryStatusState();
+  
   alert('Configuration saved.');
 }
 
@@ -200,6 +684,9 @@ async function saveElectrodeSources() {
     return;
   }
   
+  markSectionsSaved(['electrode_sources']);
+  await refreshBatteryStatusState();
+  
   alert('Источники электродов сохранены.');
 }
 
@@ -229,6 +716,9 @@ async function saveElectrodeStack() {
     return;
   }
   
+  markSectionsSaved(['battery_stack']);
+  await refreshBatteryStatusState();
+  
   alert('Стек электродов сохранён.');
 }
 
@@ -241,6 +731,37 @@ async function saveFieldsetSection(fieldsetId, routeBase) {
 
   const fieldset = document.getElementById(fieldsetId);
   const payload = serializeFieldset(fieldset);
+
+  let res = await fetch(`/api/batteries/${routeBase}/${currentBatteryId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (res.status === 404) {
+    res = await fetch(`/api/batteries/${routeBase}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        battery_id: currentBatteryId,
+        ...payload
+      })
+    });
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Ошибка сохранения: ${routeBase}`);
+  }
+
+  return res.json();
+}
+
+async function savePayloadSection(routeBase, payload) {
+  if (!currentBatteryId) {
+    alert('Сначала создайте элемент.');
+    return null;
+  }
 
   let res = await fetch(`/api/batteries/${routeBase}/${currentBatteryId}`, {
     method: 'PATCH',
@@ -348,64 +869,18 @@ async function saveAssemblyParams() {
     delete configPayload.electrolyte_notes;
     delete configPayload.electrolyte_total_ul;
 
-    // 1. save form-factor config
-    await saveFieldsetSection(ctx.fieldsetId, ctx.configRoute);
+    // 1. save only the fields that belong to the form-factor config table
+    if (Object.keys(configPayload).length > 0) {
+      await savePayloadSection(ctx.configRoute, configPayload);
+    }
 
     // 2. save separator
-    await fetch(`/api/batteries/battery_sep_config/${currentBatteryId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(separatorPayload)
-    }).then(async (res) => {
-      if (res.status === 404) {
-        const postRes = await fetch('/api/batteries/battery_sep_config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            battery_id: currentBatteryId,
-            ...separatorPayload
-          })
-        });
-        if (!postRes.ok) {
-          const err = await postRes.json().catch(() => ({}));
-          throw new Error(err.error || 'Ошибка сохранения сепаратора');
-        }
-        return;
-      }
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Ошибка сохранения сепаратора');
-      }
-    });
+    await savePayloadSection('battery_sep_config', separatorPayload);
 
     // 3. save electrolyte
-    await fetch(`/api/batteries/battery_electrolyte/${currentBatteryId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(electrolytePayload)
-    }).then(async (res) => {
-      if (res.status === 404) {
-        const postRes = await fetch('/api/batteries/battery_electrolyte', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            battery_id: currentBatteryId,
-            ...electrolytePayload
-          })
-        });
-        if (!postRes.ok) {
-          const err = await postRes.json().catch(() => ({}));
-          throw new Error(err.error || 'Ошибка сохранения электролита');
-        }
-        return;
-      }
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Ошибка сохранения электролита');
-      }
-    });
+    await savePayloadSection('battery_electrolyte', electrolytePayload);
+    markSectionsSaved(['battery_assembly']);
+    await refreshBatteryStatusState();
 
     alert('Сохранено.');
   } catch (err) {
@@ -416,7 +891,123 @@ async function saveAssemblyParams() {
 
 
 async function saveBatteryQc() {
-  await saveFieldsetSection('battery_qc', 'battery_qc');
+  try {
+    await saveFieldsetSection('battery_qc', 'battery_qc');
+    markSectionsSaved(['battery_qc']);
+    updateBatteryLocks();
+    alert('Результаты QC сохранены.');
+  } catch (err) {
+    console.error(err);
+    alert(err.message || 'Ошибка сохранения QC');
+  }
+}
+
+function renderElectrochemSavedFiles(entries) {
+  const target = document.getElementById('electrochem_files_saved');
+
+  if (!target) return;
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    target.innerHTML = '';
+    return;
+  }
+
+  target.innerHTML = '';
+
+  entries.forEach((entry, index) => {
+    const row = document.createElement('div');
+    const link = document.createElement('a');
+    const note = document.createElement('span');
+    
+    link.href = entry.file_link;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = entry.file_name || entry.file_link;
+    
+    note.textContent = entry.electrochem_notes
+      ? ` | ${entry.electrochem_notes}`
+      : '';
+    
+    row.append(`${index + 1}. `);
+    row.appendChild(link);
+    row.appendChild(note);
+    target.appendChild(row);
+  });
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = () => {
+      const result = typeof reader.result === 'string'
+        ? reader.result.split(',')[1]
+        : '';
+      resolve(result);
+    };
+    
+    reader.onerror = () => {
+      reject(new Error(`Не удалось прочитать файл: ${file.name}`));
+    };
+    
+    reader.readAsDataURL(file);
+  });
+}
+
+async function saveBatteryElectrochem() {
+  if (!currentBatteryId) {
+    alert('Сначала создайте элемент.');
+    return;
+  }
+
+  try {
+    const filesInput = document.getElementById('electrochem_files');
+    const notesInput = document.getElementById('electrochem_notes');
+
+    const selectedFiles = Array.from(filesInput.files || []);
+    
+    if (selectedFiles.length === 0) {
+      alert('Выберите хотя бы один файл испытаний.');
+      return;
+    }
+
+    const entries = await Promise.all(selectedFiles.map(async (file) => ({
+      file_name: file.name,
+      file_content_base64: await fileToBase64(file),
+      electrochem_notes: notesInput.value || null
+    })));
+
+    const payload = {
+      entries
+    };
+
+    const res = await fetch('/api/batteries/battery_electrochem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        battery_id: currentBatteryId,
+        ...payload
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Ошибка сохранения электрохимических испытаний');
+    }
+
+    const saved = await res.json();
+
+    savedElectrochemEntries = Array.isArray(saved) ? saved : [];
+    filesInput.value = '';
+    notesInput.value = '';
+    renderElectrochemSavedFiles(savedElectrochemEntries);
+    markSectionsSaved(['battery_electrochem']);
+    updateBatteryLocks();
+    alert('Результаты электрохимических испытаний сохранены.');
+  } catch (err) {
+    console.error(err);
+    alert(err.message || 'Ошибка сохранения электрохимических испытаний');
+  }
 }
 
 
@@ -722,22 +1313,53 @@ async function loadElectrodeStack(batteryId) {
     
   }
   
-  renderStackPreview();
+  renderStackSummary();
   
 }
 
 
 // Load a battery for editing
 async function loadBatteryAssembly(batteryId) {
+  isRestoringBattery = true;
   
   const res = await fetch(`/api/batteries/${batteryId}/assembly`);
   
   if (!res.ok) {
+    isRestoringBattery = false;
     console.error('Failed to load battery assembly');
     return;
   }
   
   const data = await res.json();
+
+  clearFieldset(document.getElementById('coin_config'));
+  clearFieldset(document.getElementById('pouch_config'));
+  clearFieldset(document.getElementById('cyl_config'));
+  clearFieldset(document.getElementById('coin_assembly'));
+  clearFieldset(document.getElementById('pouch_assembly'));
+  clearFieldset(document.getElementById('cyl_assembly'));
+  clearFieldset(document.getElementById('battery_qc'));
+  clearFieldset(document.getElementById('battery_electrode_sources'));
+  clearFieldset(document.getElementById('battery_electrochem'));
+  savedElectrochemEntries = [];
+  resetElectrodeSelection();
+
+  const battery = data.battery;
+
+  document.getElementById('battery_project_id').value =
+  battery.project_id ?? '';
+  
+  document.getElementById('battery_created_by').value =
+  battery.created_by ?? '';
+  
+  document.getElementById('battery_form_factor').value =
+  battery.form_factor ?? '';
+  
+  document.getElementById('battery_notes').value =
+  battery.battery_notes ?? battery.notes ?? '';
+
+  document.getElementById('battery_form_factor')
+  .dispatchEvent(new Event('change'));
   
   populateFieldset(
     document.getElementById('coin_config'),
@@ -771,9 +1393,17 @@ async function loadBatteryAssembly(batteryId) {
     ...(data.separator || {}),
     ...(data.electrolyte || {})
   });
-  
-  document.getElementById('battery_form_factor')
-  .dispatchEvent(new Event('change'));
+
+  populateFieldset(
+    document.getElementById('battery_qc'),
+    data.qc
+  );
+  syncBatteryStatusSelect(battery, data);
+
+  savedElectrochemEntries = Array.isArray(data.electrochem) ? data.electrochem : [];
+  document.getElementById('electrochem_notes').value =
+  '';
+  renderElectrochemSavedFiles(savedElectrochemEntries);
   
   document.getElementById('coin_cell_mode')
   .dispatchEvent(new Event('change'));
@@ -781,21 +1411,8 @@ async function loadBatteryAssembly(batteryId) {
   document.getElementById('coin_half_cell_type')
   .dispatchEvent(new Event('change'));
   
-  const battery = data.battery;
-  
-  /* restore header */
-  
-  document.getElementById('battery_project_id').value =
-  battery.project_id ?? '';
-  
-  document.getElementById('battery_created_by').value =
-  battery.created_by ?? '';
-  
-  document.getElementById('battery_form_factor').value =
-  battery.form_factor ?? '';
-  
-  document.getElementById('battery_notes').value =
-  battery.notes ?? '';
+  updateCoinLayoutDropCount();
+  updateElectrolyteVolume();
   
   /* restore stack */
   
@@ -836,6 +1453,9 @@ async function loadBatteryAssembly(batteryId) {
           document.getElementById('cathode_tape_id').value =
           src.tape_id;
         }
+
+        document.getElementById('cathode_source_notes').value =
+        src.source_notes ?? '';
         
         if (src.cut_batch_id) {
           savedCathodeBatchId = String(src.cut_batch_id);
@@ -849,6 +1469,9 @@ async function loadBatteryAssembly(batteryId) {
           document.getElementById('anode_tape_id').value =
           src.tape_id;
         }
+
+        document.getElementById('anode_source_notes').value =
+        src.source_notes ?? '';
         
         if (src.cut_batch_id) {
           savedAnodeBatchId = String(src.cut_batch_id);
@@ -898,55 +1521,11 @@ async function loadBatteryAssembly(batteryId) {
     await loadAnodeElectrodes(savedAnodeBatchId);
   }
   
-  /* restore checkbox state */
-  
-  await loadElectrodeStack(currentBatteryId);
-  
-  document
-  .querySelectorAll('#stack_cathode_table_body input[type="checkbox"]')
-  .forEach(cb => {
-    
-    const id = Number(cb.value);
-    
-    if (selectedCathodes.some(e => e.electrode_id === id)) {
-      cb.checked = true;
-    }
-    
-  });
-  
-  document
-  .querySelectorAll('#stack_anode_table_body input[type="checkbox"]')
-  .forEach(cb => {
-    
-    const id = Number(cb.value);
-    
-    if (selectedAnodes.some(e => e.electrode_id === id)) {
-      cb.checked = true;
-    }
-    
-  });
-  
   renderStackSummary();
-  
-  /* freeze upstream inputs if electrodes exist */
-  
-  const lock = Array.isArray(data.electrodes) && data.electrodes.length > 0;
-  
-  document.getElementById('battery_project_id').disabled = lock;
-  document.getElementById('battery_created_by').disabled = lock;
-  document.getElementById('battery_form_factor').disabled = lock;
-  
-  document.getElementById('cathode_tape_id').disabled = lock;
-  document.getElementById('cathode_cut_batch_id').disabled = lock;
-  
-  document.getElementById('anode_tape_id').disabled = lock;
-  document.getElementById('anode_cut_batch_id').disabled = lock;
-  
-  const banner = document.getElementById('assembly_locked_banner');
-  
-  if (banner) {
-    banner.classList.toggle('visible', lock);
-  }
+  applySavedElectrodeState(data);
+  isRestoringBattery = false;
+  markBatteryStateSaved();
+  updateBatteryLocks();
   
 }
 
@@ -1101,6 +1680,11 @@ function renderCathodeElectrodeTable() {
     
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
+    checkbox.value = e.electrode_id;
+    checkbox.dataset.available = e.status_code === 1 ? 'true' : 'false';
+    checkbox.checked = selectedCathodes.some(
+      el => el.electrode_id === e.electrode_id
+    );
     
     checkbox.addEventListener('change', e => {
       
@@ -1113,7 +1697,9 @@ function renderCathodeElectrodeTable() {
           el => el.electrode_id === electrodeId
         );
         
-        selectedCathodes.push(electrode);
+        if (!selectedCathodes.some(el => el.electrode_id === electrodeId)) {
+          selectedCathodes.push(electrode);
+        }
         
       } else {
         
@@ -1125,14 +1711,11 @@ function renderCathodeElectrodeTable() {
       }
       
       renderStackSummary();
+      updateElectrodeCheckboxStates();
+      updateBatteryLocks();
+      updateDirtyFlags();
       
     });
-    
-    checkbox.value = e.electrode_id;
-    
-    if (e.status_code !== 1) {
-      checkbox.disabled = true;
-    }
     
     selectCell.appendChild(checkbox);
     tr.appendChild(selectCell);
@@ -1140,6 +1723,8 @@ function renderCathodeElectrodeTable() {
     body.appendChild(tr);
     
   });
+
+  updateElectrodeCheckboxStates();
   
 }
 
@@ -1172,6 +1757,11 @@ function renderAnodeElectrodeTable() {
     
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
+    checkbox.value = e.electrode_id;
+    checkbox.dataset.available = e.status_code === 1 ? 'true' : 'false';
+    checkbox.checked = selectedAnodes.some(
+      el => el.electrode_id === e.electrode_id
+    );
     
     checkbox.addEventListener('change', e => {
       
@@ -1184,7 +1774,9 @@ function renderAnodeElectrodeTable() {
           el => el.electrode_id === electrodeId
         );
         
-        selectedAnodes.push(electrode);
+        if (!selectedAnodes.some(el => el.electrode_id === electrodeId)) {
+          selectedAnodes.push(electrode);
+        }
         
       } else {
         
@@ -1196,14 +1788,11 @@ function renderAnodeElectrodeTable() {
       }
       
       renderStackSummary();
+      updateElectrodeCheckboxStates();
+      updateBatteryLocks();
+      updateDirtyFlags();
       
     });
-    
-    checkbox.value = e.electrode_id;
-    
-    if (e.status_code !== 1) {
-      checkbox.disabled = true;
-    }
     
     selectCell.appendChild(checkbox);
     tr.appendChild(selectCell);
@@ -1211,6 +1800,8 @@ function renderAnodeElectrodeTable() {
     body.appendChild(tr);
     
   });
+
+  updateElectrodeCheckboxStates();
   
 }
 
@@ -1470,7 +2061,10 @@ function resetElectrodeSelection() {
   document.getElementById('stack_cathode_table_body').innerHTML = '';
   document.getElementById('stack_anode_table_body').innerHTML = '';
   
+  resetElectrodeUiState();
   renderStackSummary();
+  updateBatteryLocks();
+  updateDirtyFlags();
   
 }
 
@@ -1485,17 +2079,50 @@ document
   e.preventDefault();
 });
 
+document
+.querySelector('form[name="battery_assembly_log_form"]')
+.addEventListener('input', () => {
+  if (isRestoringBattery) return;
+  updateBatteryLocks();
+  updateDirtyFlags();
+});
+
+document
+.querySelector('form[name="battery_assembly_log_form"]')
+.addEventListener('change', () => {
+  if (isRestoringBattery) return;
+  updateBatteryLocks();
+  updateDirtyFlags();
+});
+
+document
+.getElementById('battery_status')
+.addEventListener('change', async () => {
+  try {
+    await saveBatteryStatus();
+    markSectionsSaved(['battery_qc']);
+    alert('Статус батареи сохранён.');
+  } catch (err) {
+    console.error(err);
+    alert(err.message || 'Ошибка сохранения статуса батареи');
+  }
+});
+
 /* ---------- EXIT BATTERIES ---------- */
 
 const exitBatteriesBtn = document.getElementById('exitBatteriesBtn');
 
 exitBatteriesBtn.addEventListener('click', () => {
 
-  const confirmExit = confirm('Выйти без сохранения?');
-
-  if (!confirmExit) return;
+  if (hasUnsavedBatteryChanges()) {
+    const confirmExit = confirm('Выйти без сохранения?');
+    
+    if (!confirmExit) return;
+  }
 
   currentBatteryId = null;
+  lastSavedBatteryState = null;
+  lastSavedSectionStates = {};
 
   // reset form
   document.querySelector('form[name="battery_assembly_log_form"]').reset();
@@ -1506,10 +2133,12 @@ exitBatteriesBtn.addEventListener('click', () => {
 
   // clear electrode-related state (this function EXISTS)
   resetElectrodeSelection();
+  updateBatteryLocks();
 
   // clear batteries list UI
   const list = document.getElementById('batteriesList');
   list.innerHTML = '';
+  clearDirtyFlags();
 
   loadBatteries();
 
@@ -1566,6 +2195,7 @@ document.getElementById('battery_create_btn').onclick = async () => {
       
       await loadTapes();
       await loadBatteries();
+      markBatteryStateSaved();
       
       return;
     }
@@ -1585,6 +2215,7 @@ document.getElementById('battery_create_btn').onclick = async () => {
     unlockBatteryWorkspace(updatedBattery);
     await loadTapes();
     await loadBatteries();
+    markBatteryStateSaved();
     
     alert('Шапка аккумулятора сохранена');
     
@@ -1611,7 +2242,7 @@ async function populateBatteryForm(battery) {
   battery.form_factor ?? '';
   
   document.getElementById('battery_notes').value =
-  battery.notes ?? '';
+  battery.notes ?? battery.battery_notes ?? '';
   
   const btn = document.getElementById('battery_create_btn');
   btn.textContent = 'Сохранить изменения';
@@ -1712,14 +2343,22 @@ formFactorSelect.addEventListener('change', () => {
     totalVolumeInput.readOnly = false;
   }
   
+  if (!isRestoringBattery) {
+    selectedCathodes = selectedCathodes.slice(0, 1);
+    selectedAnodes = selectedAnodes.slice(0, 1);
+    renderCathodeElectrodeTable();
+    renderAnodeElectrodeTable();
+    renderStackSummary();
+    updateElectrodeCheckboxStates();
+    updateBatteryLocks();
+    updateDirtyFlags();
+  }
+  
 });
 
 
-const coinCellModeSelect =
-document.getElementById('coin_cell_mode');
-
-const halfCellTypeSelect =
-document.getElementById('coin_half_cell_type');
+const coinCellModeSelect = document.getElementById('coin_cell_mode');
+const halfCellTypeSelect = document.getElementById('coin_half_cell_type');
 
 coinCellModeSelect.addEventListener('change', () => {
   
@@ -1730,6 +2369,17 @@ coinCellModeSelect.addEventListener('change', () => {
     halfTypeBlock.hidden = false;
   } else {
     halfTypeBlock.hidden = true;
+  }
+  
+  if (!isRestoringBattery) {
+    selectedCathodes = selectedCathodes.slice(0, 1);
+    selectedAnodes = selectedAnodes.slice(0, 1);
+    renderCathodeElectrodeTable();
+    renderAnodeElectrodeTable();
+    renderStackSummary();
+    updateElectrodeCheckboxStates();
+    updateBatteryLocks();
+    updateDirtyFlags();
   }
   
 });
@@ -1765,6 +2415,11 @@ halfCellTypeSelect.addEventListener('change', () => {
   
   resetElectrodeSelection();
   
+  if (!isRestoringBattery) {
+    updateBatteryLocks();
+    updateDirtyFlags();
+  }
+  
 });
 
 document
@@ -1774,6 +2429,10 @@ document
   resetElectrodeSelection();
   loadTapes();
   console.log('battery_project_id changed to', document.getElementById('battery_project_id').value);
+  if (!isRestoringBattery) {
+    updateBatteryLocks();
+    updateDirtyFlags();
+  }
 });
 
 document
@@ -1785,6 +2444,10 @@ document
   if (!tapeId) return;
   
   loadCathodeBatches(tapeId);
+  if (!isRestoringBattery) {
+    updateBatteryLocks();
+    updateDirtyFlags();
+  }
   
 });
 
@@ -1797,6 +2460,10 @@ document
   if (!tapeId) return;
   
   loadAnodeBatches(tapeId);
+  if (!isRestoringBattery) {
+    updateBatteryLocks();
+    updateDirtyFlags();
+  }
   
 });
 
@@ -1809,6 +2476,10 @@ document
   if (!batchId) return;
   
   loadCathodeElectrodes(batchId);
+  if (!isRestoringBattery) {
+    updateBatteryLocks();
+    updateDirtyFlags();
+  }
   
 });
 
@@ -1821,6 +2492,10 @@ document
   if (!batchId) return;
   
   loadAnodeElectrodes(batchId);
+  if (!isRestoringBattery) {
+    updateBatteryLocks();
+    updateDirtyFlags();
+  }
   
 });
 
@@ -1830,46 +2505,91 @@ document.getElementById('electrolyte_drop_count');
 const dropVolumeInput =
 document.getElementById('electrolyte_drop_volume');
 
-function updateElectrolyteVolume() {
-  
+function updateCoinLayoutDropCount() {
   const formFactor =
   document.getElementById('battery_form_factor').value;
-  
-  if (formFactor !== 'coin') return;
-  
-  const count = Number(dropCountInput.value);
-  const volume = Number(dropVolumeInput.value);
-  
-  if (!count || !volume) {
-    totalVolumeInput.value = '';
+
+  if (formFactor !== 'coin') {
+    dropCountInput.readOnly = false;
     return;
   }
-  
+
+  const selectedLayout = document.querySelector('input[name="coin_layout"]:checked')?.value;
+
+  if (selectedLayout === 'SE' || selectedLayout === 'ES') {
+    dropCountInput.value = '1';
+    dropCountInput.readOnly = true;
+    return;
+  }
+
+  if (
+    selectedLayout === 'ESE' ||
+    selectedLayout === 'SEE' ||
+    selectedLayout === 'EES'
+  ) {
+    dropCountInput.value = '2';
+    dropCountInput.readOnly = true;
+    return;
+  }
+
+  dropCountInput.readOnly = false;
+}
+
+function updateElectrolyteVolume() {
+
+  const formFactor =
+  document.getElementById('battery_form_factor').value;
+
   const totalVolumeInput =
   document.getElementById('coin_electrolyte_total_ul');
 
-  totalVolumeInput.value = (count * volume).toFixed(2);
-  
+  if (formFactor !== 'coin') {
+    totalVolumeInput.value = '';
+    return;
+  }
+
+  const count = Number(dropCountInput.value);
+  const volume = Number(dropVolumeInput.value);
+
+  if (!Number.isFinite(count) || !Number.isFinite(volume)) {
+    totalVolumeInput.value = '';
+    return;
+  }
+
+  totalVolumeInput.value = (count * volume).toFixed(1);
+
 }
 
 dropCountInput.addEventListener('input', updateElectrolyteVolume);
 dropVolumeInput.addEventListener('input', updateElectrolyteVolume);
+formFactorSelect.addEventListener('change', updateElectrolyteVolume);
+formFactorSelect.addEventListener('change', updateCoinLayoutDropCount);
+
+document
+.querySelectorAll('input[name="coin_layout"]')
+.forEach(radio => {
+  radio.addEventListener('change', () => {
+    updateCoinLayoutDropCount();
+    updateElectrolyteVolume();
+  });
+});
 
 
 
 // -------- Init --------
 
-window.addEventListener('focus', () => {
+window.addEventListener('focus', async () => {
   
-  loadUsers();
-  loadProjects();
-  loadSeparators();
-  loadElectrolytes();
+  const wasClean = !hasUnsavedBatteryChanges();
+  
+  await refreshBatteryReferenceData();
+  
+  if (currentBatteryId && wasClean) {
+    markBatteryStateSaved();
+  }
   
 });
 
-loadProjects();
-loadUsers();
+refreshBatteryReferenceData();
 loadBatteries();
-loadSeparators();
-loadElectrolytes();
+updateCoinLayoutDropCount();

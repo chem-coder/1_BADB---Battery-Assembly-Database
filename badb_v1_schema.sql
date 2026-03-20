@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict XFnOehQW1F3iW1tbFxoNRO6GwfKc3aNYz0YfzXFQkRllZE0yR4Nejy7TKTsl7km
+\restrict dXargHaZUcTg94IXS6BVpbRNw1RBEu8Fw4s86IPfwmybIvJwjJpIHBeEcOyyiDd
 
 -- Dumped from database version 16.11 (Postgres.app)
 -- Dumped by pg_dump version 16.11 (Postgres.app)
@@ -176,21 +176,23 @@ CREATE FUNCTION public.validate_battery_stack() RETURNS trigger
     AS $$
 DECLARE
     form TEXT;
-    mode TEXT;
+    coin_mode TEXT;
     anode_count INT;
     cathode_count INT;
 BEGIN
-    -- get form factor
-    SELECT form_factor INTO form
+    SELECT form_factor
+    INTO form
     FROM batteries
     WHERE battery_id = NEW.battery_id;
 
-    -- get coin mode (if exists)
-    SELECT coin_cell_mode INTO mode
+-- only get coin_mode if coin
+IF form = 'coin' THEN
+    SELECT coin_cell_mode
+    INTO coin_mode
     FROM battery_coin_config
     WHERE battery_id = NEW.battery_id;
+END IF;
 
-    -- current counts
     SELECT
         COUNT(*) FILTER (WHERE role = 'anode'),
         COUNT(*) FILTER (WHERE role = 'cathode')
@@ -198,7 +200,6 @@ BEGIN
     FROM battery_electrodes
     WHERE battery_id = NEW.battery_id;
 
-    -- include NEW row
     IF TG_OP = 'INSERT' THEN
         IF NEW.role = 'anode' THEN
             anode_count := anode_count + 1;
@@ -207,53 +208,33 @@ BEGIN
         END IF;
     END IF;
 
-    -- =========================
-    -- COIN CELLS
-    -- =========================
+    -- COIN LOGIC
     IF form = 'coin' THEN
 
-        IF mode = 'half_cell' AND (anode_count + cathode_count) > 1 THEN
-            RAISE EXCEPTION 'Half-cell: only one electrode allowed';
+        IF coin_mode = 'half_cell' AND (anode_count + cathode_count ) > 1 THEN
+            RAISE EXCEPTION 'Coin half-cell: only one electrode allowed';
         END IF;
 
-        IF mode = 'full_cell' THEN
+        IF coin_mode = 'full_cell' THEN
             IF anode_count > 1 THEN
-                RAISE EXCEPTION 'Full coin cell: only one anode allowed';
+                RAISE EXCEPTION 'Coin full-cell: only one anode allowed';
             END IF;
             IF cathode_count > 1 THEN
-                RAISE EXCEPTION 'Full coin cell: only one cathode allowed';
+                RAISE EXCEPTION 'Coin full-cell: only one cathode allowed';
             END IF;
         END IF;
 
     END IF;
 
-    -- =========================
-    -- POUCH CELLS
-    -- =========================
-    IF form = 'pouch' THEN
+    -- POUCH + CYLINDRICAL (UNIFIED LOGIC)
+    IF form IN ('pouch', 'cylindrical') THEN
 
-        -- single stack OR multistack handled together
         IF NOT (
             anode_count = cathode_count OR
             anode_count = cathode_count + 1 OR
             cathode_count = anode_count + 1
         ) THEN
-            RAISE EXCEPTION 'Invalid pouch stack: must be balanced or off by one';
-        END IF;
-
-    END IF;
-
-    -- =========================
-    -- CYLINDRICAL CELLS
-    -- =========================
-    IF form = 'cylindrical' THEN
-
-        IF anode_count > 1 THEN
-            RAISE EXCEPTION 'Cylindrical: only one anode source allowed';
-        END IF;
-
-        IF cathode_count > 1 THEN
-            RAISE EXCEPTION 'Cylindrical: only one cathode source allowed';
+            RAISE EXCEPTION 'Stack must be balanced or off by one';
         END IF;
 
     END IF;
@@ -264,45 +245,6 @@ $$;
 
 
 ALTER FUNCTION public.validate_battery_stack() OWNER TO "Dalia";
-
---
--- Name: validate_electrode_sources(); Type: FUNCTION; Schema: public; Owner: Dalia
---
-
-CREATE FUNCTION public.validate_electrode_sources() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
-    cell_mode TEXT;
-    electrode_count INTEGER;
-BEGIN
-
-    SELECT coin_cell_mode
-    INTO cell_mode
-    FROM battery_coin_config
-    WHERE battery_id = NEW.battery_id;
-
-    IF cell_mode = 'half_cell' THEN
-
-        SELECT COUNT(*) + 1
-        INTO electrode_count
-        FROM battery_electrode_sources
-        WHERE battery_id = NEW.battery_id;
-
-        IF electrode_count > 1 THEN
-            RAISE EXCEPTION
-            'Half-cell batteries may only contain one electrode';
-        END IF;
-
-    END IF;
-
-    RETURN NEW;
-
-END;
-$$;
-
-
-ALTER FUNCTION public.validate_electrode_sources() OWNER TO "Dalia";
 
 SET default_tablespace = '';
 
@@ -356,7 +298,7 @@ CREATE TABLE public.batteries (
     form_factor text NOT NULL,
     created_by integer NOT NULL,
     created_at timestamp with time zone DEFAULT now(),
-    status public.battery_status DEFAULT 'assembled'::public.battery_status,
+    status public.battery_status,
     battery_notes text,
     CONSTRAINT batteries_form_factor_check CHECK ((form_factor = ANY (ARRAY['coin'::text, 'pouch'::text, 'cylindrical'::text])))
 );
@@ -401,7 +343,8 @@ CREATE TABLE public.battery_coin_config (
     coin_layout text,
     electrolyte_drop_count integer,
     electrolyte_drop_volume numeric,
-    coin_layout_notes text
+    coin_layout_notes text,
+    spacer_notes text
 );
 
 
@@ -419,6 +362,36 @@ CREATE TABLE public.battery_cyl_config (
 
 
 ALTER TABLE public.battery_cyl_config OWNER TO "Dalia";
+
+--
+-- Name: battery_electrochem; Type: TABLE; Schema: public; Owner: Dalia
+--
+
+CREATE TABLE public.battery_electrochem (
+    battery_electrochem_id integer NOT NULL,
+    battery_id integer NOT NULL,
+    file_name text,
+    file_link text,
+    electrochem_notes text,
+    uploaded_at timestamp with time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.battery_electrochem OWNER TO "Dalia";
+
+--
+-- Name: battery_electrochem_battery_electrochem_id_seq; Type: SEQUENCE; Schema: public; Owner: Dalia
+--
+
+ALTER TABLE public.battery_electrochem ALTER COLUMN battery_electrochem_id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.battery_electrochem_battery_electrochem_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
 
 --
 -- Name: battery_electrode_sources; Type: TABLE; Schema: public; Owner: Dalia
@@ -492,7 +465,6 @@ ALTER SEQUENCE public.battery_electrolyte_battery_electrolyte_id_seq OWNED BY pu
 
 CREATE TABLE public.battery_pouch_config (
     battery_id integer NOT NULL,
-    pouch_format_code text,
     pouch_notes text
 );
 
@@ -1764,7 +1736,10 @@ COPY public.active_materials (active_material_id, role, th_capacity_mah, th_capa
 --
 
 COPY public.batteries (battery_id, project_id, form_factor, created_by, created_at, status, battery_notes) FROM stdin;
-1	3	coin	50	2026-03-19 17:48:50.604833+03	assembled	1C battery
+1	3	coin	33	2026-03-20 17:30:29.409995+03	assembled	coin full
+2	3	coin	33	2026-03-20 18:04:21.883615+03	assembled	coin
+3	3	coin	33	2026-03-20 18:21:55.744607+03	assembled	comment
+4	3	coin	33	2026-03-20 18:47:27.462016+03	assembled	comment
 \.
 
 
@@ -1772,8 +1747,11 @@ COPY public.batteries (battery_id, project_id, form_factor, created_by, created_
 -- Data for Name: battery_coin_config; Type: TABLE DATA; Schema: public; Owner: Dalia
 --
 
-COPY public.battery_coin_config (battery_id, half_cell_type, coin_cell_mode, coin_size_code, li_foil_notes, spacer_thickness_mm, spacer_count, coin_layout, electrolyte_drop_count, electrolyte_drop_volume, coin_layout_notes) FROM stdin;
-1	cathode_vs_li	half_cell	2032	1/2C Li	\N	\N	\N	\N	\N	\N
+COPY public.battery_coin_config (battery_id, half_cell_type, coin_cell_mode, coin_size_code, li_foil_notes, spacer_thickness_mm, spacer_count, coin_layout, electrolyte_drop_count, electrolyte_drop_volume, coin_layout_notes, spacer_notes) FROM stdin;
+1	\N	full_cell	2032	\N	0.5	2	SEE	2	50	see	space
+2	cathode_vs_li	half_cell	2032	half cell cathode	0.5	2	SEE	2	50	\N	\N
+3	cathode_vs_li	half_cell	2032	\N	\N	\N	\N	\N	\N	\N	\N
+4	\N	full_cell	2032	\N	\N	\N	\N	\N	\N	\N	\N
 \.
 
 
@@ -1786,10 +1764,29 @@ COPY public.battery_cyl_config (battery_id, cyl_size_code, cyl_notes) FROM stdin
 
 
 --
+-- Data for Name: battery_electrochem; Type: TABLE DATA; Schema: public; Owner: Dalia
+--
+
+COPY public.battery_electrochem (battery_electrochem_id, battery_id, file_name, file_link, electrochem_notes, uploaded_at) FROM stdin;
+1	1	1-tapes.html	/uploads/electrochem/1774017119980_83ji8u_1-tapes.html	\N	2026-03-20 17:31:59.982434+03
+2	1	3-batteries.html	/uploads/electrochem/1774017119987_v4m9pb_3-batteries.html	\N	2026-03-20 17:31:59.987583+03
+3	1	2-electrodes.html	/uploads/electrochem/1774017119988_jyq09b_2-electrodes.html	\N	2026-03-20 17:31:59.98878+03
+4	1	5-testing.html	/uploads/electrochem/1774017119989_x7i31o_5-testing.html	\N	2026-03-20 17:31:59.989729+03
+5	1	4-modules.html	/uploads/electrochem/1774017119990_csmbci_4-modules.html	\N	2026-03-20 17:31:59.991837+03
+\.
+
+
+--
 -- Data for Name: battery_electrode_sources; Type: TABLE DATA; Schema: public; Owner: Dalia
 --
 
 COPY public.battery_electrode_sources (battery_id, role, tape_id, cut_batch_id, source_notes) FROM stdin;
+1	cathode	11	1	cathode notes
+1	anode	15	2	anode notes
+2	cathode	11	1	\N
+3	cathode	11	1	\N
+4	cathode	11	1	\N
+4	anode	15	2	\N
 \.
 
 
@@ -1798,6 +1795,12 @@ COPY public.battery_electrode_sources (battery_id, role, tape_id, cut_batch_id, 
 --
 
 COPY public.battery_electrodes (battery_id, electrode_id, role, position_index) FROM stdin;
+1	12	anode	1
+1	1	cathode	2
+2	2	cathode	1
+3	5	cathode	1
+4	16	anode	1
+4	6	cathode	2
 \.
 
 
@@ -1806,6 +1809,8 @@ COPY public.battery_electrodes (battery_id, electrode_id, role, position_index) 
 --
 
 COPY public.battery_electrolyte (battery_electrolyte_id, battery_id, electrolyte_id, electrolyte_notes, electrolyte_total_ul) FROM stdin;
+1	1	8	el	100.0
+2	2	8	e	100.0
 \.
 
 
@@ -1813,7 +1818,7 @@ COPY public.battery_electrolyte (battery_electrolyte_id, battery_id, electrolyte
 -- Data for Name: battery_pouch_config; Type: TABLE DATA; Schema: public; Owner: Dalia
 --
 
-COPY public.battery_pouch_config (battery_id, pouch_format_code, pouch_notes) FROM stdin;
+COPY public.battery_pouch_config (battery_id, pouch_notes) FROM stdin;
 \.
 
 
@@ -1822,6 +1827,7 @@ COPY public.battery_pouch_config (battery_id, pouch_format_code, pouch_notes) FR
 --
 
 COPY public.battery_qc (battery_id, ocv_v, esr_mohm, qc_notes) FROM stdin;
+1	1	1	1
 \.
 
 
@@ -1830,6 +1836,8 @@ COPY public.battery_qc (battery_id, ocv_v, esr_mohm, qc_notes) FROM stdin;
 --
 
 COPY public.battery_sep_config (battery_id, separator_id, separator_notes) FROM stdin;
+1	13	sep
+2	13	s
 \.
 
 
@@ -1904,26 +1912,26 @@ COPY public.electrode_status (status_code, name) FROM stdin;
 --
 
 COPY public.electrodes (electrode_id, cut_batch_id, electrode_mass_g, cup_number, scrapped_reason, comments, status_code, used_in_battery_id, number_in_batch) FROM stdin;
+12	2	2.14	\N	\N	\N	2	1	2
+1	1	2.14	\N	\N	\N	2	1	1
+2	1	2.058	\N	\N	\N	2	2	2
 4	1	2.053	\N	\N	\N	1	\N	4
-5	1	2.043	\N	\N	\N	1	\N	5
-6	1	2.042	\N	\N	\N	1	\N	6
-7	1	2.035	\N	\N	\N	1	\N	7
-8	1	2.029	\N	\N	\N	1	\N	8
+5	1	2.043	\N	\N	\N	2	3	5
+16	2	2.043	\N	\N	\N	2	4	6
+6	1	2.042	\N	\N	\N	2	4	6
 9	1	2.026	\N	\N	\N	1	\N	9
-10	1	2.025	\N	\N	\N	1	\N	10
-11	2	2.15	\N	\N	\N	1	\N	1
-12	2	2.14	\N	\N	\N	1	\N	2
 13	2	2.057	\N	\N	\N	1	\N	3
-14	2	2.056	\N	\N	\N	1	\N	4
-15	2	2.053	\N	\N	\N	1	\N	5
-16	2	2.043	\N	\N	\N	1	\N	6
-17	2	2.033	\N	\N	\N	1	\N	7
-18	2	2.023	\N	\N	\N	1	\N	8
-19	2	2.02	\N	\N	\N	1	\N	9
 20	2	2.013	\N	\N	\N	1	\N	10
-1	1	2.14	\N	\N	\N	1	\N	1
-2	1	2.058	\N	\N	\N	1	\N	2
+15	2	2.053	\N	\N	\N	1	\N	5
 3	1	2.057	\N	\N	\N	1	\N	3
+17	2	2.033	\N	\N	\N	1	\N	7
+14	2	2.056	\N	\N	\N	1	\N	4
+7	1	2.035	\N	\N	\N	1	\N	7
+19	2	2.02	\N	\N	\N	1	\N	9
+10	1	2.025	\N	\N	\N	1	\N	10
+18	2	2.023	\N	\N	\N	1	\N	8
+11	2	2.15	\N	\N	\N	1	\N	1
+8	1	2.029	\N	\N	\N	1	\N	8
 \.
 
 
@@ -2320,14 +2328,21 @@ SELECT pg_catalog.setval('public.active_materials_active_material_id_seq', 1, fa
 -- Name: batteries_battery_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
 --
 
-SELECT pg_catalog.setval('public.batteries_battery_id_seq', 1, true);
+SELECT pg_catalog.setval('public.batteries_battery_id_seq', 4, true);
+
+
+--
+-- Name: battery_electrochem_battery_electrochem_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
+--
+
+SELECT pg_catalog.setval('public.battery_electrochem_battery_electrochem_id_seq', 5, true);
 
 
 --
 -- Name: battery_electrolyte_battery_electrolyte_id_seq; Type: SEQUENCE SET; Schema: public; Owner: Dalia
 --
 
-SELECT pg_catalog.setval('public.battery_electrolyte_battery_electrolyte_id_seq', 1, false);
+SELECT pg_catalog.setval('public.battery_electrolyte_battery_electrolyte_id_seq', 2, true);
 
 
 --
@@ -2536,6 +2551,14 @@ ALTER TABLE ONLY public.battery_coin_config
 
 ALTER TABLE ONLY public.battery_cyl_config
     ADD CONSTRAINT battery_cyl_config_pkey PRIMARY KEY (battery_id);
+
+
+--
+-- Name: battery_electrochem battery_electrochem_pkey; Type: CONSTRAINT; Schema: public; Owner: Dalia
+--
+
+ALTER TABLE ONLY public.battery_electrochem
+    ADD CONSTRAINT battery_electrochem_pkey PRIMARY KEY (battery_electrochem_id);
 
 
 --
@@ -3064,13 +3087,6 @@ CREATE INDEX idx_tapes_recipe ON public.tapes USING btree (tape_recipe_id);
 
 
 --
--- Name: battery_electrode_sources battery_electrode_sources_validate; Type: TRIGGER; Schema: public; Owner: Dalia
---
-
-CREATE TRIGGER battery_electrode_sources_validate BEFORE INSERT OR UPDATE ON public.battery_electrode_sources FOR EACH ROW EXECUTE FUNCTION public.validate_electrode_sources();
-
-
---
 -- Name: battery_electrodes battery_stack_validate; Type: TRIGGER; Schema: public; Owner: Dalia
 --
 
@@ -3115,6 +3131,14 @@ ALTER TABLE ONLY public.battery_coin_config
 
 ALTER TABLE ONLY public.battery_cyl_config
     ADD CONSTRAINT battery_cyl_config_battery_id_fkey FOREIGN KEY (battery_id) REFERENCES public.batteries(battery_id) ON DELETE CASCADE;
+
+
+--
+-- Name: battery_electrochem battery_electrochem_battery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: Dalia
+--
+
+ALTER TABLE ONLY public.battery_electrochem
+    ADD CONSTRAINT battery_electrochem_battery_id_fkey FOREIGN KEY (battery_id) REFERENCES public.batteries(battery_id) ON DELETE CASCADE;
 
 
 --
@@ -3513,5 +3537,5 @@ ALTER TABLE ONLY public.tapes
 -- PostgreSQL database dump complete
 --
 
-\unrestrict XFnOehQW1F3iW1tbFxoNRO6GwfKc3aNYz0YfzXFQkRllZE0yR4Nejy7TKTsl7km
+\unrestrict dXargHaZUcTg94IXS6BVpbRNw1RBEu8Fw4s86IPfwmybIvJwjJpIHBeEcOyyiDd
 

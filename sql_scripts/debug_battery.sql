@@ -43,10 +43,23 @@ SELECT jsonb_pretty(jsonb_build_object(
    FROM battery_qc q
    WHERE q.battery_id = :battery_id),
 
+  'electrochem',
+  (SELECT COALESCE(
+     jsonb_agg(to_jsonb(ec) ORDER BY ec.battery_electrochem_id),
+     '[]'::jsonb
+   )
+   FROM battery_electrochem ec
+   WHERE ec.battery_id = :battery_id),
+
   'electrode_sources',
-  (SELECT row_to_json(es)
-   FROM battery_electrode_sources es
-   WHERE es.battery_id = :battery_id),
+  COALESCE(
+    (
+      SELECT jsonb_agg(to_jsonb(es))
+      FROM battery_electrode_sources es
+      WHERE es.battery_id = :battery_id
+    ),
+    '[]'::jsonb
+  ),
 
   'electrodes',
   (SELECT COALESCE(

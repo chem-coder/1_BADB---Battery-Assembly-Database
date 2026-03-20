@@ -32,6 +32,7 @@ DELETE FROM battery_cyl_config WHERE battery_id = :battery_id;
 DELETE FROM battery_sep_config WHERE battery_id = :battery_id;
 DELETE FROM battery_electrolyte WHERE battery_id = :battery_id;
 DELETE FROM battery_qc WHERE battery_id = :battery_id;
+DELETE FROM battery_electrochem WHERE battery_id = :battery_id;
 
 -- 5. Mark battery as disassembled (DO NOT delete header)
 UPDATE batteries
