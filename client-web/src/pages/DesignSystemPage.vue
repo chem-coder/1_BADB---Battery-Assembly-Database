@@ -315,13 +315,6 @@ const roleLabels = { cathode: 'Катод', anode: 'Анод' }
           </div>
         </div>
         <div class="ds-col" style="flex: 1; min-width: 200px">
-          <span class="ds-label">table-card</span>
-          <div class="glass-card table-card ds-card-demo">
-            <div class="ds-card-demo-title">Табличная карточка</div>
-            <p class="ds-card-demo-text">Плотный padding, обёртка для DataTable.</p>
-          </div>
-        </div>
-        <div class="ds-col" style="flex: 1; min-width: 200px">
           <span class="ds-label">kpi-card</span>
           <div class="glass-card kpi-card ds-card-demo">
             <div class="ds-card-demo-title">KPI-карточка</div>
@@ -538,6 +531,9 @@ const roleLabels = { cathode: 'Катод', anode: 'Анод' }
 /* kpi-card */
 .kpi-card {
   padding: 1rem 1.25rem;
+}
+.kpi-card .ds-card-demo-title {
+  margin-bottom: 0.2rem;
 }
 
 /* ── Select (AutoComplete) — chip style for selected value + clear button ── */
