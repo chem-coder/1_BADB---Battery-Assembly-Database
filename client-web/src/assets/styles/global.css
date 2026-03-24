@@ -258,7 +258,7 @@ h4 { font-size: 16px; font-weight: 700; line-height: 1.4; }
 .p-inputtext:not(:disabled):not(:focus):hover,
 .p-textarea:not(:disabled):not(:focus):hover,
 .p-select:not(.p-disabled):not(:focus):hover,
-.p-multiselect:not(.p-disabled):not(:focus):hover,
+.p-multiselect:not(.p-disabled):not(:focus-within):hover,
 .p-autocomplete:not(.p-disabled):hover .p-autocomplete-input:not(:focus),
 .p-datepicker:not(.p-disabled):not(:focus):hover {
   border-color: rgba(76, 175, 80, 0.45) !important;
@@ -294,6 +294,12 @@ h4 { font-size: 16px; font-weight: 700; line-height: 1.4; }
   border-right: 1px solid rgb(203, 213, 225);
   border-radius: 6px 0 0 6px;
   box-shadow: rgba(18, 18, 23, 0.05) 0px 1px 2px 0px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+/* MultiSelect hover — green highlight on label only, like Select */
+.p-multiselect:not(.p-disabled):hover .p-multiselect-label-container {
+  border-color: rgba(76, 175, 80, 0.45) !important;
+  box-shadow: 2px 3px 6px rgba(76, 175, 80, 0.10);
 }
 .p-multiselect .p-multiselect-label {
   white-space: nowrap;
