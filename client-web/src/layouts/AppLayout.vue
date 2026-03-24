@@ -152,6 +152,8 @@ onUnmounted(() => {
   height: calc(100vh - var(--frame) * 2);
   margin: var(--frame);
   border-radius: 14px;
+  border: 1px solid rgba(180, 210, 255, 0.4);
+  box-shadow: inset 0 0 20px rgba(0, 50, 116, 0.2), inset 0 0 4px rgba(0, 50, 116, 0.15);
   background: linear-gradient(135deg, #D8E2EC 0%, #E8EDF5 50%, #F0F4F8 100%) fixed;
   overflow: hidden;
   position: relative;
