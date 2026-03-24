@@ -1,8 +1,3 @@
-const { Pool } = require('pg');
-
-const pool = new Pool({
-  user: 'Dalia',
-  database: 'badb_v1'
-});
-
-module.exports = pool;
+// Re-export the config-aware pool from db/pool.js
+// All routes (Dalia's and ours) resolve here via require('../db')
+module.exports = require('./db/pool');
