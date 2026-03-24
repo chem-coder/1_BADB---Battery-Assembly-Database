@@ -561,6 +561,26 @@ h4 { font-size: 16px; font-weight: 700; line-height: 1.4; }
   -webkit-backdrop-filter: blur(12px) saturate(1.4);
 }
 
+/* ── Paginator — compact select, transparent background ── */
+.p-paginator .p-select {
+  min-height: 2rem !important;
+  height: 2rem !important;
+  min-width: auto !important;
+  background: transparent !important;
+  border: 1px solid rgba(203, 213, 225, 0.5) !important;
+  border-radius: 6px !important;
+}
+.p-paginator .p-select .p-select-label {
+  padding: 0.25rem 0.5rem !important;
+  font-size: 13px;
+}
+.p-paginator .p-select .p-select-dropdown {
+  width: 28px !important;
+  padding: 0 4px !important;
+  background: transparent !important;
+  border-left: 1px solid rgba(203, 213, 225, 0.5) !important;
+}
+
 /* ── Badges — 10 universal variants ── */
 /* Base badge style */
 .badge {
