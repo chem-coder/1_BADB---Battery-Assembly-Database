@@ -81,6 +81,7 @@
       <div class="form-actions" style="display:flex; gap:.5rem; align-items:center; margin:.5rem 0 1rem 0;">
         <button type="button" id="clearBtn">Выход</button>
       </div>
+      <div class="status-feedback" aria-live="polite"></div>
       
       <input
       type="text"
@@ -156,6 +157,7 @@
           <span id="dirty-recipe-materials" style="display:none; margin-left:8px;">● не сохранено</span>
         </summary>
         <div id="recipe-lines-container"></div>
+        <button type="button" id="0-recipe-materials-save-btn">Сохранить выбор экземпляров</button>
         
         <hr class="section-divider">
         <details id="calculations-expanded">
@@ -396,6 +398,7 @@
             <select id="2-coating-foil_id" name="foil_id">
               <option value="">— выбрать фольгу —</option>
             </select><br>
+            <small>По умолчанию: Al для катодов, Cu для анодов.</small><br>
             
             <!---BUGS-->
             <!--The "save changes" and "Exit" buttons are not easily located and for some reason are in different spots - not great design -->
@@ -420,21 +423,21 @@
             </select>
             <br>
             
-            <!-- Read-only preview from coating_methods (not stored in tape_step_coating) -->
+            <!-- Prefilled from coating_methods, then saved per tape in tape_step_coating -->
             <div class="mix-params" id="2-coating-method-preview" hidden>
-              <h4>Параметры выбранного метода нанесения (справочник)</h4>
+              <h4>Параметры метода нанесения</h4>
               
               <label for="2-coating-gap-um">Зазор, мкм: </label>
-              <input id="2-coating-gap-um" type="number" readonly><br>
+              <input id="2-coating-gap-um" type="number" step="0.1" min="0" required><br>
               
               <label for="2-coating-temp-c">Температура, °C: </label>
-              <input id="2-coating-temp-c" type="number" readonly><br>
+              <input id="2-coating-temp-c" type="number" step="0.1"><br>
               
               <label for="2-coating-time-min">Время, мин: </label>
-              <input id="2-coating-time-min" type="number" readonly><br>
+              <input id="2-coating-time-min" type="number" step="1" min="0"><br>
               
               <label for="2-coating-method-comments">Комментарий: </label>
-              <textarea id="2-coating-method-comments" readonly></textarea><br>
+              <textarea id="2-coating-method-comments"></textarea><br>
             </div>
             
             <button type="button" id="2-coating-save-btn">Сохранить этап нанесения</button>

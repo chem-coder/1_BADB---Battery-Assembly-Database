@@ -565,7 +565,11 @@ router.post('/:id/steps/by-code/:code', async (req, res) => {
       started_at,
       comments,
       foil_id,
-      coating_id
+      coating_id,
+      gap_um,
+      coat_temp_c,
+      coat_time_min,
+      method_comments
     } = req.body || {};
 
     const client = await pool.connect();
@@ -613,17 +617,25 @@ router.post('/:id/steps/by-code/:code', async (req, res) => {
       await client.query(
         `
         INSERT INTO tape_step_coating
-          (step_id, foil_id, coating_id)
-        VALUES ($1,$2,$3)
+          (step_id, foil_id, coating_id, gap_um, coat_temp_c, coat_time_min, method_comments)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
         ON CONFLICT (step_id)
         DO UPDATE SET
           foil_id = EXCLUDED.foil_id,
-          coating_id = EXCLUDED.coating_id
+          coating_id = EXCLUDED.coating_id,
+          gap_um = EXCLUDED.gap_um,
+          coat_temp_c = EXCLUDED.coat_temp_c,
+          coat_time_min = EXCLUDED.coat_time_min,
+          method_comments = EXCLUDED.method_comments
         `,
         [
           stepId,
           Number(foil_id) || null,
-          Number(coating_id) || null
+          Number(coating_id) || null,
+          Number.isFinite(Number(gap_um)) ? Number(gap_um) : null,
+          Number.isFinite(Number(coat_temp_c)) ? Number(coat_temp_c) : null,
+          Number.isFinite(Number(coat_time_min)) ? Number(coat_time_min) : null,
+          method_comments || null
         ]
       );
 
@@ -811,7 +823,11 @@ router.get('/:id/steps/by-code/:code', async (req, res) => {
       `;
       subtypeSelect = `
         c.foil_id,
-        c.coating_id
+        c.coating_id,
+        c.gap_um,
+        c.coat_temp_c,
+        c.coat_time_min,
+        c.method_comments
       `;
     }
 

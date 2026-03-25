@@ -7,6 +7,7 @@ const form = document.forms['tape-form'];
 const title = form.querySelector('h2');
 const saveBtn = document.getElementById('saveBtn');
 const clearBtn = document.getElementById('clearBtn');
+const recipeMaterialsSaveBtn = document.getElementById('0-recipe-materials-save-btn');
 const tapesList = document.getElementById('tapesList');
 
 let mode = null;
@@ -22,6 +23,7 @@ let currentRecipeLines = [];
 let selectedInstanceByLineId = {};
 let instanceCacheByMaterialId = {};
 let instanceComponentsCache = {};
+let coatingMethodsCache = [];
 let isRestoringTape = false;
 
 function showForm() {
@@ -220,6 +222,84 @@ async function fetchTapeActuals(tapeId) {
   return res.json(); // array
 }
 
+async function saveSelectedInstances(tapeId) {
+  if (!tapeId) return;
+
+  for (const line of currentRecipeLines) {
+    const recipeLineId = line.recipe_line_id;
+    const instanceId = selectedInstanceByLineId[recipeLineId];
+
+    if (!instanceId) continue;
+
+    const res = await fetch(`/api/tapes/${tapeId}/actuals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        recipe_line_id: recipeLineId,
+        material_instance_id: Number(instanceId)
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Ошибка сохранения выбранных экземпляров');
+    }
+  }
+}
+
+async function saveTapeActuals(tapeId) {
+  if (!tapeId) return;
+
+  for (const line of currentRecipeLines) {
+    const recipeLineId = line.recipe_line_id;
+    const instanceId = selectedInstanceByLineId[recipeLineId];
+
+    if (!instanceId) continue;
+
+    const row = document.querySelector(
+      `#slurry-actuals-body tr[data-recipe-line-id="${recipeLineId}"]`
+    );
+
+    if (!row) continue;
+
+    const modeSelect = row.querySelector('.actual-mode-select');
+    const valueInput = row.querySelector('.actual-value-input');
+
+    if (!modeSelect || !valueInput) continue;
+
+    const measureMode = modeSelect.value;
+    const value = Number(valueInput.value);
+
+    const payload = {
+      recipe_line_id: recipeLineId,
+      material_instance_id: Number(instanceId)
+    };
+
+    if (Number.isFinite(value) && value > 0) {
+      payload.measure_mode = measureMode;
+
+      if (measureMode === 'mass') {
+        payload.actual_mass_g = value;
+      }
+
+      if (measureMode === 'volume') {
+        payload.actual_volume_ml = value;
+      }
+    }
+
+    const res = await fetch(`/api/tapes/${tapeId}/actuals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Ошибка сохранения фактических данных');
+    }
+  }
+}
+
 async function loadDryingAtmospheres(selectEl, selectedCode = '') {
   if (!selectEl) return;
   
@@ -299,6 +379,21 @@ function recipeRoleLabel(recipeRole) {
   return map[recipeRole] || recipeRole || '';
 }
 
+function syncInstanceSelectsForLine(recipeLineId) {
+  const value = selectedInstanceByLineId[recipeLineId] || '';
+  const selects = document.querySelectorAll(
+    `[data-recipe-line-id="${recipeLineId}"].material-instance-select`
+  );
+
+  selects.forEach((select) => {
+    if ([...select.options].some((option) => option.value === String(value))) {
+      select.value = String(value);
+    } else if (!value) {
+      select.value = '';
+    }
+  });
+}
+
 function renderRecipeLines(lines, restoringActuals = []) {
   const container = document.getElementById('recipe-lines-container');
   if (!container) return;
@@ -362,6 +457,7 @@ function renderRecipeLines(lines, restoringActuals = []) {
     const slurryInstanceSelect = document.createElement('select');
     slurryInstanceSelect.className = 'material-instance-select slurry-instance-select';
     slurryInstanceSelect.dataset.recipeLineId = line.recipe_line_id;
+    slurryInstanceSelect.disabled = true;
     
     // load instances asynchronously (populate BOTH selects)
     fetchMaterialInstances(line.material_id)
@@ -386,15 +482,7 @@ function renderRecipeLines(lines, restoringActuals = []) {
       
       // restore selection after options are appended (BOTH)
       if (prev) {
-        const prevStr = String(prev);
-        
-        if ([...instanceSelect.options].some(o => o.value === prevStr)) {
-          instanceSelect.value = prevStr;
-        }
-        
-        if ([...slurryInstanceSelect.options].some(o => o.value === prevStr)) {
-          slurryInstanceSelect.value = prevStr;
-        }
+        syncInstanceSelectsForLine(line.recipe_line_id);
       }
       
       recalculatePlannedMasses();
@@ -404,20 +492,14 @@ function renderRecipeLines(lines, restoringActuals = []) {
     // store selection in state
     function setInstanceForLine(recipeLineId, value) {
       selectedInstanceByLineId[recipeLineId] = value || null;
-      
-      // sync both selects without loops
-      if (instanceSelect.value !== (value || '')) instanceSelect.value = value || '';
-      if (slurryInstanceSelect.value !== (value || '')) slurryInstanceSelect.value = value || '';
-      
+
+      syncInstanceSelectsForLine(recipeLineId);
       recalculatePlannedMasses();
     }
     
     instanceSelect.addEventListener('change', () => {
       setInstanceForLine(line.recipe_line_id, instanceSelect.value || '');
-    });
-    
-    slurryInstanceSelect.addEventListener('change', () => {
-      setInstanceForLine(line.recipe_line_id, slurryInstanceSelect.value || '');
+      setStepDirty('recipe_materials', true);
     });
     
     // percent (right) with % sign
@@ -461,10 +543,8 @@ function renderRecipeLines(lines, restoringActuals = []) {
     roleTd.textContent = recipeRoleLabel(line.recipe_role);
     tr.appendChild(roleTd);
     
-    // 2. Material instance (mirrors main selector)
+    // 2. Material instance (read-only mirror of planned selection)
     const instanceTd = document.createElement('td');
-    
-    // placeholder option
     const slurryPlaceholderOpt = document.createElement('option');
     slurryPlaceholderOpt.value = '';
     slurryPlaceholderOpt.textContent = '— выбрать экземпляр —';
@@ -531,8 +611,11 @@ function renderRecipeLines(lines, restoringActuals = []) {
     // restore selected instance from saved actuals (if not already chosen)
     if (saved && saved.material_instance_id && !selectedInstanceByLineId[line.recipe_line_id]) {
       selectedInstanceByLineId[line.recipe_line_id] = String(saved.material_instance_id);
+      syncInstanceSelectsForLine(line.recipe_line_id);
     }
   });
+
+  applyDefaultCoatingFoil();
 }
 
 function clearRecipeLines() {
@@ -1146,19 +1229,16 @@ function renderTapes(tapes) {
         
         document.getElementById('2-coating-coating_id').value =
         coating.coating_id ?? '';
+        document.getElementById('2-coating-gap-um').value =
+        coating.gap_um ?? '';
+        document.getElementById('2-coating-temp-c').value =
+        coating.coat_temp_c ?? '';
+        document.getElementById('2-coating-time-min').value =
+        coating.coat_time_min ?? '';
+        document.getElementById('2-coating-method-comments').value =
+        coating.method_comments ?? '';
         
-        updateCoatingParamsVisibility();
-        
-        // ----- trigger method preview -----
-        
-        if (coating.coating_id) {
-          
-          const methodSelect = document.getElementById('2-coating-coating_id');
-          
-          const event = new Event('change');
-          methodSelect.dispatchEvent(event);
-          
-        }
+        updateCoatingParamsVisibility(false);
         
       }
       
@@ -1382,8 +1462,23 @@ function renderTapes(tapes) {
 
 // -------- Status helper --------
 
+const statusBox = document.querySelector('.status-feedback');
+
 function logLoadError(err) {
   console.error(err);
+}
+
+function showStatus(msg, isError = false) {
+  if (!statusBox) return;
+
+  statusBox.textContent = msg;
+  statusBox.style.color = isError ? '#b00020' : 'darkcyan';
+
+  setTimeout(() => {
+    if (statusBox.textContent === msg) {
+      statusBox.textContent = '';
+    }
+  }, 1200);
 }
 
 // -------- Unsaved changes (dirty flags) --------
@@ -1403,12 +1498,13 @@ const dirtySteps = {
   drying_pressed_tape: false
 };
 
-function setStepDirty(stepCode, isDirty) {
-  // Ignore programmatic restore for General Info (edit-mode loading)
-  if (stepCode === 'general_info' && window.isRestoringTape && isDirty) return;
-  
-  dirtySteps[stepCode] = Boolean(isDirty);
-  
+const parentDirtyMap = {
+  drying_materials: ['drying_am'],
+  slurry: ['weighing', 'mixing'],
+  tape: ['coating', 'drying_tape', 'calendering', 'drying_pressed_tape']
+};
+
+function updateDirtyMarker(stepCode) {
   const markerId =
   stepCode === 'general_info' ? 'dirty-general-info'
   : stepCode === 'recipe_materials' ? 'dirty-recipe-materials'
@@ -1428,8 +1524,30 @@ function setStepDirty(stepCode, isDirty) {
   if (el) el.style.display = dirtySteps[stepCode] ? 'inline' : 'none';
 }
 
+function refreshParentDirtyStates() {
+  Object.entries(parentDirtyMap).forEach(([parent, children]) => {
+    dirtySteps[parent] = children.some((child) => Boolean(dirtySteps[child]));
+    updateDirtyMarker(parent);
+  });
+}
+
+function setStepDirty(stepCode, isDirty) {
+  // Ignore programmatic restore for General Info (edit-mode loading)
+  if (stepCode === 'general_info' && window.isRestoringTape && isDirty) return;
+  
+  dirtySteps[stepCode] = Boolean(isDirty);
+  updateDirtyMarker(stepCode);
+  refreshParentDirtyStates();
+}
+
 function anyDirty() {
   return Object.values(dirtySteps).some(Boolean);
+}
+
+function clearAllDirtySteps() {
+  Object.keys(dirtySteps).forEach((stepCode) => {
+    setStepDirty(stepCode, false);
+  });
 }
 
 // Warn on tab close / reload when anything is dirty
@@ -1730,6 +1848,7 @@ async function loadCoatingMethods() {
   
   const res = await fetch('/api/reference/coating-methods');
   const methods = await res.json();
+  coatingMethodsCache = Array.isArray(methods) ? methods : [];
   
   const select = document.getElementById('2-coating-coating_id');
   
@@ -1740,8 +1859,33 @@ async function loadCoatingMethods() {
     const opt = document.createElement('option');
     opt.value = m.coating_id;
     opt.textContent = m.comments || m.name;
+    opt.dataset.gapUm = m.gap_um ?? '';
+    opt.dataset.tempC = m.coat_temp_c ?? '';
+    opt.dataset.timeMin = m.coat_time_min ?? '';
+    opt.dataset.comments = m.comments || '';
     select.appendChild(opt);
   });
+}
+
+function applyDefaultCoatingFoil() {
+  const foilSelect = document.getElementById('2-coating-foil_id');
+  if (!foilSelect) return;
+  if (foilSelect.value) return;
+
+  const desiredFoil =
+    tapeTypeSelect.value === 'cathode' ? 'al'
+    : tapeTypeSelect.value === 'anode' ? 'cu'
+    : '';
+
+  if (!desiredFoil) return;
+
+  const defaultOption = Array.from(foilSelect.options).find(
+    (option) => String(option.textContent || '').trim().toLowerCase() === desiredFoil
+  );
+
+  if (defaultOption) {
+    foilSelect.value = defaultOption.value;
+  }
 }
 
 // -------- Events --------
@@ -1751,6 +1895,7 @@ createdBySelect.addEventListener('focus', loadUsers);
 projectSelect.addEventListener('focus', loadProjects);
 recipeSelect.addEventListener('focus', loadRecipesDropdown);
 tapeTypeSelect.addEventListener('change', loadRecipesDropdown);
+tapeTypeSelect.addEventListener('change', applyDefaultCoatingFoil);
 
 // When recipe changes: load lines + reset instance selections + clear planned masses
 recipeSelect.addEventListener('change', async () => {
@@ -1781,6 +1926,7 @@ recipeSelect.addEventListener('change', async () => {
     renderRecipeLines(lines, restoringActuals);
     
     recalculatePlannedMasses();
+    applyDefaultCoatingFoil();
     
     // finish restore AFTER lines have been fetched + rendered
     if (isRestoringTape) {
@@ -1890,93 +2036,24 @@ saveBtn.addEventListener('click', async () => {
       document.getElementById('1-slurry').open = false;
       document.getElementById('2-tape').open = false;
       
-      setStepDirty('general_info', false);
-      setStepDirty('recipe_materials', false);
-      setStepDirty('drying_materials', false);
-      setStepDirty('drying_am', false);
-      setStepDirty('slurry', false);
-      setStepDirty('weighing', false);
-      setStepDirty('mixing', false);
-      setStepDirty('tape', false);
-      setStepDirty('coating', false);
-      setStepDirty('drying_tape', false);
-      setStepDirty('calendering', false);
-      setStepDirty('drying_pressed_tape', false);
-      
-      alert('Изменения сохранены');
+      clearAllDirtySteps();
+      showStatus('Изменения сохранены');
       return;
     }
     
     if (mode === 'edit') {
       
-      // 1. Update tape general info
+      // 1. Update tape general info only
       await updateTape(currentTapeId, data);
-      
-      // 2. Save actuals for each recipe line
-      for (const line of currentRecipeLines) {
-        
-        const recipeLineId = line.recipe_line_id;
-        
-        const instanceId = selectedInstanceByLineId[recipeLineId];
-        if (!instanceId) continue;
-        
-        const row = document.querySelector(
-          `#slurry-actuals-body tr[data-recipe-line-id="${recipeLineId}"]`
-        );          
-        
-        if (!row) continue;
-        
-        const modeSelect = row.querySelector('.actual-mode-select');
-        const valueInput = row.querySelector('.actual-value-input');
-        
-        if (!modeSelect || !valueInput) continue;
-        
-        const mode = modeSelect.value;
-        const value = Number(valueInput.value);
-        
-        const payload = {
-          recipe_line_id: recipeLineId,
-          material_instance_id: Number(instanceId)
-        };
-        
-        if (Number.isFinite(value) && value > 0) {
-          payload.measure_mode = mode;
-          
-          if (mode === 'mass') {
-            payload.actual_mass_g = value;
-          }
-          
-          if (mode === 'volume') {
-            payload.actual_volume_ml = value;
-          }
-        }
-        
-        await fetch(`/api/tapes/${currentTapeId}/actuals`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-      }
-      
-      setStepDirty('general_info', false);
-      setStepDirty('recipe_materials', false);
-      setStepDirty('drying_materials', false);
-      setStepDirty('drying_am', false);
-      setStepDirty('slurry', false);
-      setStepDirty('weighing', false);
-      setStepDirty('mixing', false);
-      setStepDirty('tape', false);
-      setStepDirty('coating', false);
-      setStepDirty('drying_tape', false);
-      setStepDirty('calendering', false);
-      setStepDirty('drying_pressed_tape', false);
-      
+
       await loadTapes();
-      alert('Изменения сохранены');
+      setStepDirty('general_info', false);
+      showStatus('Изменения сохранены');
       return;
     }
   } catch (err) {
     console.error(err);
+    showStatus('Ошибка сохранения', true);
   }
 });
 
@@ -1987,20 +2064,24 @@ clearBtn.addEventListener('click', () => {
   }
   
   // user chose to leave → clear flags so beforeunload doesn’t keep firing
-  setStepDirty('general_info', false);
-  setStepDirty('recipe_materials', false);
-  setStepDirty('drying_materials', false);
-  setStepDirty('drying_am', false);
-  setStepDirty('slurry', false);
-  setStepDirty('weighing', false);
-  setStepDirty('mixing', false);
-  setStepDirty('tape', false);
-  setStepDirty('coating', false);
-  setStepDirty('drying_tape', false);
-  setStepDirty('calendering', false);
-  setStepDirty('drying_pressed_tape', false);
+  clearAllDirtySteps();
   
   resetForm();
+});
+
+recipeMaterialsSaveBtn.addEventListener('click', async () => {
+  if (!currentTapeId) {
+    showStatus('Сначала создайте ленту', true);
+    return;
+  }
+
+  try {
+    await saveSelectedInstances(currentTapeId);
+    setStepDirty('recipe_materials', false);
+    showStatus('Выбор экземпляров сохранён');
+  } catch (err) {
+    showStatus(err.message, true);
+  }
 });
 
 // -------- Drying step helpers (generic for all drying blocks) --------
@@ -2059,9 +2140,10 @@ async function saveDryingStep({ code, prefix }) {
   btn.addEventListener('click', async () => {
     try {
       await saveDryingStep(cfg);
-      alert('Этап сушки сохранён');
+      setStepDirty(cfg.code, false);
+      showStatus('Изменения сохранены');
     } catch (err) {
-      alert(err.message);
+      showStatus(err.message, true);
     }
   });
 });
@@ -2103,11 +2185,14 @@ weighingSaveBtn.addEventListener('click', async () => {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Ошибка сохранения');
     }
+
+    await saveTapeActuals(currentTapeId);
     
-    alert('I.1 сохранён');
+    setStepDirty('weighing', false);
+    showStatus('Изменения сохранены');
     
   } catch (err) {
-    alert(err.message);
+    showStatus(err.message, true);
   }
 });
 
@@ -2233,30 +2318,60 @@ document.getElementById('1-mixing-save-btn').onclick = async () => {
   );
   
   if (!res.ok) {
-    alert('Ошибка сохранения этапа перемешивания');
+    showStatus('Ошибка сохранения этапа перемешивания', true);
     return;
   }
   
   setStepDirty('mixing', false);
-  alert('Этап перемешивания сохранён');
+  showStatus('Изменения сохранены');
 };
 
 // -------- II.1. Save coating --------
 
-function updateCoatingParamsVisibility() {
-  
+function updateCoatingParamsVisibility(applyDefaults = false) {
   const select = document.getElementById('2-coating-coating_id');
-  const params = document.getElementById('coating-params');
-  
+  const params = document.getElementById('2-coating-method-preview');
+  const gapInput = document.getElementById('2-coating-gap-um');
+  const tempInput = document.getElementById('2-coating-temp-c');
+  const timeInput = document.getElementById('2-coating-time-min');
+  const commentsInput = document.getElementById('2-coating-method-comments');
+
   if (!select || !params) return;
-  
+
+  const selectedOption = select.selectedOptions[0] || null;
   params.hidden = !select.value;
-  
+
+  if (!select.value || !selectedOption) {
+    if (gapInput) gapInput.value = '';
+    if (tempInput) tempInput.value = '';
+    if (timeInput) timeInput.value = '';
+    if (commentsInput) commentsInput.value = '';
+    return;
+  }
+
+  if (applyDefaults || (gapInput && !gapInput.value)) {
+    if (gapInput) gapInput.value = selectedOption.dataset.gapUm || '';
+  }
+  if (applyDefaults || (tempInput && !tempInput.value)) {
+    if (tempInput) tempInput.value = selectedOption.dataset.tempC || '';
+  }
+  if (applyDefaults || (timeInput && !timeInput.value)) {
+    if (timeInput) timeInput.value = selectedOption.dataset.timeMin || '';
+  }
+  if (applyDefaults || (commentsInput && !commentsInput.value)) {
+    if (commentsInput) commentsInput.value = selectedOption.dataset.comments || '';
+  }
 }
 
 document.getElementById('2-coating-save-btn').onclick = async () => {
   
   const tapeId = currentTapeId;
+  const gapValue = document.getElementById('2-coating-gap-um').value;
+  
+  if (!gapValue || !Number.isFinite(Number(gapValue)) || Number(gapValue) <= 0) {
+    showStatus('Укажите зазор, мкм', true);
+    return;
+  }
   
   const date = document.getElementById('2-coating-date').value;
   const time = document.getElementById('2-coating-time').value;
@@ -2269,26 +2384,31 @@ document.getElementById('2-coating-save-btn').onclick = async () => {
     started_at,
     comments: document.getElementById('2-cathode-tape-notes').value || null,
     foil_id: document.getElementById('2-coating-foil_id').value || null,
-    coating_id: document.getElementById('2-coating-coating_id').value || null
+    coating_id: document.getElementById('2-coating-coating_id').value || null,
+    gap_um: gapValue,
+    coat_temp_c: document.getElementById('2-coating-temp-c').value || null,
+    coat_time_min: document.getElementById('2-coating-time-min').value || null,
+    method_comments: document.getElementById('2-coating-method-comments').value || null
   };
   
-  await fetch(`/api/tapes/${tapeId}/steps/by-code/coating`, {
+  const res = await fetch(`/api/tapes/${tapeId}/steps/by-code/coating`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
   
   if (!res.ok) {
-    alert('Ошибка сохранения этапа нанесения');
+    showStatus('Ошибка сохранения этапа нанесения', true);
     return;
   }
   
-  alert('Этап нанесения сохранён');
+  setStepDirty('coating', false);
+  showStatus('Изменения сохранены');
 };
 
 document
 .getElementById('2-coating-coating_id')
-.addEventListener('change', updateCoatingParamsVisibility);
+.addEventListener('change', () => updateCoatingParamsVisibility(true));
 
 // -------- II.2. Save calendering --------
 
@@ -2365,11 +2485,13 @@ document.getElementById('2-calendering-save-btn').onclick = async () => {
   
   if (!res.ok) {
     const text = await res.text();
-    alert(text);
+    showStatus(text || 'Ошибка сохранения этапа каландрирования', true);
     return;
   }
   
-  console.log(await res.json());
+  await res.json().catch(() => null);
+  setStepDirty('calendering', false);
+  showStatus('Изменения сохранены');
 };
 
 document.getElementById('2-cal-other-check').addEventListener('change', e => {
@@ -2433,6 +2555,7 @@ loadWetMixingMethods(document.getElementById('1-mixing-wet_mixing_id'))
 .catch(console.error);
 
 loadFoils(document.getElementById('2-coating-foil_id'))
+.then(applyDefaultCoatingFoil)
 .catch(console.error);
 
 loadCoatingMethods(document.getElementById('2-coating-coating_id'))
@@ -2504,7 +2627,7 @@ updateMixParamsVisibility();
   
   const mark = () => {
     if (window.isRestoringTape) return; // do not mark dirty during restore
-    setStepDirty('recipe_materials', true);
+    setStepDirty('weighing', true);
   };
   
   tbody.addEventListener('input', mark);
@@ -2515,11 +2638,8 @@ updateMixParamsVisibility();
 (() => {
   
   const map = {
-    '0-drying_materials': 'drying_materials',
     '0-drying_am': 'drying_am',
-    '1-slurry': 'slurry',
     '1-weighing': 'weighing',
-    '2-tape': 'tape',
     '2-coating': 'coating',
     '2-drying_tape': 'drying_tape',
     '2-calendering': 'calendering',
