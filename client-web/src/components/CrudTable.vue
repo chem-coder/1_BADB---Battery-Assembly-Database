@@ -240,19 +240,80 @@ function onPageChange(event) {
   tableFirst.value = event.first
 }
 
-// ── CSV export ────────────────────────────────────────────────────────
+// ── Export (Excel / CSV / JSON) ───────────────────────────────────────
+const exportMenuVisible = ref(false)
+const exportBtnRef = ref(null)
+
+function toggleExportMenu() {
+  exportMenuVisible.value = !exportMenuVisible.value
+}
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function getExportData() {
+  return filteredData.value.map((r, i) => {
+    const row = { '№': i + 1 }
+    props.columns.forEach(c => { row[c.header] = r[c.field] ?? '' })
+    return row
+  })
+}
+
 function exportCSV() {
   const headers = ['№', ...props.columns.map(c => c.header)]
   const rows = filteredData.value.map((r, i) =>
-    [i + 1, ...props.columns.map(c => r[c.field] ?? '')].join(';')
+    [i + 1, ...props.columns.map(c => String(r[c.field] ?? '').replace(/;/g, ','))].join(';')
   )
   const csv = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = (localTableName.value || 'table') + '.csv'
-  a.click()
-  URL.revokeObjectURL(a.href)
+  downloadBlob(
+    new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+    (localTableName.value || 'table') + '.csv'
+  )
+  exportMenuVisible.value = false
+}
+
+function exportJSON() {
+  const data = filteredData.value.map(r => {
+    const row = {}
+    props.columns.forEach(c => { row[c.field] = r[c.field] ?? null })
+    return row
+  })
+  const json = JSON.stringify(data, null, 2)
+  downloadBlob(
+    new Blob([json], { type: 'application/json;charset=utf-8' }),
+    (localTableName.value || 'table') + '.json'
+  )
+  exportMenuVisible.value = false
+}
+
+function exportExcel() {
+  // HTML-table format — Excel opens natively without any library
+  const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const headers = ['№', ...props.columns.map(c => c.header)]
+  const headerRow = headers.map(h => `<th>${esc(h)}</th>`).join('')
+  const bodyRows = filteredData.value.map((r, i) => {
+    const cells = [i + 1, ...props.columns.map(c => r[c.field] ?? '')]
+    return '<tr>' + cells.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>'
+  }).join('\n')
+
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:x="urn:schemas-microsoft-com:office:excel"
+xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"/>
+<style>th{background:#e8edf5;font-weight:bold;border:1px solid #ccc;padding:4px 8px}
+td{border:1px solid #ddd;padding:4px 8px}</style></head>
+<body><table>${'<tr>' + headerRow + '</tr>'}\n${bodyRows}</table></body></html>`
+
+  downloadBlob(
+    new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8' }),
+    (localTableName.value || 'table') + '.xls'
+  )
+  exportMenuVisible.value = false
 }
 
 // ── Auto-fit column on double-click resizer ───────────────────────────
@@ -288,6 +349,10 @@ function onDocClick(e) {
     filterOverlay.value.style.display = 'none'
   }
   ctxMenuVisible.value = false
+  // Close export menu on outside click
+  if (exportBtnRef.value && !exportBtnRef.value.contains(e.target)) {
+    exportMenuVisible.value = false
+  }
 }
 
 onMounted(() => {
@@ -323,8 +388,21 @@ onUnmounted(() => {
       </template>
       <Button icon="pi pi-pencil" text size="small" severity="secondary"
         v-tooltip.bottom="'Переименовать'" @click="startEditTableName" class="ct-toolbar-btn" />
-      <Button icon="pi pi-download" text size="small" severity="secondary"
-        v-tooltip.bottom="'Скачать CSV'" @click="exportCSV" class="ct-toolbar-btn" />
+      <div class="ct-export-wrap" ref="exportBtnRef">
+        <Button icon="pi pi-download" text size="small" severity="secondary"
+          v-tooltip.bottom="'Выгрузить'" @click.stop="toggleExportMenu" class="ct-toolbar-btn" />
+        <div v-if="exportMenuVisible" class="ct-export-menu" @click.stop>
+          <button class="ct-export-item" @click="exportExcel">
+            <i class="pi pi-file-excel"></i> Excel (.xls)
+          </button>
+          <button class="ct-export-item" @click="exportCSV">
+            <i class="pi pi-file"></i> CSV
+          </button>
+          <button class="ct-export-item" @click="exportJSON">
+            <i class="pi pi-code"></i> JSON
+          </button>
+        </div>
+      </div>
       <span class="ct-sep"></span>
       <span class="ct-meta">Строк в окне (5–100)</span>
       <input type="number" v-model.number="visibleRows" min="5" max="100" step="5"
@@ -527,6 +605,49 @@ onUnmounted(() => {
 }
 .ct-spacer {
   flex: 1;
+}
+
+/* ── Export dropdown ── */
+.ct-export-wrap {
+  position: relative;
+}
+.ct-export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  background: rgba(248, 252, 255, 0.97);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(180, 210, 255, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 50, 116, 0.12);
+  padding: 0.3rem;
+  min-width: 140px;
+}
+.ct-export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #003274;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+  text-align: left;
+  white-space: nowrap;
+}
+.ct-export-item:hover {
+  background: rgba(0, 50, 116, 0.06);
+}
+.ct-export-item i {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  color: rgba(0, 50, 116, 0.5);
 }
 
 /* ── DataTable — transparent base ── */
