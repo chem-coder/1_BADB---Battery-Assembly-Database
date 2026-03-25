@@ -646,7 +646,7 @@ onUnmounted(() => {
         scrollable
         :scrollHeight="tableScrollHeight"
         resizableColumns
-        columnResizeMode="fit"
+        columnResizeMode="expand"
         reorderableColumns
         :rowClass="(data) => selectedRows.has(data.id) ? 'ds-row-selected' : ''"
         @rowClick="({ originalEvent, data, index }) => onRowClick(originalEvent, data, index)"

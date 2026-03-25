@@ -349,7 +349,7 @@ onUnmounted(() => {
       scrollable
       :scrollHeight="tableScrollHeight"
       resizableColumns
-      columnResizeMode="fit"
+      columnResizeMode="expand"
       reorderableColumns
       :rowClass="(data) => selectedRows.has(getRowId(data)) ? 'ct-row-selected' : ''"
       @rowClick="({ originalEvent, data, index }) => onRowClick(originalEvent, data, index)"
