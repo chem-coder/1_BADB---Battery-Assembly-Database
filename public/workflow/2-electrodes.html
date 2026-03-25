@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0" />
+    <title>Электроды</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+    
+    <style>
+      .electrodes-table-wrapper {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+      }
+      
+      .row-index {
+        color: #999;
+        text-align: right;
+        padding-right: 8px;
+        user-select: none;
+        width: 32px;
+      }
+    </style>
+    
+  </head>
+
+  <body data-page="electrodes">
+    
+    <div class="container">
+      
+      <header>
+        <h1>Электроды</h1>
+        <!-- Navigation button without text -->
+        <a href="/index.html" aria-label="Главная"><svg viewBox="0 0 24 24" width="24" height="24">
+          <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z"
+          fill="currentColor"/>
+        </svg></a>
+      </header>
+      
+      <!-- tape selection block -->
+      <fieldset id="choose-tape">
+        <label for="electrode-role">Тип электрода: </label>
+        <select id="electrode-role" required>
+          <option value="">— выбрать —</option>
+          <option value="cathode">Катоды</option>
+          <option value="anode">Аноды</option>
+        </select><br>
+        
+        <label for="electrodes-project_id">Проект: </label>
+        <select id="electrodes-project_id" required>
+          <option value="">— выбрать проект —</option>
+        </select>
+        <a href="/reference/projects.html" target="_blank" class="ref-link">
+          Управление проектами
+        </a><br>
+        
+        <label for="electrodes-tape_id">Лента: </label>
+        <select id="electrodes-tape_id" data-source="tapes" required>
+          <option value="">— выбрать ленту —</option>
+        </select><br>
+      </fieldset>
+      
+      <div id="cutting-workflow" hidden>
+        <form name="electrodes-cut_batch-form" autocomplete="on">
+          <div id="electrode-workspace" hidden>
+            
+            <!-- user & comments block -->
+            <fieldset>
+              <label for="electrodes-created_by">Оператор</label>
+              <select id="electrodes-created_by" required>
+                <option value="">— выбрать пользователя —</option>
+              </select>
+              <a href="/reference/users.html" target="_blank" class="ref-link">
+                Управление пользователями
+              </a><br>
+              
+              <label for="electrodes-comments">Заметки/комментарии: </label>
+              <textarea id="electrodes-comments" name="electrodes-comments" placeholder="Комментарии о вырезании электродов"></textarea>
+            </fieldset>
+            
+            <!-- geometry block -->
+            <fieldset id="geometry-block">
+              <legend>Геометрия электродов:</legend>
+              <p>Форма электродов:</p>
+              <label>
+                <input type="radio"
+                name="electrodes-shape"
+                value="circle"
+                data-params-target="electrodes-geom-circle">
+                Круг (монета)
+              </label><br>
+              <label>
+                <input type="radio"
+                name="electrodes-shape"
+                value="rectangle"
+                data-params-target="electrodes-geom-rect">
+                Прямоугольник (пауч, цилиндр)
+              </label><br><br>
+              
+              <!-- Для круглых электродов -->
+              <div id="electrodes-geom-circle" hidden>
+                <label for="electrodes-diameter">Диаметр электрода, мм: </label>
+                <input id="electrodes-diameter" type="number" step="0.01" min="0" name="electrodes-diameter"><br>
+              </div>
+              
+              <!-- Для прямоугольных электродов -->
+              <div id="electrodes-geom-rect" hidden>
+                <label for="electrodes-length">Длина электрода, мм: </label>
+                <input id="electrodes-length" type="number" step="0.01" min="0" name="electrodes-length"><br>
+                
+                <label for="electrodes-width">Ширина электрода, мм: </label>
+                <input id="electrodes-width" type="number" step="0.01" min="0" name="electrodes-width"><br>
+              </div>
+              
+              <!-- Площадь катода (рассчитывается автоматически) -->
+              <label>Площадь электрода, мм²: <span id="electrodes-area" class="computed-field"></span></label>
+            </fieldset>
+            
+            <!-- foil mass block -->
+            <fieldset id="mass-block">
+              <legend>Масса фольги</legend>
+              
+              <label for="foil-mass">Средняя масса фольги одного электрода, г: </label>
+              <input
+              id="foil-mass"
+              type="number"
+              step="0.0001"
+              min="0"
+              name="foil-mass"
+              disabled
+              ><br><br>
+              
+              <table id="foil-mass-table" border="1" cellpadding="6">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Масса, г</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="foil-mass-body"></tbody>
+              </table>
+              
+              <button type="button" id="add-foil-mass-row-btn">+</button>
+            </fieldset>
+            
+            <!--BUGS-->
+            <!--Add an "are you sure?" on the trashcan - I accidentally deleted an electrode -->
+            
+            <!-- electrodes table -->
+            <fieldset id="electrodes-table-block">
+              <legend> Масса электродов </legend>
+              
+              
+              <div class="electrodes-table-wrapper">
+                <table id="electrodes-table" border="1" cellpadding="6">
+                  <thead>
+                    <tr>
+                      <th class="row-index"></th>
+                      <th>№</th>
+                      <th>Масса, г</th>
+                      <th>Стаканчик №</th>
+                      <th>Комментарии</th>
+                      <th>Статус</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="electrodes-body"></tbody>
+                </table>
+              </div>
+              
+              <button type="button" id="add-electrode-row-btn">+</button>
+              
+            </fieldset>
+            
+            <!-- drying the batch -->
+            <fieldset id="electrodes-drying">
+              <legend>Сушка готовой партии электродов</legend>
+              
+              <label for="electrodes-drying-start-date">Дата начала: </label>
+              <input
+              id="electrodes-drying-start-date"
+              type="date"
+              name="electrodes-drying-start-date"
+              >
+              
+              <label for="electrodes-drying-start-time">Время начала: </label>
+              <input
+              id="electrodes-drying-start-time"
+              type="time"
+              name="electrodes-drying-start-time"
+              >
+              
+              <button
+              type="button"
+              class="date-time-now-button"
+              id="electrodes-drying-start-now-button"
+              >
+              Сейчас
+            </button>
+            <br>
+            
+            <label for="electrodes-drying-end-date">Дата окончания: </label>
+            <input
+            id="electrodes-drying-end-date"
+            type="date"
+            name="electrodes-drying-end-date"
+            >
+            
+            <label for="electrodes-drying-end-time">Время окончания: </label>
+            <input
+            id="electrodes-drying-end-time"
+            type="time"
+            name="electrodes-drying-end-time"
+            >
+            
+            <button
+            type="button"
+            class="date-time-now-button"
+            id="electrodes-drying-end-now-button"
+            >
+            Сейчас
+          </button>
+          <br>
+          
+          <label for="electrodes-drying-temperature">Температура, °C: </label>
+          <input
+          id="electrodes-drying-temperature"
+          type="number"
+          step="0.1"
+          min="-273"
+          name="electrodes-drying-temperature"
+          placeholder="Температура сушки"
+          >
+          <br>
+          
+          <label for="electrodes-drying-other-parameters">Дополнительные параметры: </label>
+          <textarea
+          id="electrodes-drying-other-parameters"
+          name="electrodes-drying-other-parameters"
+          placeholder="Например: вакуум, сухая комната, номер шкафа"
+          ></textarea>
+          <br>
+          
+          <label for="electrodes-drying-comments">Комментарии: </label>
+          <textarea
+          id="electrodes-drying-comments"
+          name="electrodes-drying-comments"
+          placeholder="Комментарии по сушке партии"
+          ></textarea>
+        </fieldset>
+        
+        <!-- save button -->           
+        <!-- I'm not sure what is saves though - the electrodes or the batch drying information? What is the right workflow here? -->
+        <button type="button" id="saveBtn">Сохранить партию</button>
+        <button type="button" id="exitBatchBtn">Выйти</button>
+        
+      </div>
+      
+      <div id="cut-batches-section">
+        <button type="button" id="add-cut-batch-btn" hidden>+ Добавить новую партию</button>
+        <h3>Вырезанные партии электродов</h3>
+        <div id="no-batches-msg">
+          Пока нет вырезанных партий электродов
+        </div>
+        
+        <h3 id="batch-title"></h3>
+        <ul id="cut-batches-list"></ul>
+      </div>
+      
+    </form>
+  </div>
+
+  <div class="autosave-message" aria-live="polite"></div>
+    </div>
+
+    <script src="/js/2-electrodes.js"></script>
+
+  </body>
+
+</html>

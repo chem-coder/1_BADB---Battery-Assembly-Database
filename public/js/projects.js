@@ -1,0 +1,393 @@
+const addInput = document.getElementById('project-name');
+const nameInput = document.getElementById('project-name-input');
+const form = document.forms['project-form'];
+const title = form.querySelector('h2');
+const saveBtn = document.getElementById('saveBtn');
+const clearBtn = document.getElementById('clearBtn');
+const exitBtn = document.getElementById('exitBtn');
+const createdBySelect = document.getElementById('project-created-by');
+
+const projectsList = document.getElementById('projectsList');
+const statusSelect = form.querySelector('select[name="status"]');
+const leadSelect = document.getElementById('project-lead-id');
+
+let mode = null; // 'create' | 'edit'
+let currentId = null;
+let initialFormState = null;
+
+function showForm() {
+  form.hidden = false;
+  addInput.disabled = true;
+}
+
+function hideForm() {
+  form.hidden = true;
+  addInput.disabled = false;
+}
+
+function captureFormState() {
+  return JSON.stringify({
+    mode,
+    title: title.textContent,
+    nameInput: nameInput.value,
+    created_by: createdBySelect.value,
+    lead_id: form.elements['lead_id'].value,
+    start_date: form.elements['start_date'].value,
+    due_date: form.elements['due_date'].value,
+    description: form.elements['description'].value,
+    status: form.elements['status'].value
+  });
+}
+
+function markFormPristine() {
+  initialFormState = captureFormState();
+}
+
+function hasUnsavedChanges() {
+  if (!mode) return false;
+  return captureFormState() !== initialFormState;
+}
+
+function resetForm() {
+  form.reset();
+  title.textContent = '';
+  mode = null;
+  currentId = null;
+  initialFormState = null;
+  hideForm();
+}
+
+function formDataToObject(form) {
+  return Object.fromEntries(new FormData(form));
+}
+
+
+// -------- API helpers --------
+
+async function fetchProjects() {
+  const res = await fetch('/api/projects');
+  return res.json();
+}
+
+async function createProject(data) {
+  const res = await fetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Ошибка сохранения');
+  }
+  
+  return res.json();
+}
+
+async function updateProject(id, data) {
+  const res = await fetch(`/api/projects/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  });
+  
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Ошибка обновления');
+  }
+  
+  return res.json();
+}
+
+async function deleteProject(id) {
+  const res = await fetch(`/api/projects/${id}`, {
+    method: 'DELETE'
+  });
+  
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Ошибка удаления');
+  }
+}
+
+
+// -------- Rendering --------
+
+function renderProjects(projects) {
+  projectsList.innerHTML = '';
+  
+  projects.forEach(proj => {
+    const li = document.createElement('li');
+    li.className = 'user-row';
+    
+    const info = document.createElement('div');
+    info.className = 'user-info';
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = proj.name;
+    
+    const statusSpan = document.createElement('span');
+    statusSpan.className = 'status';
+    statusSpan.textContent =
+    proj.status === 'active' ? 'активный' :
+    proj.status === 'paused' ? 'приостановлен' :
+    proj.status === 'completed' ? 'завершен' :
+    'архивирован';
+    
+    info.appendChild(nameSpan);
+    info.appendChild(statusSpan);
+    
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+    
+    const editBtn = document.createElement('button');
+    editBtn.textContent = '✏️';
+    editBtn.title = 'Редактировать';          
+    editBtn.onclick = () => {
+      mode = 'edit';
+      currentId = proj.project_id;
+      
+      // show form
+      showForm();
+      
+      // title + name
+      title.textContent = proj.name;
+      nameInput.value = proj.name;
+      
+      // Populate form with DB values (apply defaults for NULLs)
+      form.elements['lead_id'].value = proj.lead_id || '';
+      form.elements['start_date'].value = proj.start_date ? proj.start_date.slice(0,10) : '';
+      form.elements['due_date'].value = proj.due_date ? proj.due_date.slice(0,10) : '';
+      form.elements['description'].value = proj.description || '';
+      form.elements['status'].value = proj.status || 'active';
+      
+      // user (if present in list)
+      if (proj.created_by) {
+        createdBySelect.value = proj.created_by;
+      }
+
+      markFormPristine();
+    };
+    
+    const duplicateBtn = document.createElement('button');
+    duplicateBtn.textContent = '📄';
+    duplicateBtn.title = 'Дублировать';
+    
+    duplicateBtn.onclick = () => {
+      duplicateProject(proj);
+    };
+    
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = '🗑';
+    deleteBtn.title = 'Удалить';
+    deleteBtn.onclick = async () => {
+      if (!confirm(`Удалить проект "${proj.name}"?`)) return;
+      
+      try {
+        await deleteProject(proj.project_id);
+        showStatus('Проект удалён');
+        loadProjects();
+      } catch (err) {
+        showStatus(err.message, true);
+      }
+    };
+    
+    actions.appendChild(editBtn);
+    actions.appendChild(duplicateBtn);
+    actions.appendChild(deleteBtn);
+    
+    li.appendChild(info);
+    li.appendChild(actions);
+    
+    projectsList.appendChild(li);
+  });
+}
+
+function duplicateProject(proj) {
+  mode = 'create';
+  currentId = null;
+  
+  showForm();
+  
+  // title + name
+  const copyName = proj.name + ' (копия)';
+  title.textContent = copyName;
+  nameInput.value = copyName;
+  
+  // Populate form with DB values (apply defaults for NULLs)
+  form.elements['lead_id'].value = proj.lead_id || '';
+  form.elements['start_date'].value = proj.start_date ? proj.start_date.slice(0,10) : '';
+  form.elements['due_date'].value = proj.due_date ? proj.due_date.slice(0,10) : '';
+  form.elements['description'].value = proj.description || '';  
+  form.elements['status'].value = proj.status || 'active';
+  
+  // IMPORTANT: reset things that must be new
+  createdBySelect.value = '';
+  leadSelect.value = '';
+
+  markFormPristine();
+}      
+
+
+// -------- Status helper --------
+
+const statusBox = document.querySelector('.status-feedback');
+
+function showStatus(msg, isError = false) {
+  statusBox.textContent = msg;
+  statusBox.style.color = isError ? '#b00020' : 'darkcyan';
+  
+  setTimeout(() => {
+    statusBox.textContent = '';
+  }, 1000);
+}
+
+
+// -------- Reference dropdowns --------
+
+// Refresh user options without losing current selections
+async function loadUsers() {
+  const prevCreated = createdBySelect.value;
+  const prevLead = leadSelect.value;
+  
+  const res = await fetch('/api/users');
+  const users = await res.json();
+  
+  createdBySelect.innerHTML = '<option value="">— выбрать пользователя —</option>';
+  leadSelect.innerHTML = '<option value="">— выбрать пользователя —</option>';
+  
+  users.filter(u => u.active).forEach(u => {
+    const o1 = new Option(u.name, u.user_id);
+    const o2 = new Option(u.name, u.user_id);
+    createdBySelect.add(o1);
+    leadSelect.add(o2);
+  });
+  
+  createdBySelect.value = prevCreated;
+  leadSelect.value = prevLead;
+}
+
+// Refresh reference dropdowns on focus
+leadSelect.addEventListener('focus', loadUsers);
+createdBySelect.addEventListener('focus', loadUsers);
+
+
+// -------- Events --------
+
+addInput.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  
+  e.preventDefault();
+  
+  if (!form.hidden) return;   // prevent double-create
+  
+  const name = addInput.value.trim();
+  if (!name) return;
+  
+  mode = 'create';
+  currentId = null;
+  
+  title.textContent = name;
+  nameInput.value = name;
+  
+  showForm();
+  
+  addInput.value = '';
+  markFormPristine();
+});
+
+function validateRequiredFields() {
+  let missing = [];
+  
+  // clear previous highlights
+  createdBySelect.classList.remove('required-missing');
+  
+  if (!createdBySelect.value) {
+    missing.push('Кто добавил');
+    createdBySelect.classList.add('required-missing');
+  }
+  
+  if (missing.length) {
+    showStatus(
+      'Заполните обязательные поля: ' + missing.join(', '),
+      true
+    );
+    return false;
+  }
+  
+  return true;
+}
+
+saveBtn.addEventListener('click', async () => {
+  if (!mode) return;
+  
+  if (!validateRequiredFields()) return;
+  
+  const data = formDataToObject(form);
+  data.name = title.textContent;
+  
+  try {
+    if (mode === 'create') {
+      await createProject(data);
+      showStatus('Проект сохранён');
+    }
+    
+    if (mode === 'edit') {
+      await updateProject(currentId, data);
+      showStatus('Изменения сохранены');
+    }
+    
+    resetForm();
+    loadProjects();   // refresh list
+  } catch (err) {
+    showStatus(err.message, true);
+  }
+});
+
+clearBtn.addEventListener('click', resetForm);
+exitBtn.addEventListener('click', () => {
+  if (!hasUnsavedChanges()) {
+    resetForm();
+    return;
+  }
+
+  if (confirm('Выйти без сохранения изменений?')) {
+    resetForm();
+  }
+});
+
+/* ------ name: editable ------ */
+
+title.addEventListener('click', () => {
+  nameInput.hidden = false;
+  title.hidden = true;
+  nameInput.focus();
+});
+
+nameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    nameInput.blur();
+  }
+});
+
+nameInput.addEventListener('blur', () => {
+  const val = nameInput.value.trim();
+  if (!val) return;
+  
+  title.textContent = val;
+  title.hidden = false;
+  nameInput.hidden = true;
+});
+
+
+// -------- Init --------
+
+async function loadProjects() {
+  const projects = await fetchProjects();
+  renderProjects(projects);
+}
+
+hideForm();
+loadUsers();
+loadProjects();

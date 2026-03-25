@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport" 
+      content="width=device-width, initial-scale=1.0" />
+    <title>Структуры сепараторов</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+  </head>
+
+  <body data-page="separator-structures">
+    <header>
+      <h1>Структуры сепараторов</h1>
+      <a href="/index.html" aria-label="Главная"><svg viewBox="0 0 24 24" width="24" height="24">
+        <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z" fill="currentColor"/></svg>
+      </a>
+    </header>
+
+    <!-- Enter opens the form and copies the name into it -->
+    <input
+      id="structure-name"
+      type="text" 
+      name="name"
+      class="add-user"
+      placeholder="+ Добавить структуру (например: PP/PE/PP)"
+      autocomplete="off"
+      required
+    />
+    
+    <!-- Form hidden by default; shown on create/edit -->    
+    <form name="structure-form" id="structure-form" hidden>
+
+      <!-- FormData ignores fields without `name` -->
+    
+      <!-- hidden input for name (mirrors separators page) -->
+      <input type="text" name="name" id="structure-name-input" hidden />
+
+      <h2></h2>
+
+      <label for="structure-comments">Комментарии</label><br />
+      <textarea
+        id="structure-comments"
+        name="structure_comments"
+        rows="3"
+        cols="50"
+        placeholder="Описание, детали, замечания"
+      ></textarea>
+
+      <br /><br />
+      <button type="button" id="saveBtn">Сохранить</button>
+      <button type="button" id="clearBtn">Отменить</button>
+      <button type="button" id="exitBtn">Выход</button>
+    </form>
+
+    <div class="status-feedback" aria-live="polite"></div>
+
+    <ul id="structuresList" class="users-list"></ul>
+
+    <script src="/js/separator-structures.js"></script>
+    
+  </body>
+</html>

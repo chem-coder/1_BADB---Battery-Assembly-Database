@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>Recipes</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+
+    <style> 
+
+      /* ---------- details toggle ---------- */
+
+      details > summary {
+        list-style: none;
+        cursor: pointer;
+        position: relative;
+      }
+
+      details > summary::before {
+        content: "▸";
+        display: inline-block;
+        margin-right: 0.5rem;
+        transition: transform 0.15s ease;
+        color: #666;
+      }
+
+      details[open] > summary::before {
+        transform: rotate(90deg);
+      }
+
+      details[open] > summary {
+        background-color: #f6f7f8;
+      }
+
+      /* ---------- status visuals ---------- */
+
+      .batch-row[data-status="depleted"],
+      .batch-row[data-status="scrap"] {
+        opacity: 0.6;
+      }
+
+      /* ---------- recipe table ---------- */
+
+      #recipe-composition {
+        overflow-x: auto;
+      }
+
+      .recipe-table {
+        border-collapse: collapse;
+        table-layout: fixed;
+        min-width: 1200px;
+      }
+
+      .recipe-table th,
+      .recipe-table td {
+        padding: 0.25rem 0.4rem;
+        vertical-align: middle;
+        white-space: nowrap;
+        text-align: left;
+      }
+
+      .recipe-table thead th {
+        border-bottom: 1px solid #ccc;
+        font-weight: 600;
+      }
+
+      .recipe-table input,
+      .recipe-table select {
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      /* column sizing */
+      .recipe-table th:nth-child(1),
+      .recipe-table td:nth-child(1) { width: 180px; }
+
+      .recipe-table th:nth-child(2),
+      .recipe-table td:nth-child(2) { width: 260px; }
+
+      /* ---------- controls ---------- */
+
+      .measure-mode {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.15rem;
+      }
+
+      .measure-mode label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        margin: 0;
+      }
+
+      .measure-mode input {
+        margin: 0;
+      }
+      
+    </style>
+  </head>
+
+  <body data-page="recipes">
+    <header>
+      <h1>Рецепты</h1>
+      <a href="/index.html" aria-label="Главная">
+        <svg viewBox="0 0 24 24" width="24" height="24">
+          <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z"
+            fill="currentColor"/>
+        </svg>
+      </a>
+    </header>
+
+    <!-- Enter opens the form and copies the name into it -->
+    <input
+      id="recipe-name"
+      type="text"
+      name="name"
+      class="add-user"
+      placeholder="+ Добавить рецепт"
+      autocomplete="off"
+      required
+    />
+
+    <!-- Form hidden by default; shown on create/edit -->
+    <form name="recipe-form" autocomplete="off" hidden>
+
+      <!-- FormData ignores fields without `name` -->
+
+      <fieldset id="recipe-meta">
+        <legend>Метаданные</legend>
+
+        <label for="recipe-created-by">Кто добавил</label>
+        <select id="recipe-created-by" name="created_by" required>
+          <option value="">— выбрать пользователя —</option>
+        </select>
+        <a href="/reference/users.html" target="_blank" class="ref-link">
+          Управление пользователями
+        </a>
+      </fieldset>
+
+      <fieldset id="recipe-details">
+        <legend>Описание рецепта</legend>
+
+        <!-- Name copied here on create / "Enter" -->
+        <input
+          type="text"
+          name="name"
+          id="recipe-name-input"
+          required
+          hidden
+        />
+        <h2></h2>
+
+        <label for="recipe-variant">Вариант/версия</label>
+        <input
+          id="recipe-variant"
+          type="text"
+          name="variant_label"
+          placeholder="A / B / low binder / v2"
+        />
+
+        <label for="recipe-role">Роль электрода</label>
+        <select id="recipe-role" name="role" required disabled>
+          <option value="">— выбрать —</option>
+          <option value="cathode">катод</option>
+          <option value="anode">анод</option>
+        </select>
+
+        <label for="recipe-notes">Комментарии</label>
+        <textarea
+          id="recipe-notes"
+          name="notes"
+          rows="3"
+          placeholder="Кратко: что это за рецепт и чем отличается"
+        ></textarea>
+      </fieldset>
+
+      <fieldset id="recipe-composition">
+        <legend>Состав рецепта</legend>
+          <table class="recipe-table">
+            <thead>
+              <tr>
+                <th>Функциональная роль</th>
+                <th>Материал</th>
+                <th>% в пасте</th>
+                <th>Заметки</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="recipe-lines-rows"></tbody>
+          </table>
+        <button type="button" id="add-recipe-line">+ Добавить компонент</button>
+        <br>
+        <a href="/reference/materials.html" target="_blank" class="ref-link">
+          Управление материалами
+        </a>      
+      </fieldset>
+
+      <button id="saveBtn" type="button">Сохранить запись</button>
+      <button id="clearBtn" type="button">Выйти</button><br>
+    </form>
+
+    <div class="status-feedback" aria-live="polite"></div>
+    <ul id="recipesList" class="users-list"></ul>
+
+    <script src="/js/recipes.js"></script>
+  </body>
+</html>

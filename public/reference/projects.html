@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0" />
+    <title>Проекты</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+  </head>
+
+  <body data-page="projectsList">
+    <header>
+      <h1>Проекты</h1>
+        <a href="/index.html" aria-label="Главная"><svg viewBox="0 0 24 24" width="24" height="24">
+          <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z"fill="currentColor"/></svg>
+        </a>
+    </header>
+
+    <!-- Enter opens the form and copies the name into it -->
+    <input
+      id="project-name"
+      type="text" 
+      name="name"
+      class="add-user"
+      placeholder="+ Добавить проект"
+      autocomplete="off"
+      required
+    />
+    
+    <!-- Form hidden by default; shown on create/edit -->
+    <form name="project-form" autocomplete="off" hidden>
+
+      <!-- FormData ignores fields without `name` -->
+
+      <fieldset id="project-meta">
+        <legend>Метаданные</legend>
+
+        <label for="project-created-by">Кто добавил</label>
+        <select id="project-created-by" name="created_by" required>
+          <option value="">— выбрать пользователя —</option>
+        </select>
+        <a href="/reference/users.html" target="_blank" class="ref-link">
+          Управление пользователями
+        </a>
+      </fieldset>
+
+      <fieldset id="project-details">
+
+        <!-- Name copied here on create / "Enter" -->
+        <input
+          type="text"
+          name="name"
+          id="project-name-input"
+          required
+          hidden
+        />
+        <h2></h2>
+
+        <label for="project-lead-id">Руководитель</label>
+        <select id="project-lead-id" name="lead_id">
+          <option value="">— выбрать пользователя —</option>
+        </select>
+        <a href="/reference/users.html" target="_blank" class="ref-link">
+          Управление пользователями
+        </a>
+
+        <label for="project-description">Описание проекта </label><br>
+        <textarea
+          id="project-description"
+          name="description"
+          rows="3"
+          cols="50"
+          placeholder="Единицы измерения, методики (Гурли и т.п.), особые замечания"
+        ></textarea>
+
+        <label>Дата начала</label>
+        <input type="date" name="start_date">
+
+        <label>Плановая дата окончания</label>
+        <input type="date" name="due_date">
+      </fieldset>
+
+      <fieldset id="project-status">
+        <legend>Статус</legend>
+
+        <label>Статус</label>
+        <select name="status">
+          <option value="active">активный</option>
+          <option value="paused">приостановлен</option>
+          <option value="completed">завершен</option>
+          <option value="archived">архивирован</option>
+        </select>
+      </fieldset>
+
+      <button id="saveBtn" type="button">Сохранить запись</button>
+      <button id="clearBtn" type="button">Очистить форму</button>
+      <button id="exitBtn" type="button">Выход</button><br>
+
+    </form>
+
+    <div class="status-feedback" aria-live="polite"></div>
+    <ul id="projectsList" class="users-list"></ul>
+
+    <script src="/js/projects.js"></script>
+    
+  </body>
+</html>

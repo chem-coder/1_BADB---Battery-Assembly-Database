@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0" />
+    <title>Электролиты</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+  </head>
+
+  <body data-page="electrolytes">
+    <header>
+      <h1>Электролиты</h1>
+      <a href="/index.html" aria-label="Главная"><svg viewBox="0 0 24 24" width="24" height="24">
+        <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z" fill="currentColor"/></svg>
+      </a>
+    </header>
+
+    <!-- Enter opens the form and copies the name into it -->
+    <input
+      id="electrolyte-name"
+      name="name"
+      type="text"
+      class="add-user"
+      placeholder="+ Добавить электролит"
+      autocomplete="off"
+      required
+    />
+    
+    <!-- Form hidden by default; shown on create/edit -->
+    <form name="electrolyte-form" autocomplete="on" hidden>
+
+      <!-- FormData ignores fields without `name` -->
+
+      <fieldset id="electrolyte-meta">
+        <legend>Метаданные</legend>
+
+        <label for="electrolyte-created-by">Кто добавил</label>
+        <select id="electrolyte-created-by" name="created_by" required>
+          <option value="">— выбрать пользователя —</option>
+        </select>
+        <a href="/reference/users.html" target="_blank" class="ref-link">
+          Управление пользователями
+        </a><br>
+
+        <label for="electrolyte_type">Тип электролита</label>
+        <select id="electrolyte_type" name="electrolyte_type" required>
+          <option value="">— выбрать тип —</option>
+          <option value="liquid">Жидкий</option>
+          <option value="solid">Твёрдый</option>
+          <option value="gel">Гелевый</option>
+        </select><br>
+      </fieldset>
+
+      <fieldset id="electrolyte-chemistry">
+        <!-- Name copied here on create / "Enter" -->
+        <input
+          type="text"
+          name="name"
+          id="electrolyte-name-input"
+          required
+          hidden
+        />
+        <h2></h2>
+
+        <legend>Состав и описание (пока описательно)</legend>
+
+        <label for="electrolyte-solvent-system">Растворители (система)</label>
+        <input
+          id="electrolyte-solvent-system"
+          type="text"
+          name="solvent_system"
+          placeholder="например: EC/DMC 1:1"
+        /><br>
+
+        <label for="electrolyte-salts">Соли</label>
+        <input
+          id="electrolyte-salts"
+          type="text"
+          name="salts"
+          placeholder="например: LiPF6"
+        /><br>
+
+        <label for="electrolyte-concentration">Концентрация</label>
+        <input
+          id="electrolyte-concentration"
+          type="text"
+          name="concentration"
+          placeholder="например: 1 M"
+        /><br>
+
+        <label for="electrolyte-additives">Добавки</label>
+        <input
+          id="electrolyte-additives"
+          type="text"
+          name="additives"
+          placeholder="например: 2% VC"
+        /><br>
+
+        <label for="electrolyte-notes">Примечания</label><br>
+        <textarea
+          id="electrolyte-notes"
+          name="notes"
+          rows="3"
+          placeholder="Любая дополнительная информация"
+        ></textarea>
+      </fieldset>
+      
+      <fieldset id="electrolyte-status">
+        <legend>Статус</legend>
+
+        <label>Статус</label>
+        <select name="status">
+          <option value="active">активный</option>
+          <option value="inactive">не используется</option>
+          <option value="archived">архив</option>
+        </select>
+      </fieldset>
+
+      <fieldset id="electrolyte-files">
+        <legend>Файлы</legend>
+
+        <label for="electrolyte-files-input">Загрузить файлы</label>
+        <input
+          id="electrolyte-files-input"
+          type="file"
+          multiple
+        />
+        <button id="saveFilesBtn" type="button" hidden>Сохранить файлы</button>
+        <div id="electrolyte-files-saved"></div>
+      </fieldset>
+
+      <button id="saveBtn" type="button">Сохранить запись</button>
+      <button id="clearBtn" type="button">Выход</button><br>
+
+    </form>
+    <div class="status-feedback" aria-live="polite"></div>
+    <ul id="electrolytesList" class="users-list"></ul>
+
+    <script src="/js/electrolytes.js"></script>
+  </body>
+</html>

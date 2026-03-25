@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta 
+      name="viewport" 
+      content="width=device-width, initial-scale=1.0" 
+    />
+    <title>Materials</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+    
+    <style>
+      details > summary {
+        list-style: none; /* remove default marker */
+        cursor: pointer;
+        position: relative;
+      }
+
+      details > summary::before {
+        content: "▸";
+        display: inline-block;
+        margin-right: 0.5rem;
+        transition: transform 0.15s ease;
+        color: #666;
+      }
+
+      details[open] > summary::before {
+        transform: rotate(90deg);
+      }
+
+      details[open] > summary {
+        background-color: #f6f7f8;
+      }
+
+      .materials-toolbar {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        margin: 0.75rem 0;
+      }
+
+      .materials-toolbar button[disabled] {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .level-instance {
+  margin-left: 1.5rem;
+}
+
+.level-component {
+  margin-left: 3rem;
+}
+
+    </style>
+  </head>
+
+  <body data-page="materials">
+    <header>
+      <h1>Материалы</h1>
+      <a href="/index.html" aria-label="Главная"><svg viewBox="0 0 24 24" width="24" height="24">
+          <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z" fill="currentColor"/></svg>
+      </a>    
+    </header>
+
+    <form name="material-form" autocomplete="off" >
+      <section class="material-create">
+        <h2>Добавить материал</h2>
+
+        <input
+          type="text"
+          id="new-material-name"
+          placeholder="Название материала"
+          required
+        >
+
+        <select id="new-material-role" required>
+          <option value="">— выбрать роль —</option>
+          <option value="cathode_active">катодный активный материал</option>
+          <option value="anode_active">анодный активный материал</option>
+          <option value="binder">связующее</option>
+          <option value="conductive_additive">проводящая добавка</option>
+          <option value="solvent">растворитель</option>
+          <option value="other">другое</option>
+        </select>
+
+        <button id="createMaterialBtn" type="button">
+          Добавить
+        </button>
+      </section>
+    </form>
+    
+    <div class="status-feedback" aria-live="polite"></div>
+    <div class="materials-toolbar">
+      <button type="button" id="sortByNameBtn">
+        Сортировать по названию
+      </button>
+
+      <button type="button" id="sortByRoleBtn">
+        Сортировать по роли
+      </button>
+
+      <button type="button" id="toggleInstancesBtn">
+        Развернуть/свернуть экземпляры
+      </button>
+
+      <button type="button" id="toggleCompositionsBtn" disabled>
+        Развернуть/свернуть составы
+      </button>
+    </div>
+    <ul id="materialsList" class="users-list"></ul>
+
+    <script src="/js/materials.js"></script>
+  </body>
+</html>

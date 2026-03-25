@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta 
+      name="viewport"
+      content="width=device-width, initial-scale=1.0" 
+    />
+    <title>Пользователи</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+  </head>
+
+  <body data-page="users">
+    <header>
+      <h1>Пользователи</h1>
+      <a href="/index.html" aria-label="Главная"><svg viewBox="0 0 24 24" width="24" height="24">
+        <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z" fill="currentColor"/></svg>
+      </a>    
+    </header>
+
+    <input
+      id="addUserInput"
+      class="add-user"
+      placeholder="+ Добавить пользователя"
+      autocomplete="off"
+    />
+
+    <ul id="usersList" class="users-list"></ul>
+
+    <script src="/js/users.js"></script>
+
+  </body>
+</html>

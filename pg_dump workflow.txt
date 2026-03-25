@@ -1,0 +1,29 @@
+1) Backup DATA + SCHEMA (full dump)
+pg_dump -d badb_app_v1 > badb_app_v1_full.sql
+
+This includes:
+
+table structure
+data
+constraints
+2) Backup SCHEMA ONLY
+pg_dump -d badb_app_v1 --schema-only > badb_app_v1_schema.sql
+
+This includes:
+
+tables
+types
+constraints
+NO data
+Optional (good practice)
+
+Add clean/replace behavior:
+
+pg_dump -d badb_app_v1 --clean > badb_app_v1_full.sql
+pg_dump -d badb_app_v1 --schema-only --clean > badb_app_v1_schema.sql
+If username is needed
+pg_dump -U your_user -d badb_app_v1 > badb_app_v1_full.sql
+Restore reminder
+psql -d badb_app_v1 -f badb_app_v1_full.sql
+
+That’s all that is needed for your current workflow.
