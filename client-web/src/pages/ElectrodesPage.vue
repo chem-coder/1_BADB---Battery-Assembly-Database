@@ -210,7 +210,17 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.electrodes-page { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+.electrodes-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.electrodes-page :deep(.page-header) {
+  margin-bottom: 3px !important;
+}
 
 fieldset {
   border: none;

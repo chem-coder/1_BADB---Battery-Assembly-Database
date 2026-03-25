@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import api from '@/services/api'
 import { useStatus } from '@/composables/useStatus'
+import PageHeader from '@/components/PageHeader.vue'
 
 const { statusMsg, statusError, showStatus } = useStatus()
 
@@ -342,7 +343,9 @@ onMounted(loadMaterials)
 </script>
 
 <template>
-  <div>
+  <div class="materials-page">
+    <PageHeader title="Материалы" icon="pi pi-warehouse" />
+
     <!-- Create material -->
     <div class="material-create-form">
       <input
@@ -581,6 +584,18 @@ onMounted(loadMaterials)
 </template>
 
 <style scoped>
+.materials-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.materials-page :deep(.page-header) {
+  margin-bottom: 3px !important;
+}
+
 .material-create-form {
   margin-bottom: 1rem;
 }

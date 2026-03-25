@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import api from '@/services/api'
 import { useStatus } from '@/composables/useStatus'
+import PageHeader from '@/components/PageHeader.vue'
 
 const { statusMsg, statusError, showStatus } = useStatus()
 
@@ -288,7 +289,9 @@ onMounted(() => { loadRecipes(); loadUsers() })
 </script>
 
 <template>
-  <div>
+  <div class="recipes-page">
+    <PageHeader title="Рецептуры" icon="pi pi-file-edit" />
+
     <input
       v-model="newName"
       class="add-input"
@@ -428,6 +431,18 @@ onMounted(() => { loadRecipes(); loadUsers() })
 </template>
 
 <style scoped>
+.recipes-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.recipes-page :deep(.page-header) {
+  margin-bottom: 3px !important;
+}
+
 .recipe-table {
   border-collapse: collapse;
   table-layout: fixed;

@@ -1,25 +1,26 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+/**
+ * AssemblyPage — "Сборка аккумуляторов"
+ * Uses CrudTable + SaveIndicator (from Design System).
+ * Only page-specific logic: data loading, column config, custom cell renderers.
+ */
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import Button from 'primevue/button'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
 import PageHeader from '@/components/PageHeader.vue'
+import SaveIndicator from '@/components/SaveIndicator.vue'
+import CrudTable from '@/components/CrudTable.vue'
 
 const router = useRouter()
 const toast = useToast()
+const crudTable = ref(null)
 
+// ── Data ───────────────────────────────────────────────────────────────
 const batteries = ref([])
 const loading = ref(false)
 
 const ffLabels = { coin: 'Монеточный', pouch: 'Пакетный', cylindrical: 'Цилиндрический' }
-
-function formatDate(dt) {
-  if (!dt) return '—'
-  return new Date(dt).toLocaleDateString('ru-RU')
-}
 
 async function loadBatteries() {
   loading.value = true
@@ -27,81 +28,148 @@ async function loadBatteries() {
     const { data } = await api.get('/api/batteries')
     batteries.value = data
   } catch {
-    batteries.value = []
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить аккумуляторы', life: 3000 })
   } finally {
     loading.value = false
   }
 }
 
-async function confirmDelete(battery) {
-  if (!confirm(`Удалить аккумулятор #${battery.battery_id}?`)) return
+onMounted(loadBatteries)
+
+// ── Column config ──────────────────────────────────────────────────────
+const columns = [
+  { field: 'battery_id',  header: 'ID',           minWidth: '60px',  width: '80px' },
+  { field: 'form_factor', header: 'Форм-фактор',  minWidth: '100px' },
+  { field: 'created_at',  header: 'Создан',        minWidth: '80px',  width: '120px' },
+  { field: 'notes',       header: 'Заметки',       minWidth: '120px', sortable: false, filterable: false },
+]
+
+// ── Save indicator (delete flow) ──────────────────────────────────────
+const pendingDelete = ref([])
+const saveState = ref('idle')
+let saveTimer = null
+
+async function onDelete(items) {
+  pendingDelete.value = items
+  saveState.value = 'idle'
+}
+
+async function confirmSave() {
   try {
-    await api.delete(`/api/batteries/${battery.battery_id}`)
+    for (const item of pendingDelete.value) {
+      await api.delete(`/api/batteries/${item.battery_id}`)
+    }
     toast.add({ severity: 'success', summary: 'Удалено', life: 3000 })
+    pendingDelete.value = []
+    saveState.value = 'saved'
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
+    crudTable.value?.clearSelection()
     await loadBatteries()
   } catch {
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
   }
 }
 
-onMounted(loadBatteries)
+function discardChanges() {
+  pendingDelete.value = []
+  saveState.value = 'idle'
+  crudTable.value?.clearSelection()
+}
+
+onUnmounted(() => clearTimeout(saveTimer))
+
+// ── Helpers ────────────────────────────────────────────────────────────
+function formatDate(dt) {
+  if (!dt) return '—'
+  return new Date(dt).toLocaleDateString('ru-RU')
+}
 </script>
 
 <template>
   <div class="assembly-page">
+
     <PageHeader title="Сборка" icon="pi pi-box">
       <template #actions>
-        <Button label="Новый аккумулятор" icon="pi pi-plus" @click="router.push('/assembly/new')" />
+        <SaveIndicator
+          :visible="pendingDelete.length > 0 || saveState === 'saved'"
+          :saved="saveState === 'saved'"
+          @save="confirmSave"
+          @cancel="discardChanges"
+        />
       </template>
     </PageHeader>
 
-    <DataTable
-      :value="batteries"
+    <CrudTable
+      ref="crudTable"
+      :columns="columns"
+      :data="batteries"
       :loading="loading"
-      sortMode="multiple"
-      removableSort
-      paginator
-      :rows="25"
-      :rowsPerPageOptions="[25, 50, 100]"
-      stateStorage="session"
-      stateKey="assembly-list-state"
-      rowHover
-      @rowClick="e => router.push(`/assembly/${e.data.battery_id}`)"
-      class="tvel-table"
-      style="cursor: pointer"
+      id-field="battery_id"
+      table-name="Аккумуляторы"
+      show-add
+      row-clickable
+      @add="router.push('/assembly/new')"
+      @delete="onDelete"
+      @row-click="(data) => router.push(`/assembly/${data.battery_id}`)"
     >
-      <Column field="battery_id" header="ID" sortable style="width: 80px">
-        <template #body="{ data }">#{{ data.battery_id }}</template>
-      </Column>
-      <Column field="form_factor" header="Форм-фактор" sortable>
-        <template #body="{ data }">{{ ffLabels[data.form_factor] || data.form_factor || '' }}</template>
-      </Column>
-      <Column field="created_at" header="Создан" sortable style="width: 120px">
-        <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
-      </Column>
-      <Column field="notes" header="Заметки">
-        <template #body="{ data }">{{ data.notes || '' }}</template>
-      </Column>
-      <Column header="" style="width: 80px; text-align: right">
-        <template #body="{ data }">
-          <div class="battery-actions">
-            <Button icon="pi pi-pencil" text rounded size="small" severity="secondary"
-              @click.stop="router.push(`/assembly/${data.battery_id}`)" title="Редактировать" />
-            <Button icon="pi pi-trash" text rounded size="small" severity="danger"
-              @click.stop="confirmDelete(data)" title="Удалить" />
-          </div>
-        </template>
-      </Column>
-    </DataTable>
+      <!-- Custom cell: ID -->
+      <template #col-battery_id="{ data }">
+        <strong>#{{ data.battery_id }}</strong>
+      </template>
+
+      <!-- Custom cell: Форм-фактор -->
+      <template #col-form_factor="{ data }">
+        <span v-if="data.form_factor" class="ff-badge">
+          {{ ffLabels[data.form_factor] || data.form_factor }}
+        </span>
+        <span v-else class="text-muted">—</span>
+      </template>
+
+      <!-- Custom cell: Создан -->
+      <template #col-created_at="{ data }">{{ formatDate(data.created_at) }}</template>
+
+      <!-- Custom cell: Заметки -->
+      <template #col-notes="{ data }">
+        <span class="notes-text">{{ data.notes || '' }}</span>
+      </template>
+    </CrudTable>
+
   </div>
 </template>
 
 <style scoped>
-.assembly-page { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
-
-.battery-actions {
+.assembly-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
   display: flex;
-  gap: 0.15rem;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.assembly-page :deep(.page-header) {
+  margin-bottom: 3px !important;
+}
+
+/* ── Page-specific cell styles only ── */
+.ff-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  background: rgba(0, 50, 116, 0.08);
+  color: #003274;
+  border: 0.5px solid rgba(0, 50, 116, 0.15);
+}
+.text-muted {
+  color: rgba(0, 50, 116, 0.28);
+  font-size: 13px;
+}
+.notes-text {
+  font-size: 13px;
+  color: rgba(0, 50, 116, 0.7);
 }
 </style>

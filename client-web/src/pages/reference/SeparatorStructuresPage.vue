@@ -1,218 +1,236 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+/**
+ * SeparatorStructuresPage — "Структуры сепараторов" (справочник)
+ * Uses CrudTable + SaveIndicator (from Design System).
+ * Simple CRUD with inline edit via Dialog.
+ */
+import { ref, onMounted, onUnmounted } from 'vue'
+import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import { useStatus } from '@/composables/useStatus'
+import PageHeader from '@/components/PageHeader.vue'
+import SaveIndicator from '@/components/SaveIndicator.vue'
+import CrudTable from '@/components/CrudTable.vue'
+import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
+import InputText from 'primevue/inputtext'
+import Textarea from 'primevue/textarea'
 
-const { statusMsg, statusError, showStatus } = useStatus()
+const toast = useToast()
+const crudTable = ref(null)
 
+// ── Data ───────────────────────────────────────────────────────────────
 const structuresList = ref([])
-const newName = ref('')
+const loading = ref(false)
 
-// Create form state
-const formVisible = ref(false)
-const mode = ref(null)
-const titleText = ref('')
-const titleEditing = ref(false)
-const titleInput = ref('')
-const formComments = ref('')
-
-function resetForm() {
-  titleText.value = ''
-  titleEditing.value = false
-  titleInput.value = ''
-  formComments.value = ''
-  mode.value = null
-  formVisible.value = false
-}
-
-// Inline edit state
-const editingId = ref(null)
-const editName = ref('')
-const editComments = ref('')
-
-// API
 async function loadStructures() {
-  const { data } = await api.get('/api/structures')
-  structuresList.value = data.sort((a, b) => a.name.localeCompare(b.name))
-}
-
-async function saveStructure() {
-  if (!mode.value) return
-
-  const payload = {
-    name: titleText.value,
-    structure_comments: formComments.value.trim() || null,
-  }
-
+  loading.value = true
   try {
-    await api.post('/api/structures', payload)
-    showStatus('Структура сохранена')
-    resetForm()
-    loadStructures()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка добавления структуры', true)
-  }
-}
-
-async function deleteStructure(s) {
-  if (!confirm(`Удалить структуру "${s.name}"?`)) return
-  try {
-    await api.delete(`/api/structures/${s.sep_str_id}`)
-    showStatus('Удалено')
-    loadStructures()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка удаления структуры', true)
-  }
-}
-
-// Actions
-function onAddEnter() {
-  if (formVisible.value) return
-  const name = newName.value.trim()
-  if (!name) return
-
-  mode.value = 'create'
-  titleText.value = name
-  formVisible.value = true
-  newName.value = ''
-}
-
-// Editable title (create form)
-function startTitleEdit() {
-  titleInput.value = titleText.value
-  titleEditing.value = true
-}
-
-function finishTitleEdit() {
-  const val = titleInput.value.trim()
-  if (val) titleText.value = val
-  titleEditing.value = false
-}
-
-// Inline edit (for existing items)
-function startInlineEdit(s) {
-  editingId.value = s.sep_str_id
-  editName.value = s.name
-  editComments.value = s.structure_comments || s.comments || ''
-}
-
-function cancelInlineEdit() {
-  editingId.value = null
-}
-
-async function saveInlineEdit(id) {
-  const newNameVal = editName.value.trim()
-  if (!newNameVal) return
-
-  try {
-    await api.put(`/api/structures/${id}`, {
-      name: newNameVal,
-      structure_comments: editComments.value.trim() || null,
-    })
-    showStatus('Сохранено')
-    editingId.value = null
-    loadStructures()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка обновления структуры', true)
-  }
-}
-
-function onInlineKeydown(e, id) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    saveInlineEdit(id)
-  }
-  if (e.key === 'Escape') {
-    cancelInlineEdit()
+    const { data } = await api.get('/api/structures')
+    structuresList.value = data.sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить структуры', life: 3000 })
+  } finally {
+    loading.value = false
   }
 }
 
 onMounted(loadStructures)
+
+// ── Column config ──────────────────────────────────────────────────────
+const columns = [
+  { field: 'name',                header: 'Название',     minWidth: '150px' },
+  { field: 'structure_comments',  header: 'Комментарий',  minWidth: '200px', sortable: false },
+]
+
+// ── Save indicator (delete flow) ──────────────────────────────────────
+const pendingDelete = ref([])
+const saveState = ref('idle')
+let saveTimer = null
+
+function onDelete(items) {
+  pendingDelete.value = items
+  saveState.value = 'idle'
+}
+
+async function confirmSave() {
+  try {
+    for (const item of pendingDelete.value) {
+      await api.delete(`/api/structures/${item.sep_str_id}`)
+    }
+    toast.add({ severity: 'success', summary: 'Удалено', life: 3000 })
+    pendingDelete.value = []
+    saveState.value = 'saved'
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
+    crudTable.value?.clearSelection()
+    await loadStructures()
+  } catch {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
+  }
+}
+
+function discardChanges() {
+  pendingDelete.value = []
+  saveState.value = 'idle'
+  crudTable.value?.clearSelection()
+}
+
+onUnmounted(() => clearTimeout(saveTimer))
+
+// ── Form (Dialog) ─────────────────────────────────────────────────────
+const formVisible = ref(false)
+const mode = ref(null)
+const currentId = ref(null)
+
+const form = ref({
+  name: '',
+  structure_comments: '',
+})
+
+function resetForm() {
+  form.value = { name: '', structure_comments: '' }
+  mode.value = null
+  currentId.value = null
+  formVisible.value = false
+}
+
+function openCreate() {
+  resetForm()
+  mode.value = 'create'
+  formVisible.value = true
+}
+
+function openEdit(s) {
+  mode.value = 'edit'
+  currentId.value = s.sep_str_id
+  form.value = {
+    name: s.name || '',
+    structure_comments: s.structure_comments || s.comments || '',
+  }
+  formVisible.value = true
+}
+
+async function saveStructure() {
+  if (!mode.value) return
+  if (!form.value.name?.trim()) {
+    toast.add({ severity: 'warn', summary: 'Заполните название', life: 3000 })
+    return
+  }
+
+  const payload = {
+    name: form.value.name,
+    structure_comments: form.value.structure_comments.trim() || null,
+  }
+
+  try {
+    if (mode.value === 'create') {
+      await api.post('/api/structures', payload)
+      toast.add({ severity: 'success', summary: 'Структура создана', life: 3000 })
+    } else {
+      await api.put(`/api/structures/${currentId.value}`, payload)
+      toast.add({ severity: 'success', summary: 'Изменения сохранены', life: 3000 })
+    }
+    resetForm()
+    await loadStructures()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка сохранения', life: 3000 })
+  }
+}
 </script>
 
 <template>
-  <div>
-    <input
-      v-model="newName"
-      class="add-input"
-      :disabled="formVisible"
-      placeholder="+ Добавить структуру (например: PP/PE/PP)"
-      autocomplete="off"
-      @keydown.enter="onAddEnter"
-    />
+  <div class="structures-page">
 
-    <!-- Create form -->
-    <form v-if="formVisible" @submit.prevent="saveStructure">
-      <input
-        v-if="titleEditing"
-        v-model="titleInput"
-        @blur="finishTitleEdit"
-        @keydown.enter.prevent="finishTitleEdit"
-      />
-      <h2 v-else style="cursor: pointer" @click="startTitleEdit">{{ titleText }}</h2>
+    <PageHeader title="Структуры сепараторов" icon="pi pi-sitemap">
+      <template #actions>
+        <SaveIndicator
+          :visible="pendingDelete.length > 0 || saveState === 'saved'"
+          :saved="saveState === 'saved'"
+          @save="confirmSave"
+          @cancel="discardChanges"
+        />
+      </template>
+    </PageHeader>
 
-      <label>Комментарии</label><br />
-      <textarea
-        v-model="formComments"
-        rows="3"
-        cols="50"
-        placeholder="Описание, детали, замечания"
-      ></textarea>
-
-      <br /><br />
-      <button type="submit">Сохранить</button>
-      <button type="button" @click="resetForm">Отменить</button>
-    </form>
-
-    <div
-      v-if="statusMsg"
-      class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : 'darkcyan' }"
+    <CrudTable
+      ref="crudTable"
+      :columns="columns"
+      :data="structuresList"
+      :loading="loading"
+      id-field="sep_str_id"
+      table-name="Структуры"
+      show-add
+      row-clickable
+      @add="openCreate"
+      @delete="onDelete"
+      @row-click="(data) => openEdit(data)"
     >
-      {{ statusMsg }}
-    </div>
+      <!-- Custom cell: Название (bold) -->
+      <template #col-name="{ data }">
+        <strong>{{ data.name }}</strong>
+      </template>
 
-    <!-- List -->
-    <ul class="items-list">
-      <li
-        v-for="s in structuresList"
-        :key="s.sep_str_id"
-        class="item-row"
-        :class="{ 'edit-row': editingId === s.sep_str_id }"
-      >
-        <!-- View mode -->
-        <template v-if="editingId !== s.sep_str_id">
-          <div class="item-info">
-            <div>{{ s.name }}</div>
-            <div
-              v-if="s.structure_comments || s.comments"
-              style="font-size: 0.85rem; color: #666"
-            >
-              {{ s.structure_comments || s.comments }}
-            </div>
-          </div>
-          <div class="actions">
-            <button title="Редактировать" @click="startInlineEdit(s)">✏️</button>
-            <button title="Удалить" @click="deleteStructure(s)">🗑</button>
-          </div>
-        </template>
+      <!-- Custom cell: Комментарий -->
+      <template #col-structure_comments="{ data }">
+        <span class="comment-text">{{ data.structure_comments || data.comments || '—' }}</span>
+      </template>
+    </CrudTable>
 
-        <!-- Inline edit mode -->
-        <template v-else>
-          <div class="item-info">
-            <input
-              v-model="editName"
-              @keydown="onInlineKeydown($event, s.sep_str_id)"
-            />
-            <textarea
-              v-model="editComments"
-              rows="2"
-              placeholder="Комментарий (необязательно)"
-              @keydown="onInlineKeydown($event, s.sep_str_id)"
-            ></textarea>
-          </div>
-        </template>
-      </li>
-    </ul>
+    <!-- ── Create / Edit Dialog ── -->
+    <Dialog
+      v-model:visible="formVisible"
+      :header="mode === 'create' ? 'Новая структура' : 'Редактирование структуры'"
+      :style="{ width: '460px' }"
+      modal
+      @hide="resetForm"
+    >
+      <div class="form-grid">
+        <label>Название</label>
+        <InputText v-model="form.name" placeholder="PP/PE/PP" class="w-full" />
+
+        <label>Комментарий</label>
+        <Textarea v-model="form.structure_comments" rows="3" placeholder="Описание, детали" class="w-full" />
+      </div>
+
+      <template #footer>
+        <Button label="Отмена" severity="secondary" outlined @click="resetForm" />
+        <Button :label="mode === 'create' ? 'Создать' : 'Сохранить'" @click="saveStructure" />
+      </template>
+    </Dialog>
+
   </div>
 </template>
+
+<style scoped>
+.structures-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.structures-page :deep(.page-header) {
+  margin-bottom: 3px !important;
+}
+
+/* ── Form styles ── */
+.form-grid {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 10px 16px;
+  align-items: center;
+}
+.form-grid label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #003274;
+}
+.w-full { width: 100%; }
+
+/* ── Page-specific cell styles ── */
+.comment-text {
+  font-size: 13px;
+  color: rgba(0, 50, 116, 0.6);
+}
+</style>

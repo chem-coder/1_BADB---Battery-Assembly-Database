@@ -1,23 +1,100 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+/**
+ * ProjectsPage — "Проекты" (справочник)
+ * Uses CrudTable + SaveIndicator (from Design System).
+ * Create/edit form in Dialog — CrudTable handles the list.
+ */
+import { ref, onMounted, onUnmounted } from 'vue'
+import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import { useStatus } from '@/composables/useStatus'
+import PageHeader from '@/components/PageHeader.vue'
+import SaveIndicator from '@/components/SaveIndicator.vue'
+import CrudTable from '@/components/CrudTable.vue'
+import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
+import InputText from 'primevue/inputtext'
+import Textarea from 'primevue/textarea'
 
-const { statusMsg, statusError, showStatus } = useStatus()
+const toast = useToast()
+const crudTable = ref(null)
 
+// ── Data ───────────────────────────────────────────────────────────────
 const projects = ref([])
 const activeUsers = ref([])
-const newName = ref('')
+const loading = ref(false)
 
-// Form state
+async function loadProjects() {
+  loading.value = true
+  try {
+    const { data } = await api.get('/api/projects')
+    projects.value = data
+  } catch {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить проекты', life: 3000 })
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadUsers() {
+  try {
+    const { data } = await api.get('/api/users')
+    activeUsers.value = data.filter(u => u.active)
+  } catch {}
+}
+
+onMounted(() => { loadProjects(); loadUsers() })
+
+// ── Column config ──────────────────────────────────────────────────────
+const columns = [
+  { field: 'name',        header: 'Название',     minWidth: '120px' },
+  { field: 'description', header: 'Описание',     minWidth: '150px', sortable: false },
+  { field: 'start_date',  header: 'Начало',       minWidth: '80px',  width: '120px' },
+  { field: 'due_date',    header: 'Окончание',    minWidth: '80px',  width: '120px' },
+  { field: 'status',      header: 'Статус',       minWidth: '80px',  width: '130px' },
+]
+
+// ── Save indicator (delete flow) ──────────────────────────────────────
+const pendingDelete = ref([])
+const saveState = ref('idle')
+let saveTimer = null
+
+function onDelete(items) {
+  pendingDelete.value = items
+  saveState.value = 'idle'
+}
+
+async function confirmSave() {
+  try {
+    for (const item of pendingDelete.value) {
+      await api.delete(`/api/projects/${item.project_id}`)
+    }
+    toast.add({ severity: 'success', summary: 'Удалено', life: 3000 })
+    pendingDelete.value = []
+    saveState.value = 'saved'
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
+    crudTable.value?.clearSelection()
+    await loadProjects()
+  } catch {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
+  }
+}
+
+function discardChanges() {
+  pendingDelete.value = []
+  saveState.value = 'idle'
+  crudTable.value?.clearSelection()
+}
+
+onUnmounted(() => clearTimeout(saveTimer))
+
+// ── Form (Dialog) ─────────────────────────────────────────────────────
 const formVisible = ref(false)
-const mode = ref(null)       // 'create' | 'edit'
+const mode = ref(null)
 const currentId = ref(null)
-const titleText = ref('')
-const titleEditing = ref(false)
-const titleInput = ref('')
 
 const form = ref({
+  name: '',
   created_by: '',
   lead_id: '',
   description: '',
@@ -27,80 +104,26 @@ const form = ref({
 })
 
 function resetForm() {
-  form.value = { created_by: '', lead_id: '', description: '', start_date: '', due_date: '', status: 'active' }
-  titleText.value = ''
-  titleEditing.value = false
-  titleInput.value = ''
+  form.value = {
+    name: '', created_by: '', lead_id: '', description: '',
+    start_date: '', due_date: '', status: 'active',
+  }
   mode.value = null
   currentId.value = null
   formVisible.value = false
 }
 
-// API
-async function loadProjects() {
-  const { data } = await api.get('/api/projects')
-  projects.value = data
-}
-
-async function loadUsers() {
-  const { data } = await api.get('/api/users')
-  activeUsers.value = data.filter(u => u.active)
-}
-
-async function saveProject() {
-  if (!mode.value) return
-  if (!form.value.created_by) {
-    showStatus('Заполните обязательные поля: Кто добавил', true)
-    return
-  }
-
-  const payload = { ...form.value, name: titleText.value }
-
-  try {
-    if (mode.value === 'create') {
-      await api.post('/api/projects', payload)
-      showStatus('Проект сохранён')
-    } else {
-      await api.put(`/api/projects/${currentId.value}`, payload)
-      showStatus('Изменения сохранены')
-    }
-    resetForm()
-    loadProjects()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка сохранения', true)
-  }
-}
-
-async function deleteProject(proj) {
-  if (!confirm(`Удалить проект "${proj.name}"?`)) return
-  try {
-    await api.delete(`/api/projects/${proj.project_id}`)
-    showStatus('Проект удалён')
-    loadProjects()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка удаления', true)
-  }
-}
-
-// Actions
-function onAddEnter() {
-  if (formVisible.value) return
-  const name = newName.value.trim()
-  if (!name) return
-
+function openCreate() {
+  resetForm()
   mode.value = 'create'
-  currentId.value = null
-  titleText.value = name
   formVisible.value = true
-  newName.value = ''
 }
 
-function startEdit(proj) {
+function openEdit(proj) {
   mode.value = 'edit'
   currentId.value = proj.project_id
-  titleText.value = proj.name
-
   form.value = {
+    name: proj.name || '',
     created_by: proj.created_by || '',
     lead_id: proj.lead_id || '',
     description: proj.description || '',
@@ -108,138 +131,218 @@ function startEdit(proj) {
     due_date: proj.due_date ? proj.due_date.slice(0, 10) : '',
     status: proj.status || 'active',
   }
-
   formVisible.value = true
-  loadUsers()
 }
 
-function duplicateProject(proj) {
-  mode.value = 'create'
-  currentId.value = null
-  titleText.value = proj.name + ' (копия)'
-
-  form.value = {
-    created_by: '',
-    lead_id: '',
-    description: proj.description || '',
-    start_date: proj.start_date ? proj.start_date.slice(0, 10) : '',
-    due_date: proj.due_date ? proj.due_date.slice(0, 10) : '',
-    status: proj.status || 'active',
+async function saveProject() {
+  if (!mode.value) return
+  if (!form.value.name?.trim()) {
+    toast.add({ severity: 'warn', summary: 'Заполните название', life: 3000 })
+    return
   }
 
-  formVisible.value = true
-  loadUsers()
+  const payload = { ...form.value }
+
+  try {
+    if (mode.value === 'create') {
+      await api.post('/api/projects', payload)
+      toast.add({ severity: 'success', summary: 'Проект создан', life: 3000 })
+    } else {
+      await api.put(`/api/projects/${currentId.value}`, payload)
+      toast.add({ severity: 'success', summary: 'Изменения сохранены', life: 3000 })
+    }
+    resetForm()
+    await loadProjects()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка сохранения', life: 3000 })
+  }
 }
 
-// Editable title
-function startTitleEdit() {
-  titleInput.value = titleText.value
-  titleEditing.value = true
-}
-
-function finishTitleEdit() {
-  const val = titleInput.value.trim()
-  if (val) titleText.value = val
-  titleEditing.value = false
+// ── Helpers ────────────────────────────────────────────────────────────
+function formatDate(dt) {
+  if (!dt) return '—'
+  return new Date(dt).toLocaleDateString('ru-RU')
 }
 
 function statusLabel(status) {
   const map = { active: 'активный', paused: 'приостановлен', completed: 'завершён', archived: 'архивирован' }
-  return map[status] || status
+  return map[status] || status || '—'
 }
-
-onMounted(() => { loadProjects(); loadUsers() })
 </script>
 
 <template>
-  <div>
-    <input
-      v-model="newName"
-      class="add-input"
-      :disabled="formVisible"
-      placeholder="+ Добавить проект"
-      autocomplete="off"
-      @keydown.enter="onAddEnter"
-    />
+  <div class="projects-page">
 
-    <!-- Form -->
-    <form v-if="formVisible" autocomplete="off" @submit.prevent="saveProject">
-      <fieldset>
-        <legend>Метаданные</legend>
+    <PageHeader title="Проекты" icon="pi pi-briefcase">
+      <template #actions>
+        <SaveIndicator
+          :visible="pendingDelete.length > 0 || saveState === 'saved'"
+          :saved="saveState === 'saved'"
+          @save="confirmSave"
+          @cancel="discardChanges"
+        />
+      </template>
+    </PageHeader>
+
+    <CrudTable
+      ref="crudTable"
+      :columns="columns"
+      :data="projects"
+      :loading="loading"
+      id-field="project_id"
+      table-name="Проекты"
+      show-add
+      row-clickable
+      @add="openCreate"
+      @delete="onDelete"
+      @row-click="(data) => openEdit(data)"
+    >
+      <!-- Custom cell: Название (bold) -->
+      <template #col-name="{ data }">
+        <strong>{{ data.name || '— без названия —' }}</strong>
+      </template>
+
+      <!-- Custom cell: Описание -->
+      <template #col-description="{ data }">
+        <span class="desc-text">{{ data.description || '' }}</span>
+      </template>
+
+      <!-- Custom cell: Начало -->
+      <template #col-start_date="{ data }">{{ formatDate(data.start_date) }}</template>
+
+      <!-- Custom cell: Окончание -->
+      <template #col-due_date="{ data }">{{ formatDate(data.due_date) }}</template>
+
+      <!-- Custom cell: Статус -->
+      <template #col-status="{ data }">
+        <span :class="['status-pill', `status-pill--${data.status || 'active'}`]">
+          {{ statusLabel(data.status) }}
+        </span>
+      </template>
+    </CrudTable>
+
+    <!-- ── Create / Edit Dialog ── -->
+    <Dialog
+      v-model:visible="formVisible"
+      :header="mode === 'create' ? 'Новый проект' : 'Редактирование проекта'"
+      :style="{ width: '540px' }"
+      modal
+      @hide="resetForm"
+    >
+      <div class="form-grid">
+        <label>Название</label>
+        <InputText v-model="form.name" placeholder="Название проекта" class="w-full" />
+
         <label>Кто добавил</label>
-        <select
-          v-model="form.created_by"
-          :class="{ 'required-missing': !form.created_by && mode }"
-          @focus="loadUsers"
-        >
-          <option value="">— выбрать пользователя —</option>
+        <select v-model="form.created_by" class="pv-select">
+          <option value="">— выбрать —</option>
           <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
         </select>
-        <RouterLink to="/reference/users" target="_blank" class="ref-link">Управление пользователями</RouterLink>
-      </fieldset>
-
-      <fieldset>
-        <!-- Editable title -->
-        <input
-          v-if="titleEditing"
-          v-model="titleInput"
-          @blur="finishTitleEdit"
-          @keydown.enter.prevent="finishTitleEdit"
-        />
-        <h2 v-else style="cursor: pointer" @click="startTitleEdit">{{ titleText }}</h2>
 
         <label>Руководитель</label>
-        <select v-model="form.lead_id" @focus="loadUsers">
-          <option value="">— выбрать пользователя —</option>
+        <select v-model="form.lead_id" class="pv-select">
+          <option value="">— выбрать —</option>
           <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
         </select>
-        <RouterLink to="/reference/users" target="_blank" class="ref-link">Управление пользователями</RouterLink>
 
-        <label>Описание проекта</label><br />
-        <textarea v-model="form.description" rows="3" cols="50" placeholder="Единицы измерения, методики, особые замечания"></textarea>
+        <label>Описание</label>
+        <Textarea v-model="form.description" rows="3" placeholder="Описание проекта" class="w-full" />
 
         <label>Дата начала</label>
-        <input v-model="form.start_date" type="date" />
+        <input v-model="form.start_date" type="date" class="pv-select" />
 
-        <label>Плановая дата окончания</label>
-        <input v-model="form.due_date" type="date" />
-      </fieldset>
+        <label>Дата окончания</label>
+        <input v-model="form.due_date" type="date" class="pv-select" />
 
-      <fieldset>
-        <legend>Статус</legend>
-        <select v-model="form.status">
+        <label>Статус</label>
+        <select v-model="form.status" class="pv-select">
           <option value="active">активный</option>
           <option value="paused">приостановлен</option>
-          <option value="completed">завершен</option>
+          <option value="completed">завершён</option>
           <option value="archived">архивирован</option>
         </select>
-      </fieldset>
+      </div>
 
-      <button type="submit">Сохранить запись</button>
-      <button type="button" @click="resetForm">Очистить форму</button>
-    </form>
+      <template #footer>
+        <Button label="Отмена" severity="secondary" outlined @click="resetForm" />
+        <Button :label="mode === 'create' ? 'Создать' : 'Сохранить'" @click="saveProject" />
+      </template>
+    </Dialog>
 
-    <div
-      v-if="statusMsg"
-      class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : 'darkcyan' }"
-    >
-      {{ statusMsg }}
-    </div>
-
-    <!-- List -->
-    <ul class="items-list">
-      <li v-for="proj in projects" :key="proj.project_id" class="item-row">
-        <div class="item-info">
-          <span>{{ proj.name }}</span>
-          <span class="item-status">{{ statusLabel(proj.status) }}</span>
-        </div>
-        <div class="actions">
-          <button title="Редактировать" @click="startEdit(proj)">✏️</button>
-          <button title="Дублировать" @click="duplicateProject(proj)">📄</button>
-          <button title="Удалить" @click="deleteProject(proj)">🗑</button>
-        </div>
-      </li>
-    </ul>
   </div>
 </template>
+
+<style scoped>
+.projects-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.projects-page :deep(.page-header) {
+  margin-bottom: 3px !important;
+}
+
+/* ── Form styles ── */
+.form-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 10px 16px;
+  align-items: center;
+}
+.form-grid label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #003274;
+}
+.w-full { width: 100%; }
+.pv-select {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+}
+.pv-select:focus {
+  border-color: #003366;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
+}
+
+/* ── Page-specific cell styles ── */
+.desc-text {
+  font-size: 13px;
+  color: rgba(0, 50, 116, 0.6);
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.status-pill--active {
+  background: rgba(82, 201, 166, 0.14);
+  color: #1d7a5f;
+  border: 0.5px solid rgba(82, 201, 166, 0.35);
+}
+.status-pill--paused {
+  background: rgba(211, 167, 84, 0.12);
+  color: #8a6d2b;
+  border: 0.5px solid rgba(211, 167, 84, 0.3);
+}
+.status-pill--completed {
+  background: rgba(0, 50, 116, 0.08);
+  color: #003274;
+  border: 0.5px solid rgba(0, 50, 116, 0.15);
+}
+.status-pill--archived {
+  background: rgba(0, 50, 116, 0.06);
+  color: rgba(0, 50, 116, 0.45);
+  border: 0.5px solid rgba(0, 50, 116, 0.12);
+}
+</style>
