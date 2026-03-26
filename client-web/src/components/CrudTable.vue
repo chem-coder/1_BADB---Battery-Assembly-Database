@@ -48,6 +48,8 @@ const props = defineProps({
   loading:      { type: Boolean, default: false },
   showAdd:      { type: Boolean, default: false },
   rowClickable: { type: Boolean, default: false },
+  showRename:   { type: Boolean, default: true },
+  exportEnd:    { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['delete', 'add', 'row-click'])
@@ -386,9 +388,9 @@ onUnmounted(() => {
       <template v-else>
         <span class="ct-table-name">{{ localTableName }}</span>
       </template>
-      <Button icon="pi pi-pencil" text size="small" severity="secondary"
+      <Button v-if="showRename" icon="pi pi-pencil" text size="small" severity="secondary"
         v-tooltip.bottom="'Переименовать'" @click="startEditTableName" class="ct-toolbar-btn" />
-      <div class="ct-export-wrap" ref="exportBtnRef">
+      <div v-if="!exportEnd" class="ct-export-wrap" ref="exportBtnRef">
         <Button icon="pi pi-download" text size="small" severity="secondary"
           v-tooltip.bottom="'Выгрузить'" @click.stop="toggleExportMenu" class="ct-toolbar-btn" />
         <div v-if="exportMenuVisible" class="ct-export-menu" @click.stop>
@@ -412,6 +414,21 @@ onUnmounted(() => {
       <span class="ct-sep"></span>
       <span class="ct-meta">{{ filteredData.length }} строк × {{ columnCount }} столбцов</span>
       <slot name="toolbar-end"></slot>
+      <div v-if="exportEnd" class="ct-export-wrap" ref="exportBtnRef">
+        <Button icon="pi pi-download" text size="small" severity="secondary"
+          v-tooltip.bottom="'Выгрузить'" @click.stop="toggleExportMenu" class="ct-toolbar-btn" />
+        <div v-if="exportMenuVisible" class="ct-export-menu" @click.stop>
+          <button class="ct-export-item" @click="exportExcel">
+            <i class="pi pi-file-excel"></i> Excel (.xls)
+          </button>
+          <button class="ct-export-item" @click="exportCSV">
+            <i class="pi pi-file"></i> CSV
+          </button>
+          <button class="ct-export-item" @click="exportJSON">
+            <i class="pi pi-code"></i> JSON
+          </button>
+        </div>
+      </div>
       <span v-if="showAdd" class="ct-spacer"></span>
       <Button v-if="showAdd" label="Добавить" icon="pi pi-plus" size="small" @click="emit('add')" />
     </div>

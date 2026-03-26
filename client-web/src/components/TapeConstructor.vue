@@ -1,0 +1,282 @@
+<script setup>
+/**
+ * TapeConstructor — main constructor zone below CrudTable on TapesPage.
+ *
+ * Features:
+ *  - Manages reactive Map of useTapeState() instances
+ *  - Tabs: first (leftmost) = target tape, draggable to reorder
+ *  - Yellow tab highlight for dirty (unsaved) tapes
+ *  - Expose saveAll() for parent SaveIndicator
+ *  - Emits 'dirty' when any tape has unsaved changes
+ */
+import { ref, reactive, computed, watch } from 'vue'
+import { useToast } from 'primevue/usetoast'
+import { useTapeState } from '@/composables/useTapeState'
+import { TAPE_STAGES } from '@/config/tapeStages'
+import StageNavigator from '@/components/StageNavigator.vue'
+import StageCompareEditor from '@/components/StageCompareEditor.vue'
+// GanttChart is now embedded inside StageNavigator
+
+const props = defineProps({
+  selectedTapeIds: { type: Array, default: () => [] },
+  tapeList: { type: Array, default: () => [] },
+  refs: { type: Object, default: () => ({}) },
+  authStore: { type: Object, default: null },
+})
+
+const emit = defineEmits(['dirty'])
+
+const toast = useToast()
+
+// ── State ──
+const tapeStates = reactive({})
+const activeTapeId = ref(null)
+const activeStage = ref('general_info')
+const loadingTapes = ref(false)
+
+// Order of tabs (first = target tape)
+const tabOrder = ref([])
+
+// Tape names
+const tapeNames = computed(() => {
+  const map = {}
+  for (const tid of Object.keys(tapeStates)) {
+    const ts = tapeStates[tid]
+    map[tid] = ts?.general?.name || props.tapeList.find(t => t.tape_id === Number(tid))?.name || `#${tid}`
+  }
+  return map
+})
+
+// Target tape = first in tabOrder
+const targetTapeId = computed(() => tabOrder.value[0] || null)
+
+// Active stage config
+const activeStageConfig = computed(() =>
+  TAPE_STAGES.find(s => s.code === activeStage.value) || TAPE_STAGES[0]
+)
+
+// Any dirty?
+const anyDirty = computed(() =>
+  Object.values(tapeStates).some(ts => ts.anyDirty?.value)
+)
+
+watch(anyDirty, (val) => emit('dirty', val))
+
+// ── Watch selectedTapeIds ──
+watch(
+  () => props.selectedTapeIds,
+  async (newIds, oldIds) => {
+    const newSet = new Set(newIds.map(String))
+
+    // Remove deselected
+    for (const tid of Object.keys(tapeStates)) {
+      if (!newSet.has(tid)) delete tapeStates[tid]
+    }
+    // Update tabOrder: keep existing order, add new at end
+    const existing = tabOrder.value.filter(tid => newSet.has(tid))
+    const added = newIds.map(String).filter(tid => !existing.includes(tid))
+    tabOrder.value = [...existing, ...added]
+
+    // Load new tapes
+    for (const id of newIds) {
+      const tid = String(id)
+      if (!tapeStates[tid]) await loadTape(Number(id))
+    }
+
+    // Set active tape
+    if (tabOrder.value.length && (!activeTapeId.value || !newSet.has(String(activeTapeId.value)))) {
+      activeTapeId.value = Number(tabOrder.value[0])
+    }
+    if (!tabOrder.value.length) activeTapeId.value = null
+  },
+  { immediate: true, deep: true }
+)
+
+async function loadTape(id) {
+  const tid = String(id)
+  loadingTapes.value = true
+  try {
+    const ts = useTapeState({ tapeId: id, refs: props.refs, authStore: props.authStore })
+    tapeStates[tid] = ts
+    await ts.restore()
+  } catch (e) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: `Не удалось загрузить ленту #${id}`, life: 3000 })
+    delete tapeStates[tid]
+  } finally {
+    loadingTapes.value = false
+  }
+}
+
+// ── Save ALL dirty steps across all tapes ──
+async function saveAll() {
+  let errors = 0
+  for (const [tid, ts] of Object.entries(tapeStates)) {
+    if (!ts.anyDirty?.value) continue
+    for (const code of Object.keys(ts.dirtySteps)) {
+      if (!ts.dirtySteps[code]) continue
+      try {
+        await ts.saveStep(code)
+      } catch (e) {
+        errors++
+      }
+    }
+  }
+  if (errors) {
+    toast.add({ severity: 'warn', summary: 'Внимание', detail: `Не удалось сохранить ${errors} шаг(ов)`, life: 3000 })
+  }
+  return errors === 0
+}
+
+// ── Discard all changes ──
+function discardAll() {
+  // Re-restore all tapes
+  for (const [tid, ts] of Object.entries(tapeStates)) {
+    if (ts.anyDirty?.value) ts.restore()
+  }
+}
+
+// Expose for parent
+defineExpose({ saveAll, discardAll, tapeStates, anyDirty })
+
+// ── Tab switching ──
+function selectTape(tid) {
+  activeTapeId.value = Number(tid)
+}
+
+// ── Reorder from table header drag ──
+function onReorder(newOrder) {
+  tabOrder.value = newOrder
+}
+</script>
+
+<template>
+  <div class="constructor" v-if="tabOrder.length > 0">
+    <!-- Main content: sidebar + right panel -->
+    <div class="constructor-body">
+      <!-- Left sidebar: title + stages -->
+      <div class="constructor-sidebar">
+        <div class="constructor-title">КОНСТРУКТОР ЛЕНТ</div>
+        <StageNavigator
+          :stages="TAPE_STAGES"
+          :activeStage="activeStage"
+          :tapeStates="tapeStates"
+          :activeTapeId="activeTapeId"
+          :tapeNames="tapeNames"
+          :refs="refs"
+          @update:activeStage="activeStage = $event"
+        />
+      </div>
+
+      <!-- Right panel: table editor (tape names are column headers) -->
+      <div class="constructor-right">
+        <div class="constructor-editor">
+          <StageCompareEditor
+            :stageCode="activeStage"
+            :stageConfig="activeStageConfig"
+            :tapeStates="tapeStates"
+            :targetTapeId="targetTapeId"
+            :tabOrder="tabOrder"
+            :tapeNames="tapeNames"
+            :refs="refs"
+            @reorder="onReorder"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading overlay -->
+    <div v-if="loadingTapes" class="constructor-loading">
+      <i class="pi pi-spin pi-spinner"></i> Загрузка...
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div v-else class="constructor-empty">
+    <i class="pi pi-info-circle"></i>
+    <span>Отметьте ленты в таблице для работы в конструкторе</span>
+  </div>
+</template>
+
+<style scoped>
+.constructor {
+  border: 1px solid rgba(0, 50, 116, 0.12);
+  border-radius: 10px;
+  background: white;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Body: sidebar + right panel ── */
+.constructor-body {
+  display: flex;
+  gap: 0;
+  min-height: 400px;
+  max-height: 600px;
+  overflow: hidden;
+}
+
+/* ── Left sidebar ── */
+.constructor-sidebar {
+  padding: 10px 12px;
+  border-right: 1px solid rgba(0, 50, 116, 0.10);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.constructor-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(0, 50, 116, 0.50);
+  padding: 2px 0;
+}
+
+/* ── Right panel: table editor ── */
+.constructor-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ── Editor area ── */
+.constructor-editor {
+  flex: 1;
+  overflow: auto;
+}
+
+/* ── Loading ── */
+.constructor-loading {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14px;
+  color: rgba(0, 50, 116, 0.6);
+  z-index: 10;
+}
+
+/* ── Empty ── */
+.constructor-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 2rem;
+  border: 1px dashed rgba(0, 50, 116, 0.15);
+  border-radius: 10px;
+  color: rgba(0, 50, 116, 0.4);
+  font-size: 14px;
+}
+.constructor-empty i {
+  font-size: 18px;
+}
+</style>

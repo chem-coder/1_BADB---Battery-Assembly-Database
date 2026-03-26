@@ -115,16 +115,18 @@ router.post('/', async (req, res) => {
     target_mass_g
   } = req.body;
 
-  const projectId = Number(project_id);
-  const recipeId  = Number(tape_recipe_id);
+  const projectId = project_id ? Number(project_id) : null;
+  const recipeId  = tape_recipe_id ? Number(tape_recipe_id) : null;
   const createdBy = Number(created_by);
 
-  if (
-    !Number.isInteger(projectId) ||
-    !Number.isInteger(recipeId) ||
-    !Number.isInteger(createdBy)
-  ) {
-    return res.status(400).json({ error: 'Некорректные данные' });
+  if (!Number.isInteger(createdBy)) {
+    return res.status(400).json({ error: 'Некорректные данные: created_by обязателен' });
+  }
+  if (project_id && !Number.isInteger(projectId)) {
+    return res.status(400).json({ error: 'Некорректный project_id' });
+  }
+  if (tape_recipe_id && !Number.isInteger(recipeId)) {
+    return res.status(400).json({ error: 'Некорректный tape_recipe_id' });
   }
 
   try {
@@ -183,7 +185,7 @@ router.get('/', async (req, res) => {
             r.role,
             r.name AS recipe_name
           FROM tapes t
-          JOIN tape_recipes r
+          LEFT JOIN tape_recipes r
             ON r.tape_recipe_id = t.tape_recipe_id
           WHERE r.role = $1
           ORDER BY t.created_at DESC
@@ -206,7 +208,7 @@ router.get('/', async (req, res) => {
             r.role,
             r.name AS recipe_name
           FROM tapes t
-          JOIN tape_recipes r
+          LEFT JOIN tape_recipes r
             ON r.tape_recipe_id = t.tape_recipe_id
           ORDER BY t.created_at DESC
           `
@@ -236,16 +238,12 @@ router.put('/:id', async (req, res) => {
     target_mass_g
   } = req.body;
 
-  const projectId = Number(project_id);
-  const recipeId  = Number(tape_recipe_id);
+  const projectId = project_id ? Number(project_id) : null;
+  const recipeId  = tape_recipe_id ? Number(tape_recipe_id) : null;
   const createdBy = Number(created_by);
 
-  if (
-    !Number.isInteger(projectId) ||
-    !Number.isInteger(recipeId) ||
-    !Number.isInteger(createdBy)
-  ) {
-    return res.status(400).json({ error: 'Некорректные данные' });
+  if (!Number.isInteger(createdBy)) {
+    return res.status(400).json({ error: 'Некорректные данные: created_by обязателен' });
   }
 
   try {
