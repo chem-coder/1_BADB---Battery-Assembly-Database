@@ -14,7 +14,7 @@ import api from '@/services/api'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
-import StatusBadge from '@/components/StatusBadge.vue'
+// StatusBadge removed — status column replaced by project/operator
 import TapeConstructor from '@/components/TapeConstructor.vue'
 import Checkbox from 'primevue/checkbox'
 
@@ -47,13 +47,13 @@ onMounted(() => {
 
 // ── Column config ──────────────────────────────────────────────────────
 const columns = [
-  { field: '_constructor', header: '🔧',         minWidth: '45px', width: '45px', sortable: false, filterable: false },
-  { field: 'name',         header: 'Название',   minWidth: '100px' },
-  { field: 'role',         header: 'Тип',        minWidth: '80px',  width: '110px' },
-  { field: 'recipe_name',  header: 'Рецепт',     minWidth: '80px' },
-  { field: 'created_at',   header: 'Создана',    minWidth: '80px',  width: '110px' },
-  { field: 'updated_at',   header: 'Обновлена',  minWidth: '80px',  width: '110px' },
-  { field: 'status',       header: 'Статус',     minWidth: '80px',  width: '115px' },
+  { field: '_constructor',  header: '🔧',         minWidth: '45px', width: '45px', sortable: false, filterable: false },
+  { field: 'name',          header: 'Название',   minWidth: '100px' },
+  { field: 'project_name',  header: 'Проект',     minWidth: '80px',  width: '115px' },
+  { field: 'role',          header: 'Тип',        minWidth: '80px',  width: '115px' },
+  { field: 'recipe_name',   header: 'Рецепт',     minWidth: '80px',  width: '115px' },
+  { field: 'operators',     header: 'Оператор',   minWidth: '80px',  width: '115px' },
+  { field: 'created_at',    header: 'Создана',    minWidth: '80px',  width: '115px' },
 ]
 
 // ── Create new tape ──────────────────────────────────────────────────
@@ -203,8 +203,10 @@ function formatDate(dt) {
       :show-rename="false"
       :export-end="true"
       show-add
+      row-clickable
       @add="createNewTape"
       @delete="onDelete"
+      @row-click="(data) => toggleConstructor(data.tape_id)"
     >
       <!-- Constructor checkbox column -->
       <template #col-_constructor="{ data }">
@@ -230,15 +232,22 @@ function formatDate(dt) {
         <span v-else class="text-muted">—</span>
       </template>
 
+      <!-- Custom cell: Проект -->
+      <template #col-project_name="{ data }">
+        <span>{{ data.project_name || '—' }}</span>
+      </template>
+
+      <!-- Custom cell: Рецепт -->
+      <template #col-recipe_name="{ data }">
+        <span>{{ data.recipe_name || '—' }}</span>
+      </template>
+
       <!-- Custom cell: Создана -->
       <template #col-created_at="{ data }">{{ formatDate(data.created_at) }}</template>
 
-      <!-- Custom cell: Обновлена -->
-      <template #col-updated_at="{ data }">{{ formatDate(data.updated_at) }}</template>
-
-      <!-- Custom cell: Статус (StatusBadge component) -->
-      <template #col-status="{ data }">
-        <StatusBadge :status="data.status ?? 'draft'" />
+      <!-- Custom cell: Оператор (может быть длинным) -->
+      <template #col-operators="{ data }">
+        <span :title="data.operators || '—'" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;">{{ data.operators || '—' }}</span>
       </template>
     </CrudTable>
 

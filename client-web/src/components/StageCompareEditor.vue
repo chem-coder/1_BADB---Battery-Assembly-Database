@@ -8,23 +8,33 @@
  * Per-field green/grey left border on cells.
  * Copy arrows on source columns — copies current stage only.
  */
-import { ref, computed } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
+import AutoComplete from 'primevue/autocomplete'
 
 const props = defineProps({
   stageCode: { type: String, required: true },
   stageConfig: { type: Object, required: true },
   tapeStates: { type: Object, default: () => ({}) },
   targetTapeId: { type: [Number, String], default: null },
+  activeTapeId: { type: [Number, String], default: null },
   tabOrder: { type: Array, default: () => [] },
   tapeNames: { type: Object, default: () => ({}) },
   refs: { type: Object, default: () => ({}) },
 })
 
-const emit = defineEmits(['reorder'])
+const emit = defineEmits(['reorder', 'select-tape'])
 
 const fields = computed(() => props.stageConfig?.fields || [])
 
 const sourceTapeIds = computed(() => props.tabOrder.filter(tid => String(tid) !== String(props.targetTapeId)))
+
+function isActiveTape(tid) {
+  return String(tid) === String(props.activeTapeId)
+}
+
+function onTapeHeaderClick(tid) {
+  emit('select-tape', Number(tid))
+}
 
 function getRefOptions(field) {
   if (field.options) return field.options.map(o => ({ value: o.value, label: o.label }))
@@ -57,9 +67,22 @@ function setValue(tapeId, fieldKey, value) {
   if (ts) ts.setFieldValue(props.stageCode, fieldKey, value)
 }
 
-function copyField(sourceTapeId, fieldKey) {
+// Get the tape ID immediately to the left of the given tape in tabOrder
+function leftNeighbor(tid) {
+  const idx = props.tabOrder.indexOf(String(tid))
+  return idx > 0 ? props.tabOrder[idx - 1] : null
+}
+
+function copyField(sourceTapeId, fieldKey, destTapeId) {
+  const dest = destTapeId || leftNeighbor(sourceTapeId)
+  if (!dest) return
   const val = getValue(sourceTapeId, fieldKey)
-  setValue(props.targetTapeId, fieldKey, val)
+  setValue(dest, fieldKey, val)
+  // Sync local AC model for destination tape
+  const f = fields.value.find(ff => ff.key === fieldKey)
+  if (f?.type === 'select') {
+    acModels[acKey(String(dest), fieldKey)] = resolveAcOption(dest, f)
+  }
 }
 
 // Copy all fields of the CURRENT stage only (not all stages)
@@ -77,6 +100,76 @@ function onSetNow(tapeId) {
 function fieldHasData(tapeId, fieldKey) {
   const v = getValue(tapeId, fieldKey)
   return v !== '' && v !== null && v !== undefined
+}
+
+// ── AutoComplete adapter for select fields (DS pattern) ──
+// Local models allow free typing without revert (v-model two-way binding)
+const acModels = reactive({})
+const acSuggestions = ref({})
+
+function acKey(tid, fieldKey) {
+  return `${tid}__${fieldKey}`
+}
+
+// Resolve stored value → option object {value, label}
+function resolveAcOption(tapeId, field) {
+  const val = getValue(tapeId, field.key)
+  if (!val && val !== 0) return null
+  const opts = getRefOptions(field)
+  return opts.find(o => String(o.value) === String(val)) || null
+}
+
+// Sync local models from tape state (on stage/tab navigation)
+function syncAcModels() {
+  for (const tid of props.tabOrder) {
+    for (const f of fields.value) {
+      if (f.type === 'select') {
+        acModels[acKey(tid, f.key)] = resolveAcOption(tid, f)
+      }
+    }
+  }
+}
+
+watch([() => props.stageCode, () => props.tabOrder], syncAcModels, { immediate: true, deep: true })
+
+function searchAc(field, event) {
+  const query = (event.query || '').toLowerCase()
+  const opts = getRefOptions(field)
+  acSuggestions.value[field.key] = opts.filter(o => o.label.toLowerCase().includes(query))
+}
+
+function onAcItemSelect(tapeId, field, e) {
+  // Commit selected option to tape state
+  if (e.value && typeof e.value === 'object') {
+    setValue(tapeId, field.key, e.value.value)
+  }
+  // Blur input after selection (DS pattern — use component ref, not event target)
+  setTimeout(() => {
+    const comp = acRefs[acKey(tapeId, field.key)]
+    comp?.$el?.querySelector('input')?.blur()
+  }, 50)
+}
+
+function clearAcValue(tapeId, field) {
+  setValue(tapeId, field.key, '')
+  acModels[acKey(tapeId, field.key)] = null
+}
+
+// ── Template refs for AutoComplete instances ──
+const acRefs = {}
+function setAcRef(tid, fieldKey, el) {
+  const key = acKey(tid, fieldKey)
+  if (el) acRefs[key] = el; else delete acRefs[key]
+}
+
+// PrimeVue hardcodes hide() when query becomes empty (line 459-461 in AutoComplete.vue).
+// @clear fires right after — re-show dropdown with all options.
+function onAcClear(tid, field) {
+  acSuggestions.value[field.key] = getRefOptions(field)
+  nextTick(() => {
+    const comp = acRefs[acKey(tid, field.key)]
+    if (comp?.show) comp.show()
+  })
 }
 
 // ── Drag-and-drop column headers with visual feedback ──
@@ -132,49 +225,31 @@ function onColDragEnd(e) {
       <thead>
         <tr>
           <th class="ce-th-label">{{ stageConfig.label }}</th>
-          <!-- Target tape column header (no star, no green underline) -->
+          <!-- All tape column headers from tabOrder -->
           <th
-            v-if="targetTapeId"
-            class="ce-th-tape"
-            :class="{
-              'ce-th-tape--drop': dropTargetColIdx === 0 && dragColIdx !== null && dragColIdx !== 0,
-              'ce-th-tape--dragging': dragColIdx === 0,
-            }"
-            draggable="true"
-            @dragstart="onColDragStart(0, $event)"
-            @dragover="onColDragOver(0, $event)"
-            @dragleave="onColDragLeave"
-            @drop="onColDrop(0, $event)"
-            @dragend="onColDragEnd"
-          >
-            <span class="th-tape-name">{{ tapeNames[targetTapeId] || `#${targetTapeId}` }}</span>
-          </th>
-          <!-- Source tape column headers -->
-          <th
-            v-for="(tid, i) in sourceTapeIds"
+            v-for="(tid, i) in tabOrder"
             :key="tid"
             class="ce-th-tape"
             :class="{
-              'ce-th-tape--drop': dropTargetColIdx === (i + 1) && dragColIdx !== null && dragColIdx !== (i + 1),
-              'ce-th-tape--dragging': dragColIdx === (i + 1),
+              'ce-th-tape--active': isActiveTape(tid),
+              'ce-th-tape--drop': dropTargetColIdx === i && dragColIdx !== null && dragColIdx !== i,
+              'ce-th-tape--dragging': dragColIdx === i,
             }"
             draggable="true"
-            @dragstart="onColDragStart(i + 1, $event)"
-            @dragover="onColDragOver(i + 1, $event)"
+            @click="onTapeHeaderClick(tid)"
+            @dragstart="onColDragStart(i, $event)"
+            @dragover="onColDragOver(i, $event)"
             @dragleave="onColDragLeave"
-            @drop="onColDrop(i + 1, $event)"
+            @drop="onColDrop(i, $event)"
             @dragend="onColDragEnd"
           >
             <span class="th-tape-name">{{ tapeNames[tid] || `#${tid}` }}</span>
             <button
+              v-if="tabOrder.indexOf(String(tid)) > 0"
               class="copy-all-btn"
               @click.stop="copyAllCurrentStage(tid)"
-              :title="`Копировать все поля этапа «${stageConfig.label}» в первую ленту`"
-            >
-              <i class="pi pi-chevron-left" style="font-size:8px"></i>
-              <i class="pi pi-chevron-left" style="font-size:8px;margin-left:-4px"></i>
-              Всё
-            </button>
+              title="Копировать все поля этапа"
+            ><i class="pi pi-angle-double-left" style="font-size:10px"></i> всё</button>
           </th>
         </tr>
       </thead>
@@ -183,84 +258,65 @@ function onColDragEnd(e) {
           <!-- Row label -->
           <td class="ce-td-label">{{ field.label }}</td>
 
-          <!-- Target tape cell -->
+          <!-- Tape cells — unified loop -->
           <td
-            v-if="targetTapeId"
+            v-for="tid in tabOrder"
+            :key="tid"
             class="ce-td"
-            :class="{ 'ce-td--filled': fieldHasData(targetTapeId, field.key) }"
+            :class="{
+              'ce-td--filled': fieldHasData(tid, field.key),
+              'ce-td--active': isActiveTape(tid),
+              'ce-td--dimmed': activeTapeId && !isActiveTape(tid),
+            }"
           >
+            <div class="cell-wrap" :class="{ 'cell-wrap--source': String(tid) !== String(targetTapeId) && tabOrder.length > 1 }">
+              <button
+                v-if="tabOrder.indexOf(String(tid)) > 0"
+                class="copy-btn"
+                @click="copyField(tid, field.key)"
+                title="Копировать в целевую ленту"
+              ><i class="pi pi-angle-left"></i></button>
             <textarea
               v-if="field.type === 'textarea'"
-              :value="getValue(targetTapeId, field.key)"
-              @input="setValue(targetTapeId, field.key, $event.target.value)"
+              :value="getValue(tid, field.key)"
+              @input="setValue(tid, field.key, $event.target.value)"
               class="ce-input ce-textarea"
               rows="2"
             />
-            <select
-              v-else-if="field.type === 'select'"
-              :value="getValue(targetTapeId, field.key)"
-              @change="setValue(targetTapeId, field.key, $event.target.value)"
-              class="ce-input ce-select"
-            >
-              <option value="">—</option>
-              <option v-for="opt in getRefOptions(field)" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-            </select>
+            <div v-else-if="field.type === 'select'" class="ce-select-wrap">
+              <AutoComplete
+                :ref="(el) => setAcRef(tid, field.key, el)"
+                v-model="acModels[tid + '__' + field.key]"
+                :suggestions="acSuggestions[field.key] || []"
+                @complete="searchAc(field, $event)"
+                @item-select="onAcItemSelect(tid, field, $event)"
+                @clear="onAcClear(tid, field)"
+                optionLabel="label"
+                dropdown
+                completeOnFocus
+                :scrollHeight="'200px'"
+                placeholder=""
+              />
+              <button
+                v-if="getValue(tid, field.key)"
+                class="ce-select-clear"
+                @click.stop="clearAcValue(tid, field)"
+                title="Очистить"
+              ><i class="pi pi-times"></i></button>
+            </div>
             <div v-else-if="field.type === 'time'" class="time-cell">
-              <input type="time" :value="getValue(targetTapeId, field.key)" @input="setValue(targetTapeId, field.key, $event.target.value)" class="ce-input ce-input--time" />
-              <button class="now-btn" @click="onSetNow(targetTapeId)" title="Сейчас"><i class="pi pi-clock"></i></button>
+              <input type="time" :value="getValue(tid, field.key)" @input="setValue(tid, field.key, $event.target.value)" class="ce-input ce-input--time" />
+              <button class="now-btn" @click="onSetNow(tid)" title="Сейчас"><i class="pi pi-clock"></i></button>
             </div>
             <input
               v-else
               :type="field.type === 'date' ? 'date' : field.type"
-              :value="getValue(targetTapeId, field.key)"
-              @input="setValue(targetTapeId, field.key, $event.target.value)"
+              :value="getValue(tid, field.key)"
+              @input="setValue(tid, field.key, $event.target.value)"
               class="ce-input"
               :step="field.type === 'number' ? '0.0001' : undefined"
             />
-          </td>
-
-          <!-- Source tape cells -->
-          <td
-            v-for="tid in sourceTapeIds"
-            :key="tid"
-            class="ce-td"
-            :class="{ 'ce-td--filled': fieldHasData(tid, field.key) }"
-          >
-            <div class="source-cell">
-              <button class="copy-btn" @click="copyField(tid, field.key)" :title="`Копировать в первую ленту`">
-                <i class="pi pi-chevron-left"></i>
-              </button>
-              <div class="source-input-wrap">
-                <textarea
-                  v-if="field.type === 'textarea'"
-                  :value="getValue(tid, field.key)"
-                  @input="setValue(tid, field.key, $event.target.value)"
-                  class="ce-input ce-textarea"
-                  rows="2"
-                />
-                <select
-                  v-else-if="field.type === 'select'"
-                  :value="getValue(tid, field.key)"
-                  @change="setValue(tid, field.key, $event.target.value)"
-                  class="ce-input ce-select"
-                >
-                  <option value="">—</option>
-                  <option v-for="opt in getRefOptions(field)" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                </select>
-                <div v-else-if="field.type === 'time'" class="time-cell">
-                  <input type="time" :value="getValue(tid, field.key)" @input="setValue(tid, field.key, $event.target.value)" class="ce-input ce-input--time" />
-                  <button class="now-btn" @click="onSetNow(tid)" title="Сейчас"><i class="pi pi-clock"></i></button>
-                </div>
-                <input
-                  v-else
-                  :type="field.type === 'date' ? 'date' : field.type"
-                  :value="getValue(tid, field.key)"
-                  @input="setValue(tid, field.key, $event.target.value)"
-                  class="ce-input"
-                  :step="field.type === 'number' ? '0.0001' : undefined"
-                />
-              </div>
-            </div>
+            </div><!-- /cell-wrap -->
           </td>
         </tr>
       </tbody>
@@ -277,7 +333,7 @@ function onColDragEnd(e) {
 
 /* ══ Table ══ */
 .ce-table {
-  width: 100%;
+  width: auto;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -315,12 +371,19 @@ function onColDragEnd(e) {
   cursor: grab;
   user-select: none;
   white-space: nowrap;
-  min-width: 160px;
+  width: 190px;
+  min-width: 140px;
   transition: background 0.2s, box-shadow 0.2s;
   position: relative;
 }
 .ce-th-tape:active { cursor: grabbing; }
 .ce-th-tape:last-child { border-right: none; }
+
+/* Active tape header */
+.ce-th-tape--active {
+  background: rgba(0, 50, 116, 0.08) !important;
+  color: #003274;
+}
 
 /* Drag states */
 .ce-th-tape--dragging {
@@ -363,14 +426,15 @@ function onColDragEnd(e) {
   font-size: 9px;
   font-weight: 500;
   font-family: inherit;
-  color: rgba(0, 50, 116, 0.35);
+  color: rgba(0, 50, 116, 0.50);
   cursor: pointer;
   transition: all 0.2s;
   vertical-align: middle;
+  border-color: rgba(0, 50, 116, 0.18);
 }
 .copy-all-btn:hover {
-  background: rgba(82, 201, 166, 0.10);
-  border-color: rgba(82, 201, 166, 0.35);
+  background: rgba(82, 201, 166, 0.12);
+  border-color: rgba(82, 201, 166, 0.45);
   color: #2a9d78;
 }
 
@@ -407,6 +471,19 @@ function onColDragEnd(e) {
   border-left-color: #2a9d78;
 }
 
+/* Active tape column — subtle highlight */
+.ce-td--active {
+  background: rgba(0, 50, 116, 0.025);
+}
+
+/* Dimmed (non-active) columns when there IS an active selection */
+.ce-td--dimmed {
+  opacity: 0.55;
+}
+.ce-td--dimmed:hover {
+  opacity: 0.85;
+}
+
 /* ── Source cell: copy button + input ── */
 .source-cell {
   display: flex;
@@ -428,7 +505,7 @@ function onColDragEnd(e) {
   border-radius: 50%;
   background: transparent;
   cursor: pointer;
-  color: rgba(0, 50, 116, 0.15);
+  color: rgba(0, 50, 116, 0.35);
   flex-shrink: 0;
   margin-top: 4px;
   transition: all 0.2s;
@@ -439,39 +516,43 @@ function onColDragEnd(e) {
   color: #2a9d78;
 }
 
-/* ── Inputs ── */
+/* ── Inputs (Design System style) ── */
 .ce-input,
-.ce-select,
 .ce-textarea {
   width: 100%;
-  padding: 4px 7px;
-  border: 1px solid rgba(0, 50, 116, 0.10);
-  border-radius: 5px;
-  font-size: 12px;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1.5px solid rgba(0, 50, 116, 0.12);
+  border-radius: 6px;
+  font-size: 12.5px;
   font-family: inherit;
   background: white;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  color: #1a2a3a;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
   box-sizing: border-box;
 }
 
+.ce-input::placeholder {
+  color: rgba(0, 50, 116, 0.3);
+}
+
 .ce-input:hover:not(:focus),
-.ce-select:hover:not(:focus),
 .ce-textarea:hover:not(:focus) {
-  border-color: rgba(82, 201, 166, 0.45);
-  box-shadow: 2px 3px 8px rgba(82, 201, 166, 0.18);
+  border-color: rgba(82, 201, 166, 0.5);
+  box-shadow: 0 2px 6px rgba(82, 201, 166, 0.15);
 }
 
 .ce-input:focus,
-.ce-select:focus,
 .ce-textarea:focus {
-  border-color: #003366;
+  border-color: #2a9d78;
   outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.12);
+  box-shadow: 0 0 0 2.5px rgba(42, 157, 120, 0.12);
 }
 
 .ce-textarea {
   resize: vertical;
-  min-height: 30px;
+  height: auto;
+  min-height: 48px;
 }
 
 .time-cell {
@@ -500,5 +581,72 @@ function onColDragEnd(e) {
 .now-btn:hover {
   background: rgba(82, 201, 166, 0.10);
   color: #2a9d78;
+}
+
+/* ── Cell wrap (copy button + input for source columns) ── */
+.cell-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+}
+.cell-wrap--source {
+  gap: 3px;
+}
+.cell-wrap > .ce-input,
+.cell-wrap > .ce-textarea,
+.cell-wrap > .ce-select-wrap,
+.cell-wrap > .time-cell {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Select wrapper (DS select-ac-wrap pattern) ── */
+/* NO custom :deep() overrides — global.css handles all PrimeVue styling */
+.ce-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+}
+.ce-select-wrap :deep(.p-autocomplete) {
+  width: 100%;
+}
+.ce-select-wrap :deep(.p-autocomplete-input) {
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 4px 32px 4px 8px !important;
+  font-size: 12.5px !important;
+}
+.ce-select-wrap :deep(.p-autocomplete-dropdown) {
+  width: 26px !important;
+  padding: 0 !important;
+}
+/* Clear button — compact, positioned before dropdown arrow */
+.ce-select-clear {
+  position: absolute;
+  right: 30px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #b0b5be;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  transition: color 0.15s, background 0.15s;
+  z-index: 2;
+}
+.ce-select-clear :deep(.pi) {
+  font-size: 10px !important;
+}
+.ce-select-clear:hover {
+  color: #666;
+  background: rgba(0, 0, 0, 0.06);
 }
 </style>

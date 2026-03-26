@@ -167,52 +167,36 @@ router.post('/', async (req, res) => {
 router.get('/', async (req, res) => {
   const { role } = req.query;
 
+  const baseQuery = `
+    SELECT
+      t.tape_id,
+      t.name,
+      t.project_id,
+      t.tape_recipe_id,
+      t.created_by,
+      t.created_at,
+      t.status,
+      t.notes,
+      t.calc_mode,
+      t.target_mass_g,
+      r.role,
+      r.name AS recipe_name,
+      p.name AS project_name,
+      (
+        SELECT string_agg(DISTINCT u.name, ', ' ORDER BY u.name)
+        FROM tape_process_steps ts
+        JOIN users u ON u.user_id = ts.performed_by
+        WHERE ts.tape_id = t.tape_id
+      ) AS operators
+    FROM tapes t
+    LEFT JOIN tape_recipes r ON r.tape_recipe_id = t.tape_recipe_id
+    LEFT JOIN projects p ON p.project_id = t.project_id
+  `;
+
   try {
     const result = role
-      ? await pool.query(
-          `
-          SELECT
-            t.tape_id,
-            t.name,
-            t.project_id,
-            t.tape_recipe_id,
-            t.created_by,
-            t.created_at,
-            t.status,
-            t.notes,
-            t.calc_mode,
-            t.target_mass_g,
-            r.role,
-            r.name AS recipe_name
-          FROM tapes t
-          LEFT JOIN tape_recipes r
-            ON r.tape_recipe_id = t.tape_recipe_id
-          WHERE r.role = $1
-          ORDER BY t.created_at DESC
-          `,
-          [role]
-        )
-      : await pool.query(
-          `
-          SELECT
-            t.tape_id,
-            t.name,
-            t.project_id,
-            t.tape_recipe_id,
-            t.created_by,
-            t.created_at,
-            t.status,
-            t.notes,
-            t.calc_mode,
-            t.target_mass_g,
-            r.role,
-            r.name AS recipe_name
-          FROM tapes t
-          LEFT JOIN tape_recipes r
-            ON r.tape_recipe_id = t.tape_recipe_id
-          ORDER BY t.created_at DESC
-          `
-        );
+      ? await pool.query(baseQuery + ' WHERE r.role = $1 ORDER BY t.created_at DESC', [role])
+      : await pool.query(baseQuery + ' ORDER BY t.created_at DESC');
 
     res.json(result.rows);
   } catch (err) {

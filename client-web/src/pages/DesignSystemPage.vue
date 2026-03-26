@@ -1383,14 +1383,11 @@ onUnmounted(() => {
 .select-ac-wrap :deep(.p-autocomplete-input) {
   padding-right: 2rem;
 }
-/* Selected value gets subtle background highlight */
-.select-ac-wrap :deep(.p-autocomplete-input:not(:placeholder-shown)) {
-  background: rgba(0, 50, 116, 0.04) !important;
-}
+/* No special background for selected value — keep clean white */
 /* Clear button */
 .select-clear-btn {
   position: absolute;
-  right: 36px;
+  right: 40px;
   top: 50%;
   transform: translateY(-50%);
   background: none;

@@ -175,10 +175,12 @@ function onReorder(newOrder) {
             :stageConfig="activeStageConfig"
             :tapeStates="tapeStates"
             :targetTapeId="targetTapeId"
-            :tabOrder="tabOrder"
+            :activeTapeId="activeTapeId"
+            :tabOrder="tabOrder.map(String)"
             :tapeNames="tapeNames"
             :refs="refs"
             @reorder="onReorder"
+            @select-tape="selectTape"
           />
         </div>
       </div>

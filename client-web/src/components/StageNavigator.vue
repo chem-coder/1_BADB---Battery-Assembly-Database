@@ -22,7 +22,7 @@ const emit = defineEmits(['update:activeStage'])
 
 const activeTapeState = computed(() => {
   if (!props.activeTapeId) return null
-  return props.tapeStates[props.activeTapeId] || null
+  return props.tapeStates[String(props.activeTapeId)] || null
 })
 
 function getStatus(ts, code) {
@@ -114,6 +114,11 @@ const isSingleDay = computed(() => timeRange.value?.spanMs === 0)
 
 <template>
   <div class="stage-nav">
+    <!-- Active tape name indicator -->
+    <div v-if="activeTapeId && tapeNames[activeTapeId]" class="nav-active-tape">
+      <span class="nav-active-tape-label">Этапы для:</span>
+      <span class="nav-active-tape-name">{{ tapeNames[activeTapeId] }}</span>
+    </div>
     <div class="stage-list">
       <button
         v-for="stage in stages"
@@ -158,6 +163,30 @@ const isSingleDay = computed(() => timeRange.value?.spanMs === 0)
 </template>
 
 <style scoped>
+/* ── Active tape indicator ── */
+.nav-active-tape {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 10px 6px;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.08);
+  margin-bottom: 2px;
+}
+.nav-active-tape-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(0, 50, 116, 0.35);
+}
+.nav-active-tape-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #003274;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .stage-nav {
   display: flex;
   flex-direction: column;

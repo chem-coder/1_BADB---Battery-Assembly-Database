@@ -108,7 +108,12 @@ function onRowClick(event, data, index) {
     if (selectedRows.value.has(id)) selectedRows.value.delete(id)
     else selectedRows.value.add(id)
   } else {
-    selectedRows.value = new Set([getRowId(data)])
+    // When rowClickable, regular click emits row-click without persisting selection
+    if (props.rowClickable) {
+      selectedRows.value = new Set()
+    } else {
+      selectedRows.value = new Set([getRowId(data)])
+    }
   }
   lastClickedIdx = absIndex
   selectedRows.value = new Set(selectedRows.value) // trigger reactivity
@@ -363,8 +368,12 @@ onMounted(() => {
     const table = tableRef.value?.$el
     if (table) {
       table.addEventListener('dblclick', (e) => {
-        if (e.target.classList.contains('p-datatable-column-resizer') ||
-            e.target.closest('.p-datatable-column-resizer')) {
+        // PrimeVue 3: p-column-resizer, PrimeVue 4: p-datatable-column-resizer
+        const isResizer = e.target.classList.contains('p-datatable-column-resizer')
+          || e.target.classList.contains('p-column-resizer')
+          || e.target.closest('.p-datatable-column-resizer')
+          || e.target.closest('.p-column-resizer')
+        if (isResizer) {
           onResizerDblClick(e)
         }
       })
