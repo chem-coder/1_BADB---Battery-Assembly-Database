@@ -40,5 +40,17 @@ export const useAuthStore = defineStore('auth', {
       this.user = null
       this.projects = []
     },
+
+    // Dev bypass: set fake token, then load real user from API
+    async initBypass() {
+      this.token = 'bypass'
+      try {
+        await this.fetchMe()
+      } catch {
+        // Fallback if /api/auth/me fails
+        this.user = { userId: 1, login: 'dev', name: 'Dev Bypass', role: 'admin' }
+        this.projects = []
+      }
+    },
   },
 })

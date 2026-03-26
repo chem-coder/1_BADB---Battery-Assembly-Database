@@ -69,6 +69,12 @@ const routes = [
         meta: { title: 'Главная', crumbs: [] } },
 
       ...workflowRoutes,
+
+      // Backward compat: /tapes/new and /tapes/:id redirect to /tapes
+      // (Constructor is now inline on TapesPage)
+      { path: 'tapes/new', redirect: '/tapes' },
+      { path: 'tapes/:id', redirect: '/tapes' },
+
       ...referenceRoutes,
       ...adminRoutes,
 
@@ -84,9 +90,15 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const auth = useAuthStore()
   if (to.meta.public) return next()
+
+  // Dev bypass: auto-authenticate without login screen
+  if (import.meta.env.VITE_AUTH_BYPASS === 'true' && !auth.isAuthenticated) {
+    await auth.initBypass()
+  }
+
   if (!auth.isAuthenticated) return next('/login')
   if (to.meta.role && auth.user?.role !== to.meta.role) return next('/')
   next()

@@ -7,6 +7,12 @@ module.exports = {
   // --- Server ---
   port: process.env.PORT || 3003,
 
+  // --- Auth Bypass (dev only) ---
+  // Set AUTH_BYPASS=true in .env to skip login screen during development.
+  // NEVER enable in production. Remove from .env before demo/deploy.
+  authBypass: process.env.AUTH_BYPASS === 'true',
+  bypassLogin: process.env.BYPASS_LOGIN || 'dsmenyaylov',
+
   // --- Database ---
   db: {
     user: process.env.DB_USER || 'Dalia',
