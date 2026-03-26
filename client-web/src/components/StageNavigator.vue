@@ -46,29 +46,46 @@ function stageNumber(code) {
 }
 
 // ── Timeline data ──
-function getStageDate(code) {
+// Returns { date, time } for full precision positioning
+function getStageDateTime(code) {
   const ts = activeTapeState.value
   if (!ts) return null
   if (code === 'general_info') {
-    return ts.general?.createdAt ? ts.general.createdAt.split('T')[0] : null
+    // createdAt is a full ISO timestamp
+    return ts.general?.createdAt ? { full: ts.general.createdAt } : null
   }
-  return ts.steps?.[code]?.date || null
+  const step = ts.steps?.[code]
+  if (!step?.date) return null
+  return { date: step.date, time: step.time || '00:00:00' }
 }
 
-function parseDateStr(s) {
-  if (!s) return null
-  return new Date(s + 'T00:00:00')
+// For display — just the date part (дд.мм)
+function getStageDate(code) {
+  const dt = getStageDateTime(code)
+  if (!dt) return null
+  if (dt.full) return dt.full.split('T')[0]
+  return dt.date
 }
 
-// Collect all dates across stages → min/max for shared time axis
+function parseDateTimeFull(dt) {
+  if (!dt) return null
+  if (dt.full) return new Date(dt.full)
+  // date + time → full precision
+  return new Date(dt.date + 'T' + dt.time)
+}
+
+// Collect all dates across stages → min/max for shared time axis (full precision)
 const timeRange = computed(() => {
   const ts = activeTapeState.value
   if (!ts) return null
 
   const dates = []
   for (const stage of props.stages) {
-    const d = getStageDate(stage.code)
-    if (d) dates.push(parseDateStr(d))
+    const dt = getStageDateTime(stage.code)
+    if (dt) {
+      const d = parseDateTimeFull(dt)
+      if (d && Number.isFinite(d.getTime())) dates.push(d)
+    }
   }
   if (dates.length === 0) return null
 
@@ -81,15 +98,15 @@ const timeRange = computed(() => {
   return { minDate, maxDate, minMs, maxMs, spanMs }
 })
 
-// Position of a stage's date on the shared timeline (0–100%)
+// Position of a stage's date on the shared timeline (0–100%), precision to seconds
 function barPosition(code) {
   const tr = timeRange.value
   if (!tr) return null
-  const dateStr = getStageDate(code)
-  if (!dateStr) return null
-  const d = parseDateStr(dateStr)
-  if (!d) return null
-  if (tr.spanMs === 0) return 50 // single day — center
+  const dt = getStageDateTime(code)
+  if (!dt) return null
+  const d = parseDateTimeFull(dt)
+  if (!d || !Number.isFinite(d.getTime())) return null
+  if (tr.spanMs === 0) return 5 // single point — left edge
   return 5 + ((d.getTime() - tr.minMs) / tr.spanMs) * 90
 }
 
@@ -221,7 +238,7 @@ const isSingleDay = computed(() => timeRange.value?.spanMs === 0)
 }
 
 .stage-item--active {
-  background: rgba(0, 50, 116, 0.10);
+  background: rgba(0, 50, 116, 0.08);
 }
 
 .stage-row {

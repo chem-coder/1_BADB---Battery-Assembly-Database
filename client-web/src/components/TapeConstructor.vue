@@ -24,7 +24,7 @@ const props = defineProps({
   authStore: { type: Object, default: null },
 })
 
-const emit = defineEmits(['dirty'])
+const emit = defineEmits(['dirty', 'remove-tape'])
 
 const toast = useToast()
 
@@ -181,6 +181,7 @@ function onReorder(newOrder) {
             :refs="refs"
             @reorder="onReorder"
             @select-tape="selectTape"
+            @remove-tape="(tid) => emit('remove-tape', tid)"
           />
         </div>
       </div>

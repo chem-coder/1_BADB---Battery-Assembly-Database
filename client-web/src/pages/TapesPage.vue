@@ -52,6 +52,7 @@ const columns = [
   { field: 'project_name',  header: 'Проект',     minWidth: '80px',  width: '115px' },
   { field: 'role',          header: 'Тип',        minWidth: '80px',  width: '115px' },
   { field: 'recipe_name',   header: 'Рецепт',     minWidth: '80px',  width: '115px' },
+  { field: 'progress',      header: 'Прогресс',   minWidth: '80px',  width: '100px', sortable: true },
   { field: 'operators',     header: 'Оператор',   minWidth: '80px',  width: '115px' },
   { field: 'created_at',    header: 'Создана',    minWidth: '80px',  width: '115px' },
 ]
@@ -173,8 +174,17 @@ function updateIndicator() {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 function formatDate(dt) {
-  if (!dt) return '—'
-  return new Date(dt).toLocaleDateString('ru-RU')
+  if (!dt) return ''
+  return new Date(dt).toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
+}
+
+// Progress: (1 general_info + completed_steps) / 8 total stages * 100
+function tapeProgress(row) {
+  const done = 1 + (Number(row.completed_steps) || 0) // general_info always done
+  return Math.round((done / 8) * 100)
 }
 </script>
 
@@ -218,9 +228,9 @@ function formatDate(dt) {
         />
       </template>
 
-      <!-- Custom cell: Название (bold) -->
+      <!-- Custom cell: Название (semibold per DS "Метка поля" 13px 600) -->
       <template #col-name="{ data }">
-        <strong>{{ data.name || '— без названия —' }}</strong>
+        <span class="tape-name">{{ data.name || '' }}</span>
       </template>
 
       <!-- Custom cell: Тип (cathode/anode badge) -->
@@ -229,17 +239,27 @@ function formatDate(dt) {
           :class="['type-badge', data.role === 'cathode' ? 'type-badge--cathode' : 'type-badge--anode']">
           {{ data.role === 'cathode' ? 'Катод' : data.role === 'anode' ? 'Анод' : data.role }}
         </span>
-        <span v-else class="text-muted">—</span>
+        <span v-else class="text-muted"></span>
       </template>
 
       <!-- Custom cell: Проект -->
       <template #col-project_name="{ data }">
-        <span>{{ data.project_name || '—' }}</span>
+        <span>{{ data.project_name || '' }}</span>
       </template>
 
       <!-- Custom cell: Рецепт -->
       <template #col-recipe_name="{ data }">
-        <span>{{ data.recipe_name || '—' }}</span>
+        <span>{{ data.recipe_name || '' }}</span>
+      </template>
+
+      <!-- Custom cell: Прогресс -->
+      <template #col-progress="{ data }">
+        <div class="progress-cell">
+          <div class="progress-track">
+            <div class="progress-fill" :style="{ width: tapeProgress(data) + '%' }"></div>
+          </div>
+          <span class="progress-pct">{{ tapeProgress(data) }}%</span>
+        </div>
       </template>
 
       <!-- Custom cell: Создана -->
@@ -247,7 +267,7 @@ function formatDate(dt) {
 
       <!-- Custom cell: Оператор (может быть длинным) -->
       <template #col-operators="{ data }">
-        <span :title="data.operators || '—'" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;">{{ data.operators || '—' }}</span>
+        <span :title="data.operators || ''" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;">{{ data.operators || '' }}</span>
       </template>
     </CrudTable>
 
@@ -259,6 +279,7 @@ function formatDate(dt) {
       :refs="refData"
       :authStore="authStore"
       @dirty="constructorDirty = $event"
+      @remove-tape="toggleConstructor"
     />
 
   </div>
@@ -297,6 +318,36 @@ function formatDate(dt) {
   color: #1d7a5f;
   border: 0.5px solid rgba(82, 201, 166, 0.35);
 }
+.tape-name {
+  color: #003274;
+}
+/* ── Progress bar ── */
+.progress-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.progress-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(0, 50, 116, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: #2ECC94;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.progress-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0, 50, 116, 0.5);
+  min-width: 30px;
+  text-align: right;
+}
+
 .text-muted {
   color: rgba(0, 50, 116, 0.28);
   font-size: 13px;

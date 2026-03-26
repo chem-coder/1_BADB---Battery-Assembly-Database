@@ -22,7 +22,7 @@ const props = defineProps({
   refs: { type: Object, default: () => ({}) },
 })
 
-const emit = defineEmits(['reorder', 'select-tape'])
+const emit = defineEmits(['reorder', 'select-tape', 'remove-tape'])
 
 const fields = computed(() => props.stageConfig?.fields || [])
 
@@ -100,6 +100,51 @@ function onSetNow(tapeId) {
 function fieldHasData(tapeId, fieldKey) {
   const v = getValue(tapeId, fieldKey)
   return v !== '' && v !== null && v !== undefined
+}
+
+// ── Copy to ALL tapes to the left ──
+function copyFieldToAllLeft(sourceTapeId, fieldKey) {
+  const idx = props.tabOrder.indexOf(String(sourceTapeId))
+  if (idx <= 0) return
+  for (let i = 0; i < idx; i++) {
+    copyField(sourceTapeId, fieldKey, props.tabOrder[i])
+  }
+}
+
+function copyAllCurrentStageToAllLeft(sourceTapeId) {
+  const idx = props.tabOrder.indexOf(String(sourceTapeId))
+  if (idx <= 0) return
+  for (const f of fields.value) {
+    for (let i = 0; i < idx; i++) {
+      copyField(sourceTapeId, f.key, props.tabOrder[i])
+    }
+  }
+}
+
+// ── Context menu state ──
+const ctxMenu = ref({ show: false, x: 0, y: 0, action: null, tid: null, fieldKey: null })
+
+function onCopyBtnContext(e, tid, fieldKey) {
+  e.preventDefault()
+  ctxMenu.value = { show: true, x: e.clientX, y: e.clientY, action: 'field', tid, fieldKey }
+  document.addEventListener('click', closeCtxMenu, { once: true })
+}
+
+function onCopyAllBtnContext(e, tid) {
+  e.preventDefault()
+  ctxMenu.value = { show: true, x: e.clientX, y: e.clientY, action: 'all', tid, fieldKey: null }
+  document.addEventListener('click', closeCtxMenu, { once: true })
+}
+
+function closeCtxMenu() {
+  ctxMenu.value.show = false
+}
+
+function execCtxMenu() {
+  const { action, tid, fieldKey } = ctxMenu.value
+  if (action === 'field') copyFieldToAllLeft(tid, fieldKey)
+  else if (action === 'all') copyAllCurrentStageToAllLeft(tid)
+  ctxMenu.value.show = false
 }
 
 // ── AutoComplete adapter for select fields (DS pattern) ──
@@ -221,7 +266,7 @@ function onColDragEnd(e) {
 
 <template>
   <div class="compare-editor">
-    <table class="ce-table">
+    <table class="ce-table" :class="{ 'ce-table--general': stageCode === 'general_info' }">
       <thead>
         <tr>
           <th class="ce-th-label">{{ stageConfig.label }}</th>
@@ -232,6 +277,7 @@ function onColDragEnd(e) {
             class="ce-th-tape"
             :class="{
               'ce-th-tape--active': isActiveTape(tid),
+              'ce-th-tape--source': i > 0,
               'ce-th-tape--drop': dropTargetColIdx === i && dragColIdx !== null && dragColIdx !== i,
               'ce-th-tape--dragging': dragColIdx === i,
             }"
@@ -243,13 +289,22 @@ function onColDragEnd(e) {
             @drop="onColDrop(i, $event)"
             @dragend="onColDragEnd"
           >
-            <span class="th-tape-name">{{ tapeNames[tid] || `#${tid}` }}</span>
-            <button
-              v-if="tabOrder.indexOf(String(tid)) > 0"
-              class="copy-all-btn"
-              @click.stop="copyAllCurrentStage(tid)"
-              title="Копировать все поля этапа"
-            ><i class="pi pi-angle-double-left" style="font-size:10px"></i> всё</button>
+            <div class="th-tape-top">
+              <div class="th-tape-name">{{ tapeNames[tid] || `#${tid}` }}</div>
+              <button
+                class="th-close-btn"
+                @click.stop="emit('remove-tape', Number(tid))"
+                title="Убрать из конструктора"
+              ><i class="pi pi-times"></i></button>
+            </div>
+            <div v-if="tabOrder.indexOf(String(tid)) > 0" class="th-actions">
+              <button
+                class="copy-all-btn"
+                @click.stop="copyAllCurrentStage(tid)"
+                @contextmenu.stop="onCopyAllBtnContext($event, tid)"
+                title="Копировать все поля этапа"
+              ><i class="pi pi-angle-double-left"></i></button>
+            </div>
           </th>
         </tr>
       </thead>
@@ -274,6 +329,7 @@ function onColDragEnd(e) {
                 v-if="tabOrder.indexOf(String(tid)) > 0"
                 class="copy-btn"
                 @click="copyField(tid, field.key)"
+                @contextmenu="onCopyBtnContext($event, tid, field.key)"
                 title="Копировать в целевую ленту"
               ><i class="pi pi-angle-left"></i></button>
             <textarea
@@ -321,6 +377,18 @@ function onColDragEnd(e) {
         </tr>
       </tbody>
     </table>
+
+    <!-- Context menu: apply to all tapes left -->
+    <Teleport to="body">
+      <div
+        v-if="ctxMenu.show"
+        class="ce-ctx-menu"
+        :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+        @click="execCtxMenu"
+      >
+        <span class="ce-ctx-item">Применить ко всем лентам слева</span>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -362,6 +430,7 @@ function onColDragEnd(e) {
 .ce-th-tape {
   padding: 7px 10px;
   text-align: left;
+  vertical-align: top;
   font-size: 12px;
   font-weight: 600;
   color: rgba(0, 50, 116, 0.65);
@@ -378,6 +447,11 @@ function onColDragEnd(e) {
 }
 .ce-th-tape:active { cursor: grabbing; }
 .ce-th-tape:last-child { border-right: none; }
+
+/* Source columns wider to fit copy-btn < */
+.ce-th-tape--source {
+  width: 211px;
+}
 
 /* Active tape header */
 .ce-th-tape--active {
@@ -405,37 +479,77 @@ function onColDragEnd(e) {
   border-radius: 1px;
 }
 
-.th-tape-name {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: inline-block;
-  vertical-align: middle;
+/* ── Tape header: top row (name + close) ── */
+.th-tape-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
-/* ── Copy All button in header ── */
-.copy-all-btn {
-  display: inline-flex;
+.th-tape-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Actions row below tape name ── */
+.th-actions {
+  display: flex;
   align-items: center;
-  gap: 1px;
-  margin-left: 6px;
-  padding: 1px 6px 1px 3px;
-  border: 1px solid rgba(0, 50, 116, 0.08);
-  border-radius: 4px;
+  gap: 2px;
+  margin-top: 3px;
+}
+
+/* ── Copy All button << (matches copy-btn < exactly) ── */
+.copy-all-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
   background: transparent;
-  font-size: 9px;
-  font-weight: 500;
-  font-family: inherit;
-  color: rgba(0, 50, 116, 0.50);
   cursor: pointer;
+  color: rgba(0, 50, 116, 0.35);
   transition: all 0.2s;
-  vertical-align: middle;
-  border-color: rgba(0, 50, 116, 0.18);
+  padding: 0;
+  flex-shrink: 0;
+  font-size: 9px;
+}
+.copy-all-btn .pi {
+  font-size: 15px;
 }
 .copy-all-btn:hover {
-  background: rgba(82, 201, 166, 0.12);
-  border-color: rgba(82, 201, 166, 0.45);
+  background: rgba(82, 201, 166, 0.15);
   color: #2a9d78;
+}
+
+/* ── Close button × (matches copy-btn < exactly) ── */
+.th-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(0, 50, 116, 0.25);
+  transition: all 0.2s;
+  padding: 0;
+  flex-shrink: 0;
+}
+.th-close-btn .pi {
+  font-size: 11px;
+}
+.th-close-btn:hover {
+  background: rgba(200, 80, 70, 0.12);
+  color: rgba(200, 80, 70, 0.7);
 }
 
 /* ── Body rows ── */
@@ -549,6 +663,13 @@ function onColDragEnd(e) {
   box-shadow: 0 0 0 2.5px rgba(42, 157, 120, 0.12);
 }
 
+/* ── General info stage: row labels use DS "Метка поля" 13px 600 #4B5563 ── */
+.ce-table--general .ce-td-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4B5563;
+}
+
 .ce-textarea {
   resize: vertical;
   height: auto;
@@ -648,5 +769,32 @@ function onColDragEnd(e) {
 .ce-select-clear:hover {
   color: #666;
   background: rgba(0, 0, 0, 0.06);
+}
+</style>
+
+<!-- Non-scoped for teleported context menu -->
+<style>
+.ce-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  background: white;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 50, 116, 0.12);
+  padding: 4px 0;
+  min-width: 200px;
+}
+.ce-ctx-item {
+  display: block;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #003274;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.ce-ctx-item:hover {
+  background: rgba(82, 201, 166, 0.10);
 }
 </style>

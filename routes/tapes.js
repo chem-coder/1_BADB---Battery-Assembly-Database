@@ -187,7 +187,13 @@ router.get('/', async (req, res) => {
         FROM tape_process_steps ts
         JOIN users u ON u.user_id = ts.performed_by
         WHERE ts.tape_id = t.tape_id
-      ) AS operators
+      ) AS operators,
+      (
+        SELECT COUNT(DISTINCT ot2.code)
+        FROM tape_process_steps ts2
+        JOIN operation_types ot2 ON ot2.operation_type_id = ts2.operation_type_id
+        WHERE ts2.tape_id = t.tape_id
+      ) AS completed_steps
     FROM tapes t
     LEFT JOIN tape_recipes r ON r.tape_recipe_id = t.tape_recipe_id
     LEFT JOIN projects p ON p.project_id = t.project_id
