@@ -1,7 +1,7 @@
 -- Disassemble a battery record, putting the electrodes "back" as "available"
 
 -- HOW TO RUN:
--- From project root folder (i.e. RENERA/BADB_v1/), run psql. Then:
+-- From project root folder (i.e. RENERA/BADB_main/), run psql connected to badb_app_v1. Then:
 
 -- \set battery_id 2
 -- \i sql_scripts/disassemble_battery.sql

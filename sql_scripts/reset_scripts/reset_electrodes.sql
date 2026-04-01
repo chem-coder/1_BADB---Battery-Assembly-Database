@@ -6,13 +6,13 @@
 --
 -- SAFETY RULE:
 -- This script aborts if any battery still references electrodes or cut-batch
--- provenance. Run sql_scripts/reset_batteries.sql first if batteries exist.
+-- provenance. Run sql_scripts/reset_scripts/reset_batteries.sql first if batteries exist.
 --
 -- HOW TO RUN:
--- From project root folder, run psql. Then:
+-- From project root folder (i.e. RENERA/BADB_main/), run psql connected to badb_app_v1. Then:
 --
 -- \set ON_ERROR_STOP on
--- \i sql_scripts/reset_electrodes.sql
+-- \i sql_scripts/reset_scripts/reset_electrodes.sql
 
 BEGIN;
 
@@ -20,7 +20,7 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM battery_electrodes) THEN
     RAISE EXCEPTION
-      'reset_electrodes.sql aborted: batteries still reference electrodes. Run sql_scripts/reset_batteries.sql first.';
+      'reset_electrodes.sql aborted: batteries still reference electrodes. Run sql_scripts/reset_scripts/reset_batteries.sql first.';
   END IF;
 
   IF EXISTS (
@@ -29,7 +29,7 @@ BEGIN
     WHERE cut_batch_id IS NOT NULL
   ) THEN
     RAISE EXCEPTION
-      'reset_electrodes.sql aborted: battery provenance still references cut batches. Run sql_scripts/reset_batteries.sql first.';
+      'reset_electrodes.sql aborted: battery provenance still references cut batches. Run sql_scripts/reset_scripts/reset_batteries.sql first.';
   END IF;
 END;
 $$;

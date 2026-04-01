@@ -7,10 +7,10 @@
 -- Clear separators first if any still depend on separator_structure.
 --
 -- HOW TO RUN:
--- From project root folder, run psql. Then:
+-- From project root folder (i.e. RENERA/BADB_main/), run psql connected to badb_app_v1. Then:
 --
 -- \set ON_ERROR_STOP on
--- \i sql_scripts/reset_structures.sql
+-- \i sql_scripts/reset_scripts/reset_structures.sql
 
 BEGIN;
 

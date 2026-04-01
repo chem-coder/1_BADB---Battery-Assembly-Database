@@ -7,10 +7,10 @@
 -- electrolytes, separators, recipes, or tape steps still reference users.
 --
 -- HOW TO RUN:
--- From project root folder, run psql. Then:
+-- From project root folder (i.e. RENERA/BADB_main/), run psql connected to badb_app_v1. Then:
 --
 -- \set ON_ERROR_STOP on
--- \i sql_scripts/reset_users.sql
+-- \i sql_scripts/reset_scripts/reset_users.sql
 
 BEGIN;
 
@@ -18,32 +18,32 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM batteries) THEN
     RAISE EXCEPTION
-      'reset_users.sql aborted: batteries still exist. Run sql_scripts/reset_batteries.sql first.';
+      'reset_users.sql aborted: batteries still exist. Run sql_scripts/reset_scripts/reset_batteries.sql first.';
   END IF;
 
   IF EXISTS (SELECT 1 FROM tape_process_steps) THEN
     RAISE EXCEPTION
-      'reset_users.sql aborted: tape_process_steps still exist. Run sql_scripts/reset_tapes.sql first.';
+      'reset_users.sql aborted: tape_process_steps still exist. Run sql_scripts/reset_scripts/reset_tapes.sql first.';
   END IF;
 
   IF EXISTS (SELECT 1 FROM electrode_cut_batches) THEN
     RAISE EXCEPTION
-      'reset_users.sql aborted: electrode_cut_batches still exist. Run sql_scripts/reset_electrodes.sql first.';
+      'reset_users.sql aborted: electrode_cut_batches still exist. Run sql_scripts/reset_scripts/reset_electrodes.sql first.';
   END IF;
 
   IF EXISTS (SELECT 1 FROM tapes) THEN
     RAISE EXCEPTION
-      'reset_users.sql aborted: tapes still exist. Run sql_scripts/reset_tapes.sql first.';
+      'reset_users.sql aborted: tapes still exist. Run sql_scripts/reset_scripts/reset_tapes.sql first.';
   END IF;
 
   IF EXISTS (SELECT 1 FROM tape_recipes) THEN
     RAISE EXCEPTION
-      'reset_users.sql aborted: tape_recipes still exist. Run sql_scripts/reset_recipes.sql first.';
+      'reset_users.sql aborted: tape_recipes still exist. Run sql_scripts/reset_scripts/reset_recipes.sql first.';
   END IF;
 
   IF EXISTS (SELECT 1 FROM electrolytes) THEN
     RAISE EXCEPTION
-      'reset_users.sql aborted: electrolytes still exist. Run sql_scripts/reset_electrolytes.sql first.';
+      'reset_users.sql aborted: electrolytes still exist. Run sql_scripts/reset_scripts/reset_electrolytes.sql first.';
   END IF;
 
   IF EXISTS (SELECT 1 FROM separators) THEN
@@ -53,7 +53,7 @@ BEGIN
 
   IF EXISTS (SELECT 1 FROM projects) THEN
     RAISE EXCEPTION
-      'reset_users.sql aborted: projects still exist. Run sql_scripts/reset_projects.sql first.';
+      'reset_users.sql aborted: projects still exist. Run sql_scripts/reset_scripts/reset_projects.sql first.';
   END IF;
 END;
 $$;

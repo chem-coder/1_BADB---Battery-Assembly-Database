@@ -1,11 +1,11 @@
--- CLEAR ALL BATTERY RECORDS & restart dattery_id counter. 
+-- CLEAR ALL BATTERY RECORDS & restart battery_id counter.
 -- Restore electrode_status to "available"
 
 -- HOW TO RUN:
--- From project root folder (i.e. RENERA/BADB_v1/), run psql. Then:
+-- From project root folder (i.e. RENERA/BADB_main/), run psql connected to badb_app_v1. Then:
 
 -- \set ON_ERROR_STOP on
--- \i sql_scripts/reset_batteries.sql
+-- \i sql_scripts/reset_scripts/reset_batteries.sql
 
 
 BEGIN;

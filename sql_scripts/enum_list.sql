@@ -1,6 +1,8 @@
--- List all enum_tables and values in the database
+-- List all enum types and values in the database
 
 -- HOW TO RUN:
+-- From project root folder (i.e. RENERA/BADB_main/), run psql connected to badb_app_v1. Then:
+--
 -- \i sql_scripts/enum_list.sql
 
 

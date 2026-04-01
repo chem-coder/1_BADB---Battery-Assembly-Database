@@ -6,13 +6,13 @@
 --
 -- SAFETY RULE:
 -- This script aborts if tapes or actual measurements still depend on recipes.
--- Run sql_scripts/reset_tapes.sql first if tape workflow data still exists.
+-- Run sql_scripts/reset_scripts/reset_tapes.sql first if tape workflow data still exists.
 --
 -- HOW TO RUN:
--- From project root folder, run psql. Then:
+-- From project root folder (i.e. RENERA/BADB_main/), run psql connected to badb_app_v1. Then:
 --
 -- \set ON_ERROR_STOP on
--- \i sql_scripts/reset_recipes.sql
+-- \i sql_scripts/reset_scripts/reset_recipes.sql
 
 BEGIN;
 
@@ -20,12 +20,12 @@ DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM tapes) THEN
     RAISE EXCEPTION
-      'reset_recipes.sql aborted: tapes still exist. Run sql_scripts/reset_tapes.sql first.';
+      'reset_recipes.sql aborted: tapes still exist. Run sql_scripts/reset_scripts/reset_tapes.sql first.';
   END IF;
 
   IF EXISTS (SELECT 1 FROM tape_recipe_line_actuals) THEN
     RAISE EXCEPTION
-      'reset_recipes.sql aborted: tape_recipe_line_actuals still exist. Run sql_scripts/reset_tapes.sql first.';
+      'reset_recipes.sql aborted: tape_recipe_line_actuals still exist. Run sql_scripts/reset_scripts/reset_tapes.sql first.';
   END IF;
 END;
 $$;

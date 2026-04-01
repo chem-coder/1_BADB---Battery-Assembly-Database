@@ -6,13 +6,13 @@
 --
 -- SAFETY RULE:
 -- This script aborts if tape actual measurements still reference material
--- instances. Run sql_scripts/reset_tapes.sql first if tape data still exists.
+-- instances. Run sql_scripts/reset_scripts/reset_tapes.sql first if tape data still exists.
 --
 -- HOW TO RUN:
--- From project root folder, run psql. Then:
+-- From project root folder (i.e. RENERA/BADB_main/), run psql connected to badb_app_v1. Then:
 --
 -- \set ON_ERROR_STOP on
--- \i sql_scripts/reset_material_instances.sql
+-- \i sql_scripts/reset_scripts/reset_material_instances.sql
 
 BEGIN;
 
@@ -24,7 +24,7 @@ BEGIN
     WHERE material_instance_id IS NOT NULL
   ) THEN
     RAISE EXCEPTION
-      'reset_material_instances.sql aborted: tape_recipe_line_actuals still reference material instances. Run sql_scripts/reset_tapes.sql first.';
+      'reset_material_instances.sql aborted: tape_recipe_line_actuals still reference material instances. Run sql_scripts/reset_scripts/reset_tapes.sql first.';
   END IF;
 END;
 $$;
