@@ -9,13 +9,13 @@
  *  - Expose saveAll() for parent SaveIndicator
  *  - Emits 'dirty' when any tape has unsaved changes
  */
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import { useTapeState } from '@/composables/useTapeState'
 import { TAPE_STAGES } from '@/config/tapeStages'
 import StageNavigator from '@/components/StageNavigator.vue'
 import StageCompareEditor from '@/components/StageCompareEditor.vue'
-// GanttChart is now embedded inside StageNavigator
+import Button from 'primevue/button'
 
 const props = defineProps({
   selectedTapeIds: { type: Array, default: () => [] },
@@ -135,8 +135,46 @@ function discardAll() {
   }
 }
 
+// ── Undo / Redo on active tape ──
+function undo() {
+  const ts = activeTapeId.value ? tapeStates[String(activeTapeId.value)] : null
+  if (ts?.canUndo?.value) ts.undo()
+}
+
+function redo() {
+  const ts = activeTapeId.value ? tapeStates[String(activeTapeId.value)] : null
+  if (ts?.canRedo?.value) ts.redo()
+}
+
+const canUndo = computed(() => {
+  const ts = activeTapeId.value ? tapeStates[String(activeTapeId.value)] : null
+  return ts?.canUndo?.value === true
+})
+
+const canRedo = computed(() => {
+  const ts = activeTapeId.value ? tapeStates[String(activeTapeId.value)] : null
+  return ts?.canRedo?.value === true
+})
+
+// ── Keyboard shortcuts: Ctrl+Z / Ctrl+Y ──
+function onKeydown(e) {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+    e.preventDefault()
+    undo()
+  } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+    e.preventDefault()
+    redo()
+  } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') {
+    e.preventDefault()
+    redo()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+
 // Expose for parent
-defineExpose({ saveAll, discardAll, tapeStates, anyDirty })
+defineExpose({ saveAll, discardAll, tapeStates, anyDirty, undo, redo, canUndo, canRedo })
 
 // ── Tab switching ──
 function selectTape(tid) {
@@ -155,7 +193,33 @@ function onReorder(newOrder) {
     <div class="constructor-body">
       <!-- Left sidebar: title + stages -->
       <div class="constructor-sidebar">
-        <div class="constructor-title">КОНСТРУКТОР ЛЕНТ</div>
+        <div class="constructor-title-row">
+          <div class="constructor-title">КОНСТРУКТОР ЛЕНТ</div>
+          <div class="constructor-undo-redo">
+            <Button
+              icon="pi pi-arrow-left"
+              size="small"
+              severity="secondary"
+              text
+              rounded
+              :disabled="!canUndo"
+              @click="undo"
+              title="Отменить (Ctrl+Z)"
+              class="ct-ur-btn"
+            />
+            <Button
+              icon="pi pi-arrow-right"
+              size="small"
+              severity="secondary"
+              text
+              rounded
+              :disabled="!canRedo"
+              @click="redo"
+              title="Повторить (Ctrl+Y)"
+              class="ct-ur-btn"
+            />
+          </div>
+        </div>
         <StageNavigator
           :stages="TAPE_STAGES"
           :activeStage="activeStage"
@@ -229,6 +293,13 @@ function onReorder(newOrder) {
   flex-shrink: 0;
 }
 
+.constructor-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
 .constructor-title {
   font-size: 11px;
   font-weight: 700;
@@ -236,6 +307,24 @@ function onReorder(newOrder) {
   letter-spacing: 0.05em;
   color: rgba(0, 50, 116, 0.50);
   padding: 2px 0;
+}
+
+.constructor-undo-redo {
+  display: flex;
+  gap: 1px;
+}
+
+.ct-ur-btn {
+  width: 26px !important;
+  height: 26px !important;
+  color: rgba(0, 50, 116, 0.45) !important;
+}
+.ct-ur-btn:enabled:hover {
+  color: #003274 !important;
+  background: rgba(0, 50, 116, 0.08) !important;
+}
+.ct-ur-btn:disabled {
+  opacity: 0.2 !important;
 }
 
 /* ── Right panel: table editor ── */

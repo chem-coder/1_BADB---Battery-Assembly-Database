@@ -17,6 +17,7 @@ import CrudTable from '@/components/CrudTable.vue'
 // StatusBadge removed — status column replaced by project/operator
 import TapeConstructor from '@/components/TapeConstructor.vue'
 import Checkbox from 'primevue/checkbox'
+// Button removed — undo/redo now in TapeConstructor
 
 const router = useRouter()
 const toast = useToast()
@@ -88,7 +89,7 @@ function onDelete(items) {
 
 async function confirmSave() {
   try {
-    // Handle delete flow
+    // Handle delete flow (the only action requiring explicit confirmation)
     if (pendingDelete.value.length) {
       for (const item of pendingDelete.value) {
         await api.delete(`/api/tapes/${item.tape_id}`)
@@ -96,10 +97,6 @@ async function confirmSave() {
       pendingDelete.value = []
       crudTable.value?.clearSelection()
       await loadTapes()
-    }
-    // Handle constructor dirty saves
-    if (constructorDirty.value && constructorRef.value) {
-      await constructorRef.value.saveAll()
     }
     saveState.value = 'saved'
     clearTimeout(saveTimer)
@@ -113,9 +110,6 @@ function discardChanges() {
   if (pendingDelete.value.length) {
     pendingDelete.value = []
     crudTable.value?.clearSelection()
-  }
-  if (constructorDirty.value && constructorRef.value) {
-    constructorRef.value.discardAll()
   }
   saveState.value = 'idle'
 }
@@ -164,13 +158,7 @@ async function loadRefData() {
   try { refData.coatingMethods = (await api.get('/api/reference/coating-methods')).data } catch {}
 }
 
-// ── SaveIndicator visibility ─────────────────────────────────────────
-// Show indicator for delete flow OR constructor dirty state
-const indicatorVisible = ref(false)
-
-function updateIndicator() {
-  indicatorVisible.value = pendingDelete.value.length > 0 || saveState.value === 'saved' || constructorDirty.value
-}
+// (Undo/redo now handled inside TapeConstructor with Ctrl+Z/Y)
 
 // ── Helpers ────────────────────────────────────────────────────────────
 function formatDate(dt) {
@@ -180,12 +168,6 @@ function formatDate(dt) {
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   })
 }
-
-// Progress: (1 general_info + completed_steps) / 8 total stages * 100
-function tapeProgress(row) {
-  const done = 1 + (Number(row.completed_steps) || 0) // general_info always done
-  return Math.round((done / 8) * 100)
-}
 </script>
 
 <template>
@@ -194,7 +176,7 @@ function tapeProgress(row) {
     <PageHeader title="Подготовка лент" icon="pi pi-bars">
       <template #actions>
         <SaveIndicator
-          :visible="pendingDelete.length > 0 || constructorDirty || saveState === 'saved'"
+          :visible="pendingDelete.length > 0 || saveState === 'saved'"
           :saved="saveState === 'saved'"
           @save="confirmSave"
           @cancel="discardChanges"
@@ -252,13 +234,15 @@ function tapeProgress(row) {
         <span>{{ data.recipe_name || '' }}</span>
       </template>
 
-      <!-- Custom cell: Прогресс -->
+      <!-- Custom cell: Прогресс (8 сегментов = 8 этапов) -->
       <template #col-progress="{ data }">
-        <div class="progress-cell">
-          <div class="progress-track">
-            <div class="progress-fill" :style="{ width: tapeProgress(data) + '%' }"></div>
-          </div>
-          <span class="progress-pct">{{ tapeProgress(data) }}%</span>
+        <div class="progress-segments">
+          <div
+            v-for="i in 8"
+            :key="i"
+            class="progress-seg"
+            :class="{ 'progress-seg--done': i <= (1 + (Number(data.completed_steps) || 0)) }"
+          ></div>
         </div>
       </template>
 
@@ -321,31 +305,20 @@ function tapeProgress(row) {
 .tape-name {
   color: #003274;
 }
-/* ── Progress bar ── */
-.progress-cell {
+/* ── Progress segments (8 stages) ── */
+.progress-segments {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  gap: 2px;
 }
-.progress-track {
+.progress-seg {
   flex: 1;
   height: 6px;
+  border-radius: 2px;
   background: rgba(0, 50, 116, 0.08);
-  border-radius: 3px;
-  overflow: hidden;
+  transition: background 0.3s;
 }
-.progress-fill {
-  height: 100%;
+.progress-seg--done {
   background: #2ECC94;
-  border-radius: 3px;
-  transition: width 0.3s;
-}
-.progress-pct {
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(0, 50, 116, 0.5);
-  min-width: 30px;
-  text-align: right;
 }
 
 .text-muted {

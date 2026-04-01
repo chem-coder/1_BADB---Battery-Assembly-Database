@@ -118,6 +118,79 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
 
   const anyDirty = computed(() => Object.values(dirtySteps).some(Boolean))
 
+  // ── Undo / Redo history (snapshot-based) ──
+  const MAX_HISTORY = 50
+  const undoStack = ref([])   // past snapshots
+  const redoStack = ref([])   // future snapshots
+  let _skipHistory = false     // flag to prevent recording during undo/redo/restore
+
+  function _takeSnapshot() {
+    return {
+      general: JSON.parse(JSON.stringify(general)),
+      steps: JSON.parse(JSON.stringify(steps)),
+    }
+  }
+
+  function _applySnapshot(snap) {
+    _skipHistory = true
+    Object.assign(general, snap.general)
+    for (const code of Object.keys(snap.steps)) {
+      if (steps[code]) Object.assign(steps[code], snap.steps[code])
+    }
+    _skipHistory = false
+  }
+
+  function pushHistory() {
+    if (_skipHistory) return
+    undoStack.value.push(_takeSnapshot())
+    if (undoStack.value.length > MAX_HISTORY) undoStack.value.shift()
+    redoStack.value = [] // new edit clears redo
+  }
+
+  // ── Auto-save (debounced per step) ──
+  const _saveTimers = {}
+  const AUTO_SAVE_DELAY = 800 // ms
+
+  function _scheduleAutoSave(stageCode) {
+    clearTimeout(_saveTimers[stageCode])
+    _saveTimers[stageCode] = setTimeout(async () => {
+      if (!dirtySteps[stageCode]) return
+      try {
+        await saveStep(stageCode)
+        setDirty(stageCode, false)
+      } catch (e) {
+        console.error(`Auto-save failed for ${stageCode}:`, e)
+      }
+    }, AUTO_SAVE_DELAY)
+  }
+
+  function _autoSaveAll() {
+    // After undo/redo, save all steps that might have changed
+    for (const code of Object.keys(dirtySteps)) {
+      setDirty(code, true)
+      _scheduleAutoSave(code)
+    }
+  }
+
+  function undo() {
+    if (!undoStack.value.length) return
+    redoStack.value.push(_takeSnapshot())
+    const snap = undoStack.value.pop()
+    _applySnapshot(snap)
+    _autoSaveAll()
+  }
+
+  function redo() {
+    if (!redoStack.value.length) return
+    undoStack.value.push(_takeSnapshot())
+    const snap = redoStack.value.pop()
+    _applySnapshot(snap)
+    _autoSaveAll()
+  }
+
+  const canUndo = computed(() => undoStack.value.length > 0)
+  const canRedo = computed(() => redoStack.value.length > 0)
+
   // ── Recipe lines & instances ──
   const currentRecipeLines = ref([])
   const selectedInstanceByLineId = reactive({})
@@ -521,12 +594,15 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
 
   // ── Set field value (for comparison view) ──
   function setFieldValue(stageCode, fieldKey, value) {
+    pushHistory() // snapshot before change
     if (stageCode === 'general_info') {
       general[fieldKey] = value
       setDirty('general_info')
+      _scheduleAutoSave('general_info')
     } else if (steps[stageCode]) {
       steps[stageCode][fieldKey] = value
       setDirty(stageCode)
+      _scheduleAutoSave(stageCode)
     }
   }
 
@@ -578,6 +654,14 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
 
     // Gantt
     ganttStages,
+
+    // Undo / Redo
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    undoStack,
+    redoStack,
 
     // Methods
     restore,
