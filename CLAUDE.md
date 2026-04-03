@@ -7,7 +7,7 @@ Dima contributes via feature branches → Pull Requests into Dalia's main.
 
 ## Stack
 
-- **Server:** Node.js + Express 5 (modular), PostgreSQL 16 (badb_v1, 42 tables — Dalia's production DB)
+- **Server:** Node.js + Express 5 (modular), PostgreSQL 16 (badb_app_v1, 42 tables — Dalia's production DB)
 - **Client (VBA):** Excel VBA (DatabaseUI.xlam)
 - **Client (Web):** Vue 3 + PrimeVue 4 + Vite (planned)
 - **Contracts:** JSON Schema draft-07 (contracts/)
@@ -53,25 +53,25 @@ BADB-Battery-Assembly-Database/
 
 | task    | command                                          |
 |---------|--------------------------------------------------|
-| dev     | `npm run dev` (server :3001 + Vite :5173)        |
-| server  | `node server.js` (port 3001)                     |
+| dev     | `npm run dev` (server :3003 + Vite :5173)        |
+| server  | `node server.js` (port 3003)                     |
 | test    | VBA: cmdSelfTest.RunAll()                        |
 
 ## Dev environment — ports and networking
 
-- **BADB server:** port **3001** (`config/index.js` → `PORT || 3001`)
+- **BADB server:** port **3003** (`config/index.js` → `PORT || 3003`)
 - **Vite dev server:** port **5173**
-- **Port 3000** — was Dalia's old standalone server. After integration, only port 3001 is used.
+- **Port 3000** — was Dalia's old standalone server. After integration, only port 3003 is used.
 - **Browser URL:** http://localhost:5173
 
 ### How API requests flow (CRITICAL)
 
 ```
-Browser (5173) → /api/* (relative) → Vite proxy → localhost:3001 → PostgreSQL
+Browser (5173) → /api/* (relative) → Vite proxy → localhost:3003 → PostgreSQL
 ```
 
 Axios `baseURL` MUST be empty string `''` in dev. Direct cross-origin requests
-(5173 → 3001) are blocked by CORS. Always route through Vite proxy.
+(5173 → 3003) are blocked by CORS. Always route through Vite proxy.
 
 ### Frontend networking invariants (NEVER violate)
 
