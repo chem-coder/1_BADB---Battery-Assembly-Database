@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import api from '@/services/api'
 import { useStatus } from '@/composables/useStatus'
 import PageHeader from '@/components/PageHeader.vue'
@@ -53,8 +53,12 @@ function resetForm() {
 
 // API
 async function loadRecipes() {
-  const { data } = await api.get('/api/recipes')
-  recipes.value = data
+  try {
+    const { data } = await api.get('/api/recipes')
+    recipes.value = data
+  } catch {
+    console.error('Не удалось загрузить рецептуры')
+  }
 }
 
 async function loadUsers() {
@@ -281,11 +285,14 @@ function roleLabel(role) {
 }
 
 // Invalidate material cache on window refocus
-if (typeof window !== 'undefined') {
-  window.addEventListener('focus', () => { cachedMaterials = null })
-}
-
-onMounted(() => { loadRecipes(); loadUsers() })
+function onWindowFocus() { cachedMaterials = null }
+onMounted(() => {
+  window.addEventListener('focus', onWindowFocus)
+  loadRecipes(); loadUsers()
+})
+onUnmounted(() => {
+  window.removeEventListener('focus', onWindowFocus)
+})
 </script>
 
 <template>

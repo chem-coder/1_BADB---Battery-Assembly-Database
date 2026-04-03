@@ -77,11 +77,12 @@ watch(
     const added = newIds.map(String).filter(tid => !existing.includes(tid))
     tabOrder.value = [...existing, ...added]
 
-    // Load new tapes
-    for (const id of newIds) {
-      const tid = String(id)
-      if (!tapeStates[tid]) await loadTape(Number(id))
-    }
+    // Load new tapes (parallel)
+    await Promise.allSettled(
+      newIds
+        .filter(id => !tapeStates[String(id)])
+        .map(id => loadTape(Number(id)))
+    )
 
     // Set active tape
     if (tabOrder.value.length && (!activeTapeId.value || !newSet.has(String(activeTapeId.value)))) {

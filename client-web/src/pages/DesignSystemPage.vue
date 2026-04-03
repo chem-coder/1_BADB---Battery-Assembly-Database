@@ -392,24 +392,27 @@ function onResizerDblClick(e) {
   if (th) autoFitColumn(th)
 }
 
+let _dblClickHandler = null
 onMounted(() => {
   document.addEventListener('click', onDocClick)
-  // Attach dblclick to column resizers
   nextTick(() => {
     const table = tableRef.value?.$el
     if (table) {
-      table.addEventListener('dblclick', (e) => {
+      _dblClickHandler = (e) => {
         if (e.target.classList.contains('p-datatable-column-resizer') ||
             e.target.closest('.p-datatable-column-resizer')) {
           onResizerDblClick(e)
         }
-      })
+      }
+      table.addEventListener('dblclick', _dblClickHandler)
     }
   })
 })
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick)
   clearTimeout(saveTimer)
+  const table = tableRef.value?.$el
+  if (table && _dblClickHandler) table.removeEventListener('dblclick', _dblClickHandler)
 })
 </script>
 

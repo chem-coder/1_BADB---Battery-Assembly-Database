@@ -32,7 +32,10 @@ async function getBypassUser() {
   } catch {
     // DB not ready yet — use hardcoded fallback
   }
-  if (!_bypassUser) _bypassUser = { userId: 1, login: bypassLogin, role: 'admin' };
+  if (!_bypassUser) {
+    // Don't cache hardcoded fallback — retry DB on next request
+    return { userId: 1, login: bypassLogin, role: 'admin' };
+  }
   return _bypassUser;
 }
 

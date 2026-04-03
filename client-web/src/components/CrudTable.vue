@@ -362,26 +362,27 @@ function onDocClick(e) {
   }
 }
 
+let _dblClickHandler = null
 onMounted(() => {
   document.addEventListener('click', onDocClick)
   nextTick(() => {
     const table = tableRef.value?.$el
     if (table) {
-      table.addEventListener('dblclick', (e) => {
-        // PrimeVue 3: p-column-resizer, PrimeVue 4: p-datatable-column-resizer
+      _dblClickHandler = (e) => {
         const isResizer = e.target.classList.contains('p-datatable-column-resizer')
           || e.target.classList.contains('p-column-resizer')
           || e.target.closest('.p-datatable-column-resizer')
           || e.target.closest('.p-column-resizer')
-        if (isResizer) {
-          onResizerDblClick(e)
-        }
-      })
+        if (isResizer) onResizerDblClick(e)
+      }
+      table.addEventListener('dblclick', _dblClickHandler)
     }
   })
 })
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick)
+  const table = tableRef.value?.$el
+  if (table && _dblClickHandler) table.removeEventListener('dblclick', _dblClickHandler)
 })
 </script>
 

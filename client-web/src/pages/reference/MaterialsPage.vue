@@ -55,8 +55,12 @@ const allInstances = ref([]) // for component dropdown
 
 // --- API ---
 async function loadMaterials() {
-  const { data } = await api.get('/api/materials')
-  materials.value = data.sort((a, b) => a.name.localeCompare(b.name))
+  try {
+    const { data } = await api.get('/api/materials')
+    materials.value = data.sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    showStatus('Не удалось загрузить материалы', true)
+  }
 }
 
 async function loadInstances(materialId) {

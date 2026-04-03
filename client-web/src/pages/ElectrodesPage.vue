@@ -117,7 +117,7 @@ async function confirmDelete(batch) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadTapes(), loadProjects()])
+  await Promise.allSettled([loadTapes(), loadProjects()])
 })
 </script>
 
