@@ -8,6 +8,23 @@
     let currentCutBatchId = null;
     let hasChanges = false;
     let tapes = [];
+    let allCutBatches = [];
+
+    function ensureCutBatchListsVisible() {
+      [
+        document.getElementById('cutBatchesList'),
+        document.getElementById('all-cut-batches-list')
+      ].forEach(list => {
+        if (!list) return;
+        list.hidden = false;
+        list.style.display = '';
+        const container = list.closest('fieldset, div, section');
+        if (container) {
+          container.hidden = false;
+          container.style.display = '';
+        }
+      });
+    }
     
     const roleRu = {
       cathode: 'катод',
@@ -99,6 +116,37 @@
       tapes = await res.json();
       
       renderTapeOptions();
+    }
+
+    async function loadAllCutBatches() {
+      const sourceTapes = await (await fetch('/api/tapes')).json();
+
+      const batchGroups = await Promise.all(
+        sourceTapes.map(async (tape) => {
+          const res = await fetch(`/api/tapes/${tape.tape_id}/electrode-cut-batches`);
+          if (!res.ok) return [];
+
+          const batches = await res.json();
+          return batches.map(batch => ({
+            ...batch,
+            tape_name: tape.name,
+            tape_role: tape.role,
+            project_id: tape.project_id,
+            created_by_name: batch.created_by_name || batch.created_by
+          }));
+        })
+      );
+
+      allCutBatches = batchGroups
+        .flat()
+        .sort((a, b) => {
+          const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+          if (bTime !== aTime) return bTime - aTime;
+          return Number(b.cut_batch_id) - Number(a.cut_batch_id);
+        });
+
+      renderAllCutBatches();
     }
     
     function renderTapeOptions() {
@@ -206,6 +254,102 @@
       
       appendFoilMassRow();
       clearDryingBlock();
+    }
+
+    function roleLabel(role) {
+      return roleRu[role] || role || '—';
+    }
+
+    function batchStatusLabel(batch) {
+      if (batch.drying_start && !batch.drying_end) {
+        return '🟠 сушится';
+      }
+
+      if (batch.drying_end) {
+        return '🟢 готово';
+      }
+
+      return '🟡 в работе';
+    }
+
+    function renderCutBatchListInto(list) {
+      if (!list) return;
+
+      ensureCutBatchListsVisible();
+      list.hidden = false;
+      list.innerHTML = '';
+
+      if (!allCutBatches.length) {
+        const li = document.createElement('li');
+        li.className = 'user-row';
+
+        const info = document.createElement('div');
+        info.className = 'user-info';
+        info.textContent = 'Пока нет вырезанных партий электродов';
+
+        li.appendChild(info);
+        list.appendChild(li);
+        return;
+      }
+
+      allCutBatches.forEach(batch => {
+        const li = document.createElement('li');
+        li.className = 'user-row';
+
+        const info = document.createElement('div');
+        info.className = 'user-info';
+
+        const title = document.createElement('strong');
+        const dateText = batch.created_at
+          ? new Date(batch.created_at).toLocaleDateString('ru-RU')
+          : '—';
+        const count = Number(batch.electrode_count) || 0;
+
+        title.textContent =
+          `Партия ${batch.cut_batch_id} | ${batch.tape_name || '—'} | ${count} эл. | ${batchStatusLabel(batch)}`;
+
+        const meta = document.createElement('small');
+        meta.style.color = '#666';
+        meta.textContent =
+          ` — ${dateText} — ${roleLabel(batch.tape_role)} — ${batch.created_by_name || batch.created_by || '—'}`;
+
+        info.appendChild(title);
+        info.appendChild(meta);
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        const openBtn = document.createElement('button');
+        openBtn.type = 'button';
+        openBtn.textContent = '✏️';
+        openBtn.title = 'Открыть партию';
+        openBtn.onclick = async () => {
+          const projectSelect = document.getElementById('electrodes-project_id');
+
+          roleSelect.value = batch.tape_role || '';
+          projectSelect.value = batch.project_id || '';
+          renderTapeOptions();
+          tapeSelect.value = String(batch.tape_id);
+
+          workflow.hidden = false;
+          addCutBatchBtn.hidden = false;
+
+          await loadCutBatches(Number(batch.tape_id));
+          await selectBatch(batch);
+        };
+
+        actions.appendChild(openBtn);
+
+        li.appendChild(info);
+        li.appendChild(actions);
+        list.appendChild(li);
+      });
+    }
+
+    function renderAllCutBatches() {
+      ensureCutBatchListsVisible();
+      renderCutBatchListInto(document.getElementById('cutBatchesList'));
+      renderCutBatchListInto(document.getElementById('all-cut-batches-list'));
     }
     
     function populateBatchWorkspace(batch) {
@@ -1149,16 +1293,24 @@
       alert('Партия сохранена');
       
       await loadCutBatches(tapeId);
+      await loadAllCutBatches();
       await loadElectrodes(currentCutBatchId);
     });
     
     
     // -------- Init --------
     
-    loadProjects();
-    loadUsers();
-    loadTapes();
-    appendFoilMassRow();
+    async function initPage() {
+      allCutBatches = [];
+      renderAllCutBatches();
+      await loadProjects();
+      await loadUsers();
+      await loadTapes();
+      await loadAllCutBatches();
+      appendFoilMassRow();
+    }
+
+    initPage();
     
     document.querySelectorAll('input, textarea, select').forEach(el => {
       el.addEventListener('input', () => {

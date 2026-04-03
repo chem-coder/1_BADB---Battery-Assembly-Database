@@ -53,6 +53,19 @@
       .recipe-line-row:nth-child(even):not(.recipe-line-header) {
         background: #fafafa;
       }
+
+      .inline-save-status {
+        display: inline-block;
+        min-height: 1.2em;
+        margin-left: 0.6rem;
+        color: darkcyan;
+        font-size: 0.95rem;
+        vertical-align: middle;
+      }
+
+      .inline-save-status.is-error {
+        color: #b00020;
+      }
     </style>
   </head>
 
@@ -76,7 +89,7 @@
     required
     />
     
-    <form name="tape-form" hidden autocomplete="on">
+    <form name="tape-form" hidden autocomplete="on" data-state-root="tapePageState">
       
       <div class="form-actions" style="display:flex; gap:.5rem; align-items:center; margin:.5rem 0 1rem 0;">
         <button type="button" id="clearBtn">Выход</button>
@@ -149,6 +162,7 @@
           placeholder="например 10.0000"><br>
           
           <button type="button" id="saveBtn">Создать ленту</button>
+          <span class="inline-save-status" aria-live="polite"></span>
         </fieldset>
       </details>
       
@@ -158,6 +172,7 @@
         </summary>
         <div id="recipe-lines-container"></div>
         <button type="button" id="0-recipe-materials-save-btn">Сохранить выбор экземпляров</button>
+        <span class="inline-save-status" aria-live="polite"></span>
         
         <hr class="section-divider">
         <details id="calculations-expanded">
@@ -208,6 +223,7 @@
           <textarea id="0-drying_am-other_param" name="0-drying_am-other_param" placeholder="Примечания к этапу сушки активного материала"></textarea><br>
           
           <button type="button" id="0-drying_am-save-btn">Сохранить сушку</button>
+          <span class="inline-save-status" aria-live="polite"></span>
         </fieldset>
       </details>
       
@@ -255,6 +271,7 @@
           </table>
           
           <button type="button" id="1-weighing-save-btn">Сохранить этап замеса</button>
+          <span class="inline-save-status" aria-live="polite"></span>
           
         </fieldset>
         
@@ -355,6 +372,7 @@
           placeholder="Например: 1200"><br>
           
           <button type="button" id="1-mixing-save-btn">Сохранить этап перемешивания</button>
+          <span class="inline-save-status" aria-live="polite"></span>
           
         </fieldset>
       </details>
@@ -393,29 +411,11 @@
             
             <h4>Параметры нанесения:</h4>
             
-            <!-- What gets written into tape_step_coating -->
             <label for="2-coating-foil_id">Фольга: </label>
             <select id="2-coating-foil_id" name="foil_id">
               <option value="">— выбрать фольгу —</option>
             </select><br>
             <small>По умолчанию: Al для катодов, Cu для анодов.</small><br>
-            
-            <!---BUGS-->
-            <!--The "save changes" and "Exit" buttons are not easily located and for some reason are in different spots - not great design -->
-            
-            <!--Mixing:-->
-            <!--Need to add solvents to the recipe. Required amount is 0 but must be able to ad solvent in the tape-actuals.-->
-            <!--After that, need to calculate content of solids in the final mixture - around the same place as the viscosity input.-->
-            <!--Этап I: Приготовление электродной пасты ● не сохранено - thats a bug. THe flag is falsely suggesting "changes not saved" - they have been saved multiple times... -->
-            
-            <!--Coating-->
-            <!--for graphite anodes, Cu foil should be default-->
-            <!--for coating foil, parameters must be visible. I don't know why they did not show-->
-            <!--CLicking "Сохранить этап нанесения" did not seem to do anything - usually there is an alert saying "Saved",
-            which makes me think it did not save, which would make sense with the other bug - coating params not showing-->
-            
-            <!--Calendering-->
-            <!--Сохранить этап каландрирования - does not save either - at least no message-->
             
             <label for="2-coating-coating_id">Метод нанесения: </label>
             <select id="2-coating-coating_id" name="coating_id">
@@ -423,10 +423,7 @@
             </select>
             <br>
             
-            <!-- Prefilled from coating_methods, then saved per tape in tape_step_coating -->
-            <div class="mix-params" id="2-coating-method-preview" hidden>
-              <h4>Параметры метода нанесения</h4>
-              
+            <div class="mix-params" id="2-coating-params">
               <label for="2-coating-gap-um">Зазор, мкм: </label>
               <input id="2-coating-gap-um" type="number" step="0.1" min="0" required><br>
               
@@ -441,6 +438,7 @@
             </div>
             
             <button type="button" id="2-coating-save-btn">Сохранить этап нанесения</button>
+            <span class="inline-save-status" aria-live="polite"></span>
           </fieldset>
           
           <fieldset id="2a-drying_tape">
@@ -482,6 +480,7 @@
             <textarea id="2a-drying_tape-other_param" name="2a-drying_tape-other_param" placeholder="Примечания к этапу сушки активного материала"></textarea><br>
             
             <button type="button" id="2a-drying_tape-save-btn">Сохранить этап сушки</button>
+            <span class="inline-save-status" aria-live="polite"></span>
           </fieldset>
           
           <fieldset id="2-calendering">
@@ -564,6 +563,7 @@
             disabled><br>
             
             <button type="button" id="2-calendering-save-btn">Сохранить этап каландрирования</button>
+            <span class="inline-save-status" aria-live="polite"></span>
           </fieldset>
           
           <fieldset id="2b-drying_pressed_tape">
@@ -605,6 +605,7 @@
             <textarea id="2b-drying_pressed_tape-other_param" name="2b-drying_pressed_tape-other_param" placeholder="Примечания к этапу сушки активного материала"></textarea><br>
             
             <button type="button" id="2b-drying_pressed_tape-save-btn">Сохранить этап сушки</button>
+            <span class="inline-save-status" aria-live="polite"></span>
             
           </fieldset>
         </fieldset>

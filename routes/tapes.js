@@ -2,6 +2,167 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 
+const WORKFLOW_STATUS_ORDER = [
+  { code: 'recipe_materials', label: 'Выбор экземпляров' },
+  { code: 'drying_am', label: 'Сушка активного материала' },
+  { code: 'weighing', label: 'Замес пасты' },
+  { code: 'mixing', label: 'Перемешивание' },
+  { code: 'coating', label: 'Нанесение' },
+  { code: 'drying_tape', label: 'Сушка ленты до каландрирования' },
+  { code: 'calendering', label: 'Каландрирование' },
+  { code: 'drying_pressed_tape', label: 'Сушка ленты после каландрирования' }
+];
+
+function isFilled(value) {
+  return value !== null && value !== undefined && value !== '';
+}
+
+function hasSavedHeader(step) {
+  return Boolean(step) && isFilled(step.performed_by) && isFilled(step.started_at);
+}
+
+function computeTapeWorkflowStatus({ recipeMeta, stepsByCode }) {
+  const recipeComplete =
+    recipeMeta.total_lines > 0 &&
+    recipeMeta.selected_instance_lines >= recipeMeta.total_lines;
+
+  const weighingActualsComplete =
+    recipeMeta.required_actual_lines === 0 ||
+    recipeMeta.filled_actual_lines >= recipeMeta.required_actual_lines;
+
+  const completionMap = {
+    recipe_materials: recipeComplete,
+    drying_am: hasSavedHeader(stepsByCode.drying_am),
+    weighing: hasSavedHeader(stepsByCode.weighing) && weighingActualsComplete,
+    mixing: hasSavedHeader(stepsByCode.mixing),
+    coating:
+      hasSavedHeader(stepsByCode.coating) &&
+      isFilled(stepsByCode.coating?.foil_id) &&
+      isFilled(stepsByCode.coating?.coating_id) &&
+      isFilled(stepsByCode.coating?.gap_um),
+    drying_tape: hasSavedHeader(stepsByCode.drying_tape),
+    calendering: hasSavedHeader(stepsByCode.calendering),
+    drying_pressed_tape: hasSavedHeader(stepsByCode.drying_pressed_tape)
+  };
+
+  const firstIncomplete = WORKFLOW_STATUS_ORDER.find(
+    ({ code }) => !completionMap[code]
+  );
+
+  if (firstIncomplete) {
+    return {
+      workflow_status_code: firstIncomplete.code,
+      workflow_status_label: firstIncomplete.label,
+      workflow_complete: false
+    };
+  }
+
+  return {
+    workflow_status_code: 'finished',
+    workflow_status_label: 'Завершено',
+    workflow_complete: true
+  };
+}
+
+async function fetchWorkflowStatusMap(tapeIds) {
+  const ids = (Array.isArray(tapeIds) ? tapeIds : [])
+    .map(Number)
+    .filter((id) => Number.isInteger(id));
+
+  if (!ids.length) {
+    return new Map();
+  }
+
+  const recipeResult = await pool.query(
+    `
+    SELECT
+      t.tape_id,
+      COUNT(rl.recipe_line_id) AS total_lines,
+      COUNT(*) FILTER (
+        WHERE a.material_instance_id IS NOT NULL
+      ) AS selected_instance_lines,
+      COUNT(*) FILTER (
+        WHERE COALESCE(rl.include_in_pct, false) = true
+      ) AS required_actual_lines,
+      COUNT(*) FILTER (
+        WHERE COALESCE(rl.include_in_pct, false) = true
+          AND (
+            a.actual_mass_g IS NOT NULL OR
+            a.actual_volume_ml IS NOT NULL
+          )
+      ) AS filled_actual_lines
+    FROM tapes t
+    JOIN tape_recipe_lines rl
+      ON rl.tape_recipe_id = t.tape_recipe_id
+    LEFT JOIN tape_recipe_line_actuals a
+      ON a.tape_id = t.tape_id
+     AND a.recipe_line_id = rl.recipe_line_id
+    WHERE t.tape_id = ANY($1::int[])
+    GROUP BY t.tape_id
+    `,
+    [ids]
+  );
+
+  const stepsResult = await pool.query(
+    `
+    SELECT
+      s.tape_id,
+      ot.code,
+      s.performed_by,
+      s.started_at,
+      c.foil_id,
+      c.coating_id,
+      c.gap_um
+    FROM tape_process_steps s
+    JOIN operation_types ot
+      ON ot.operation_type_id = s.operation_type_id
+    LEFT JOIN tape_step_coating c
+      ON c.step_id = s.step_id
+    WHERE s.tape_id = ANY($1::int[])
+    `,
+    [ids]
+  );
+
+  const recipeMetaByTapeId = new Map(
+    recipeResult.rows.map((row) => [
+      Number(row.tape_id),
+      {
+        total_lines: Number(row.total_lines) || 0,
+        selected_instance_lines: Number(row.selected_instance_lines) || 0,
+        required_actual_lines: Number(row.required_actual_lines) || 0,
+        filled_actual_lines: Number(row.filled_actual_lines) || 0
+      }
+    ])
+  );
+
+  const stepsByTapeId = new Map();
+  stepsResult.rows.forEach((row) => {
+    const tapeId = Number(row.tape_id);
+    if (!stepsByTapeId.has(tapeId)) {
+      stepsByTapeId.set(tapeId, {});
+    }
+    stepsByTapeId.get(tapeId)[row.code] = row;
+  });
+
+  const statusMap = new Map();
+  ids.forEach((tapeId) => {
+    statusMap.set(
+      tapeId,
+      computeTapeWorkflowStatus({
+        recipeMeta: recipeMetaByTapeId.get(tapeId) || {
+          total_lines: 0,
+          selected_instance_lines: 0,
+          required_actual_lines: 0,
+          filled_actual_lines: 0
+        },
+        stepsByCode: stepsByTapeId.get(tapeId) || {}
+      })
+    );
+  });
+
+  return statusMap;
+}
+
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
   res.json(result.rows);
@@ -42,9 +203,27 @@ router.post('/:id/actuals', async (req, res) => {
       ON CONFLICT (tape_id, recipe_line_id)
       DO UPDATE SET
         material_instance_id = EXCLUDED.material_instance_id,
-        measure_mode = EXCLUDED.measure_mode,
-        actual_mass_g = EXCLUDED.actual_mass_g,
-        actual_volume_ml = EXCLUDED.actual_volume_ml,
+        measure_mode = CASE
+          WHEN EXCLUDED.measure_mode IS NULL
+            AND EXCLUDED.actual_mass_g IS NULL
+            AND EXCLUDED.actual_volume_ml IS NULL
+          THEN tape_recipe_line_actuals.measure_mode
+          ELSE EXCLUDED.measure_mode
+        END,
+        actual_mass_g = CASE
+          WHEN EXCLUDED.measure_mode IS NULL
+            AND EXCLUDED.actual_mass_g IS NULL
+            AND EXCLUDED.actual_volume_ml IS NULL
+          THEN tape_recipe_line_actuals.actual_mass_g
+          ELSE EXCLUDED.actual_mass_g
+        END,
+        actual_volume_ml = CASE
+          WHEN EXCLUDED.measure_mode IS NULL
+            AND EXCLUDED.actual_mass_g IS NULL
+            AND EXCLUDED.actual_volume_ml IS NULL
+          THEN tape_recipe_line_actuals.actual_volume_ml
+          ELSE EXCLUDED.actual_volume_ml
+        END,
         recorded_at = now()
       RETURNING *
       `,
@@ -212,7 +391,19 @@ router.get('/', async (req, res) => {
           `
         );
 
-    res.json(result.rows);
+    const rows = result.rows || [];
+    const statusMap = await fetchWorkflowStatusMap(rows.map((row) => row.tape_id));
+
+    res.json(
+      rows.map((row) => ({
+        ...row,
+        ...(statusMap.get(Number(row.tape_id)) || {
+          workflow_status_code: 'recipe_materials',
+          workflow_status_label: 'Выбор экземпляров',
+          workflow_complete: false
+        })
+      }))
+    );
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });

@@ -4,6 +4,8 @@ const path = require('path');
 const router = express.Router();
 const pool = require('../db');
 
+const ALLOWED_COIN_LAYOUTS = new Set(['SE', 'ES', 'ESE']);
+
 async function ensureBatteryAssembledStatus(batteryId) {
   await pool.query(
     `
@@ -315,11 +317,12 @@ router.post('/battery_coin_config', async (req, res) => {
     spacer_thickness_mm,
     spacer_count,
     spacer_notes,
-    coin_layout,
-    electrolyte_drop_count,
-    electrolyte_drop_volume,
-    coin_layout_notes
+    coin_layout
   } = req.body;
+
+  if (coin_layout != null && coin_layout !== '' && !ALLOWED_COIN_LAYOUTS.has(coin_layout)) {
+    return res.status(400).json({ error: 'Допустимые схемы для coin cell: SE, ES, ESE' });
+  }
 
   try {
 
@@ -334,12 +337,9 @@ router.post('/battery_coin_config', async (req, res) => {
         spacer_thickness_mm,
         spacer_count,
         spacer_notes,
-        coin_layout,
-        electrolyte_drop_count,
-        electrolyte_drop_volume,
-        coin_layout_notes
+        coin_layout
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
       RETURNING *
       `,
       [
@@ -351,10 +351,7 @@ router.post('/battery_coin_config', async (req, res) => {
         spacer_thickness_mm != null ? Number(spacer_thickness_mm) : null,
         spacer_count != null ? Number(spacer_count) : null,
         spacer_notes || null,
-        coin_layout || null,
-        electrolyte_drop_count != null ? Number(electrolyte_drop_count) : null,
-        electrolyte_drop_volume != null ? Number(electrolyte_drop_volume) : null,
-        coin_layout_notes || null
+        coin_layout || null
       ]
     );
 
@@ -391,10 +388,7 @@ router.get('/battery_coin_config/:battery_id', async (req, res) => {
         spacer_thickness_mm,
         spacer_count,
         spacer_notes,
-        coin_layout,
-        electrolyte_drop_count,
-        electrolyte_drop_volume,
-        coin_layout_notes
+        coin_layout
       FROM battery_coin_config
       WHERE battery_id = $1
       `,
@@ -428,12 +422,16 @@ router.patch('/battery_coin_config/:battery_id', async (req, res) => {
   const hasSpacerCount = Object.prototype.hasOwnProperty.call(req.body, 'spacer_count');
   const hasSpacerNotes = Object.prototype.hasOwnProperty.call(req.body, 'spacer_notes');
   const hasCoinLayout = Object.prototype.hasOwnProperty.call(req.body, 'coin_layout');
-  const hasDropCount = Object.prototype.hasOwnProperty.call(req.body, 'electrolyte_drop_count');
-  const hasDropVolume = Object.prototype.hasOwnProperty.call(req.body, 'electrolyte_drop_volume');
-  const hasCoinLayoutNotes = Object.prototype.hasOwnProperty.call(req.body, 'coin_layout_notes');
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
+  }
+
+  if (hasCoinLayout) {
+    const layout = req.body.coin_layout;
+    if (layout != null && layout !== '' && !ALLOWED_COIN_LAYOUTS.has(layout)) {
+      return res.status(400).json({ error: 'Допустимые схемы для coin cell: SE, ES, ESE' });
+    }
   }
 
   try {
@@ -449,11 +447,8 @@ router.patch('/battery_coin_config/:battery_id', async (req, res) => {
         spacer_thickness_mm = CASE WHEN $9 THEN $10 ELSE spacer_thickness_mm END,
         spacer_count = CASE WHEN $11 THEN $12 ELSE spacer_count END,
         spacer_notes = CASE WHEN $13 THEN $14 ELSE spacer_notes END,
-        coin_layout = CASE WHEN $15 THEN $16 ELSE coin_layout END,
-        electrolyte_drop_count = CASE WHEN $17 THEN $18 ELSE electrolyte_drop_count END,
-        electrolyte_drop_volume = CASE WHEN $19 THEN $20 ELSE electrolyte_drop_volume END,
-        coin_layout_notes = CASE WHEN $21 THEN $22 ELSE coin_layout_notes END
-      WHERE battery_id = $23
+        coin_layout = CASE WHEN $15 THEN $16 ELSE coin_layout END
+      WHERE battery_id = $17
       RETURNING
         battery_id,
         coin_cell_mode,
@@ -463,10 +458,7 @@ router.patch('/battery_coin_config/:battery_id', async (req, res) => {
         spacer_thickness_mm,
         spacer_count,
         spacer_notes,
-        coin_layout,
-        electrolyte_drop_count,
-        electrolyte_drop_volume,
-        coin_layout_notes
+        coin_layout
       `,
       [
         hasCoinCellMode,
@@ -489,16 +481,6 @@ router.patch('/battery_coin_config/:battery_id', async (req, res) => {
         hasSpacerNotes ? (req.body.spacer_notes || null) : null,
         hasCoinLayout,
         hasCoinLayout ? (req.body.coin_layout || null) : null,
-        hasDropCount,
-        hasDropCount ? (
-          req.body.electrolyte_drop_count != null ? Number(req.body.electrolyte_drop_count) : null
-        ) : null,
-        hasDropVolume,
-        hasDropVolume ? (
-          req.body.electrolyte_drop_volume != null ? Number(req.body.electrolyte_drop_volume) : null
-        ) : null,
-        hasCoinLayoutNotes,
-        hasCoinLayoutNotes ? (req.body.coin_layout_notes || null) : null,
         batteryId
       ]
     );

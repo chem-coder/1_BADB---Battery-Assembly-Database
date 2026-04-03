@@ -7,6 +7,50 @@ router.get('/test', async (req, res) => {
   res.json(result.rows);
 });
 
+router.get('/electrode-cut-batches', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        b.*,
+        t.name AS tape_name,
+        t.project_id,
+        p.name AS project_name,
+        r.role AS tape_role,
+        u.name AS created_by_name,
+        d.start_time AS drying_start,
+        d.end_time AS drying_end,
+        COALESCE(ec.electrode_count, 0) AS electrode_count
+      FROM electrode_cut_batches b
+      JOIN tapes t
+        ON t.tape_id = b.tape_id
+      LEFT JOIN projects p
+        ON p.project_id = t.project_id
+      LEFT JOIN tape_recipes r
+        ON r.tape_recipe_id = t.tape_recipe_id
+      LEFT JOIN users u
+        ON u.user_id = b.created_by
+      LEFT JOIN electrode_drying d
+        ON d.cut_batch_id = b.cut_batch_id
+      LEFT JOIN (
+        SELECT
+          cut_batch_id,
+          COUNT(*) AS electrode_count
+        FROM electrodes
+        GROUP BY cut_batch_id
+      ) ec
+        ON ec.cut_batch_id = b.cut_batch_id
+      ORDER BY b.created_at DESC, b.cut_batch_id DESC
+      `
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
 
 
 // -------- ELECTRODE CUT BATCHES --------

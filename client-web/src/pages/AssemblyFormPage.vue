@@ -86,12 +86,10 @@ const separatorNotes = ref('')
 // ── Electrolyte ──
 const electrolyteId = ref('')
 const electrolyteNotes = ref('')
+const electrolyteTotalUl = ref('')
 
 // ── Assembly ──
 const separatorLayout = ref('')
-const separatorLayoutOther = ref('')
-const dropCount = ref('')
-const dropVolume = ref('')
 const electrolyteAssemblyNotes = ref('')
 const spacerThicknessMm = ref('')
 const spacerCount = ref('')
@@ -107,13 +105,6 @@ const qcNotes = ref('')
 const electrochemNotes = ref('')
 
 // ── Computed ──
-const electrolyteVolume = computed(() => {
-  const n = Number(dropCount.value)
-  const v = Number(dropVolume.value)
-  if (!n || !v) return ''
-  return (n * v).toFixed(1)
-})
-
 const showLiFoil = computed(() =>
   formFactor.value === 'coin' && coinCellMode.value === 'half_cell'
 )
@@ -272,9 +263,8 @@ async function saveBattery() {
     separator_notes: separatorNotes.value || null,
     electrolyte_id: electrolyteId.value ? Number(electrolyteId.value) : null,
     electrolyte_notes: electrolyteNotes.value || null,
-    separator_layout: separatorLayout.value === 'other' ? separatorLayoutOther.value || null : separatorLayout.value || null,
-    drop_count: dropCount.value ? Number(dropCount.value) : null,
-    drop_volume: dropVolume.value ? Number(dropVolume.value) : null,
+    electrolyte_total_ul: electrolyteTotalUl.value !== '' ? Number(electrolyteTotalUl.value) : null,
+    separator_layout: separatorLayout.value || null,
     electrolyte_assembly_notes: electrolyteAssemblyNotes.value || null,
     spacer_thickness_mm: spacerThicknessMm.value ? Number(spacerThicknessMm.value) : null,
     spacer_count: spacerCount.value ? Number(spacerCount.value) : null,
@@ -330,14 +320,12 @@ async function restoreBattery() {
     electrolyteId.value = b.electrolyte_id || ''
     electrolyteNotes.value = b.electrolyte_notes || ''
 
-    if (['SEE', 'ESE', 'EES', 'ES', 'SE'].includes(b.separator_layout)) {
+    if (['ESE', 'ES', 'SE'].includes(b.separator_layout)) {
       separatorLayout.value = b.separator_layout
-    } else if (b.separator_layout) {
-      separatorLayout.value = 'other'
-      separatorLayoutOther.value = b.separator_layout
+    } else {
+      separatorLayout.value = ''
     }
-    dropCount.value = b.drop_count ?? ''
-    dropVolume.value = b.drop_volume ?? ''
+    electrolyteTotalUl.value = b.electrolyte_total_ul ?? ''
     electrolyteAssemblyNotes.value = b.electrolyte_assembly_notes || ''
     spacerThicknessMm.value = b.spacer_thickness_mm ?? ''
     spacerCount.value = b.spacer_count ?? ''
@@ -640,23 +628,16 @@ onMounted(async () => {
             <Panel header="6 Параметры сборки">
               <Panel header="Схема расположения сепаратора" toggleable class="mb-panel">
                 <fieldset @change="markChanged">
-                  <label><input type="radio" v-model="separatorLayout" value="SEE" /> S-E-E</label>
                   <label><input type="radio" v-model="separatorLayout" value="ESE" /> E-S-E</label>
-                  <label><input type="radio" v-model="separatorLayout" value="EES" /> E-E-S</label>
                   <label><input type="radio" v-model="separatorLayout" value="ES" /> E-S</label>
                   <label><input type="radio" v-model="separatorLayout" value="SE" /> S-E</label>
-                  <label><input type="radio" v-model="separatorLayout" value="other" /> Другое</label>
-                  <input v-if="separatorLayout === 'other'" v-model="separatorLayoutOther" type="text" placeholder="Введите схему" class="field-medium" />
                 </fieldset>
               </Panel>
 
               <Panel header="Электролит" toggleable class="mb-panel">
                 <fieldset @input="markChanged" @change="markChanged">
-                  <label>Количество капель</label>
-                  <input v-model="dropCount" type="number" step="0.1" min="0" class="field-short" />
-                  <label>Объём одной капли, мкл</label>
-                  <input v-model="dropVolume" type="number" step="0.1" min="0" class="field-short" />
-                  <label>Общий объём (мкл): <span class="computed-field">{{ electrolyteVolume }}</span></label>
+                  <label>Общий объём электролита, мкл</label>
+                  <input v-model="electrolyteTotalUl" type="number" step="0.1" min="0" class="field-short" />
                   <label>Заметки</label>
                   <textarea v-model="electrolyteAssemblyNotes" class="field-wide" placeholder="Комментарии по внесению электролита"></textarea>
                 </fieldset>

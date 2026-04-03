@@ -17,6 +17,8 @@ let anodeElectrodes = [];
 let selectedCathodes = [];
 let selectedAnodes = [];
 let stackReadOnly = false;
+let loadedAssemblyComplete = false;
+let hideStackSelectionBlocks = false;
 let lastSavedSectionStates = {};
 let isRestoringBattery = false;
 let savedElectrochemEntries = [];
@@ -117,8 +119,6 @@ async function refreshBatteryReferenceData() {
     loadSeparators(),
     loadElectrolytes()
   ]);
-
-  updateElectrolyteVolume();
 }
 
 function captureNamedState(root) {
@@ -289,6 +289,22 @@ function setStackReadOnly(isReadOnly) {
     stackBuilder.dataset.stackLocked = stackReadOnly ? 'true' : 'false';
     stackBuilder.classList.toggle('locked', stackReadOnly);
   }
+
+  updateStackSelectionVisibility();
+}
+
+function updateStackSelectionVisibility() {
+  const cathodeBlock = document.querySelector('.stack_cathode_block');
+  const anodeBlock = document.querySelector('.stack_anode_block');
+  const shouldHide = hideStackSelectionBlocks;
+
+  if (cathodeBlock) {
+    cathodeBlock.hidden = shouldHide;
+  }
+
+  if (anodeBlock) {
+    anodeBlock.hidden = shouldHide;
+  }
 }
 
 function updateElectrodeCheckboxStates() {
@@ -385,11 +401,17 @@ function applySavedElectrodeState(data) {
   Array.isArray(data.electrodes) && data.electrodes.length > 0;
 
   setStackReadOnly(hasSavedElectrodes);
+  hideStackSelectionBlocks =
+    hasSavedElectrodes ||
+    data?.battery?.status === 'assembled';
+  updateStackSelectionVisibility();
   updateElectrodeCheckboxStates();
 }
 
 function resetElectrodeUiState() {
   setStackReadOnly(false);
+  hideStackSelectionBlocks = false;
+  updateStackSelectionVisibility();
   updateElectrodeCheckboxStates();
 }
 
@@ -446,12 +468,12 @@ function isBatteryAssemblyComplete(data) {
 
 function syncBatteryStatusSelect(battery, assemblyData) {
   const select = document.getElementById('battery_status');
+  loadedAssemblyComplete = isBatteryAssemblyComplete(assemblyData);
+  updateStackSelectionVisibility();
 
   if (!select) return;
 
-  const complete = isBatteryAssemblyComplete(assemblyData);
-
-  if (!complete) {
+  if (!loadedAssemblyComplete) {
     select.disabled = true;
     select.value = '';
     return;
@@ -1411,9 +1433,6 @@ async function loadBatteryAssembly(batteryId) {
   document.getElementById('coin_half_cell_type')
   .dispatchEvent(new Event('change'));
   
-  updateCoinLayoutDropCount();
-  updateElectrolyteVolume();
-  
   /* restore stack */
   
   if (Array.isArray(data.electrodes) && data.electrodes.length > 0) {
@@ -2328,7 +2347,7 @@ formFactorSelect.addEventListener('change', () => {
   if (formFactorSelect.value === 'coin') {
     coinConfig.hidden = false;
     coinAssembly.hidden = false;
-    totalVolumeInput.readOnly = true;
+    totalVolumeInput.readOnly = false;
   }
   
   if (formFactorSelect.value === 'pouch') {
@@ -2499,83 +2518,6 @@ document
   
 });
 
-const dropCountInput =
-document.getElementById('electrolyte_drop_count');
-
-const dropVolumeInput =
-document.getElementById('electrolyte_drop_volume');
-
-function updateCoinLayoutDropCount() {
-  const formFactor =
-  document.getElementById('battery_form_factor').value;
-
-  if (formFactor !== 'coin') {
-    dropCountInput.readOnly = false;
-    return;
-  }
-
-  const selectedLayout = document.querySelector('input[name="coin_layout"]:checked')?.value;
-
-  if (selectedLayout === 'SE' || selectedLayout === 'ES') {
-    dropCountInput.value = '1';
-    dropCountInput.readOnly = true;
-    return;
-  }
-
-  if (
-    selectedLayout === 'ESE' ||
-    selectedLayout === 'SEE' ||
-    selectedLayout === 'EES'
-  ) {
-    dropCountInput.value = '2';
-    dropCountInput.readOnly = true;
-    return;
-  }
-
-  dropCountInput.readOnly = false;
-}
-
-function updateElectrolyteVolume() {
-
-  const formFactor =
-  document.getElementById('battery_form_factor').value;
-
-  const totalVolumeInput =
-  document.getElementById('coin_electrolyte_total_ul');
-
-  if (formFactor !== 'coin') {
-    totalVolumeInput.value = '';
-    return;
-  }
-
-  const count = Number(dropCountInput.value);
-  const volume = Number(dropVolumeInput.value);
-
-  if (!Number.isFinite(count) || !Number.isFinite(volume)) {
-    totalVolumeInput.value = '';
-    return;
-  }
-
-  totalVolumeInput.value = (count * volume).toFixed(1);
-
-}
-
-dropCountInput.addEventListener('input', updateElectrolyteVolume);
-dropVolumeInput.addEventListener('input', updateElectrolyteVolume);
-formFactorSelect.addEventListener('change', updateElectrolyteVolume);
-formFactorSelect.addEventListener('change', updateCoinLayoutDropCount);
-
-document
-.querySelectorAll('input[name="coin_layout"]')
-.forEach(radio => {
-  radio.addEventListener('change', () => {
-    updateCoinLayoutDropCount();
-    updateElectrolyteVolume();
-  });
-});
-
-
-
 // -------- Init --------
 
 window.addEventListener('focus', async () => {
@@ -2592,4 +2534,3 @@ window.addEventListener('focus', async () => {
 
 refreshBatteryReferenceData();
 loadBatteries();
-updateCoinLayoutDropCount();
