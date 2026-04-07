@@ -475,8 +475,7 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
     isRestoring.value = true
 
     try {
-      const { data: allTapes } = await api.get('/api/tapes')
-      const t = allTapes.find(x => x.tape_id === currentTapeId.value)
+      const { data: t } = await api.get(`/api/tapes/${currentTapeId.value}`)
       if (!t) throw new Error('Лента не найдена')
 
       general.name = t.name || ''

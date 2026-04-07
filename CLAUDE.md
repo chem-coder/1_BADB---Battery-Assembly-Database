@@ -57,6 +57,19 @@ BADB-Battery-Assembly-Database/
 | server  | `node server.js` (port 3003)                     |
 | test    | VBA: cmdSelfTest.RunAll()                        |
 
+### Dev server lifecycle (MANDATORY)
+
+**Before starting `npm run dev`, ALWAYS kill existing processes first:**
+
+```bash
+lsof -ti:3003 2>/dev/null | xargs kill -9 2>/dev/null
+lsof -ti:5173 2>/dev/null | xargs kill -9 2>/dev/null
+```
+
+**Why:** `npm run dev` spawns 4+ child processes (npm, concurrently, nodemon, vite, node server.js). If you restart without killing first, old processes stay alive. Each leaked restart wastes ~200MB RAM. After 3-4 restarts the system becomes unresponsive.
+
+**Rule:** Never run `npm run dev` without killing ports 3003 + 5173 first. No exceptions.
+
 ## Dev environment — ports and networking
 
 - **BADB server:** port **3003** (`config/index.js` → `PORT || 3003`)
@@ -91,6 +104,15 @@ Axios `baseURL` MUST be empty string `''` in dev. Direct cross-origin requests
 5. Do NOT modify public/ — Dalia's HTML files
 6. LAN-only system — no external API calls
 7. Optimistic locking — WHERE version = $expected, 409 on mismatch
+
+## Tape export (context menu)
+
+Right-click any tape row → export full tape data (all process steps) in Excel/CSV/JSON.
+- Multi-select: Shift+Click / Ctrl+Click in table + constructor checkboxes (🔧 column) — union is exported
+- 🔧 header click: toggle select all visible (respects column filters) / deselect all
+- Composable: `client-web/src/composables/useExportTapes.js` — fetches full data via `GET /api/tapes/:id` + 7 step endpoints
+- CrudTable emit: `@export({ format, items })` — parent handles data collection
+- CrudTable prop: `export-badge` — external count shown in menu labels
 
 ## Frontend component architecture
 

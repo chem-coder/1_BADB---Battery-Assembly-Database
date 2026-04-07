@@ -43,7 +43,7 @@ router.post('/login', async (req, res) => {
 
     // Find user by login
     const userResult = await pool.query(
-      'SELECT user_id, name, login, password_hash, role, position FROM users WHERE lower(login) = lower($1)',
+      'SELECT user_id, name, login, password_hash, role, position, token_version FROM users WHERE lower(login) = lower($1)',
       [login]
     );
 
@@ -76,9 +76,9 @@ router.post('/login', async (req, res) => {
     );
     const projects = projectsResult.rows.map(r => r.project_id);
 
-    // Create JWT token
+    // Create JWT token (tokenVersion enables revocation on password change)
     const token = jwt.sign(
-      { userId: user.user_id, login: user.login, role: user.role },
+      { userId: user.user_id, login: user.login, role: user.role, tokenVersion: user.token_version },
       config.jwt.secret,
       { expiresIn: config.jwt.expiresIn }
     );
@@ -223,8 +223,9 @@ router.put('/change-password', auth, async (req, res) => {
 
     const passwordHash = await bcrypt.hash(new_password, config.bcrypt.rounds);
 
-    await pool.query(
-      'UPDATE users SET password_hash = $1 WHERE user_id = $2',
+    // Bump token_version → invalidates all existing JWTs for this user
+    const updated = await pool.query(
+      'UPDATE users SET password_hash = $1, token_version = token_version + 1 WHERE user_id = $2 RETURNING token_version',
       [passwordHash, user.user_id]
     );
 
@@ -234,7 +235,14 @@ router.put('/change-password', auth, async (req, res) => {
       [user.user_id, req.user.login, ip, userAgent]
     );
 
-    res.json({ message: 'Пароль успешно изменён' });
+    // Issue fresh token so the current session stays alive
+    const newToken = jwt.sign(
+      { userId: user.user_id, login: req.user.login, role: req.user.role, tokenVersion: updated.rows[0].token_version },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn }
+    );
+
+    res.json({ message: 'Пароль успешно изменён', token: newToken });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -303,8 +311,9 @@ router.post('/change-password-public', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(new_password, config.bcrypt.rounds);
 
-    await pool.query(
-      'UPDATE users SET password_hash = $1 WHERE user_id = $2',
+    // Bump token_version → invalidates all existing JWTs for this user
+    const updated = await pool.query(
+      'UPDATE users SET password_hash = $1, token_version = token_version + 1 WHERE user_id = $2 RETURNING login, role, token_version',
       [passwordHash, user.user_id]
     );
 
@@ -314,7 +323,14 @@ router.post('/change-password-public', async (req, res) => {
       [user.user_id, user.login, ip, userAgent]
     );
 
-    res.json({ message: 'Пароль успешно изменён' });
+    // Issue token so user can proceed without re-login
+    const newToken = jwt.sign(
+      { userId: user.user_id, login: updated.rows[0].login, role: updated.rows[0].role, tokenVersion: updated.rows[0].token_version },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn }
+    );
+
+    res.json({ message: 'Пароль успешно изменён', token: newToken });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

@@ -6,7 +6,7 @@
  * The old TapeFormPage is replaced by the inline Constructor.
  * Table has a checkbox column "В конструктор" to add tapes to the Constructor zone.
  */
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '@/stores/auth'
@@ -17,6 +17,7 @@ import CrudTable from '@/components/CrudTable.vue'
 // StatusBadge removed — status column replaced by project/operator
 import TapeConstructor from '@/components/TapeConstructor.vue'
 import Checkbox from 'primevue/checkbox'
+import { useExportTapes } from '@/composables/useExportTapes'
 // Button removed — undo/redo now in TapeConstructor
 
 const router = useRouter()
@@ -24,6 +25,7 @@ const toast = useToast()
 const authStore = useAuthStore()
 const crudTable = ref(null)
 const constructorRef = ref(null)
+const { exportTapes: _doExport } = useExportTapes()
 
 // ── Data ───────────────────────────────────────────────────────────────
 const tapes = ref([])
@@ -133,6 +135,31 @@ function isInConstructor(tapeId) {
   return constructorIds.value.includes(tapeId)
 }
 
+function toggleAllConstructor() {
+  if (constructorIds.value.length > 0) {
+    constructorIds.value.splice(0)
+  } else {
+    const visible = crudTable.value?.filteredData || tapes.value
+    constructorIds.value = visible.map(t => t.tape_id)
+  }
+}
+
+// ── Export (context menu: selected rows + constructor checkboxes) ─────
+const exportBadge = computed(() => {
+  const ids = new Set(constructorIds.value)
+  const sel = crudTable.value?.selectedRows
+  if (sel) for (const id of sel) ids.add(id)
+  return ids.size
+})
+
+function onExportTapes({ format, items }) {
+  const ids = new Set(items.map(t => t.tape_id))
+  for (const cid of constructorIds.value) ids.add(cid)
+  const exportItems = tapes.value.filter(t => ids.has(t.tape_id))
+  if (!exportItems.length) return
+  _doExport({ format, items: exportItems })
+}
+
 // ── Reference data (shared between all tape states in constructor) ────
 // NOTE: plain reactive — NO inner ref() wrappers.
 // Vue auto-unwraps refs inside reactive, so .value would silently break.
@@ -196,10 +223,13 @@ function formatDate(dt) {
       table-name="Ленты"
       :show-rename="false"
       :export-end="true"
+      :export-badge="exportBadge"
       show-add
       row-clickable
       @add="createNewTape"
       @delete="onDelete"
+      @export="onExportTapes"
+      @header-click="(field) => field === '_constructor' && toggleAllConstructor()"
       @row-click="(data) => toggleConstructor(data.tape_id)"
     >
       <!-- Constructor checkbox column -->
@@ -306,6 +336,18 @@ function formatDate(dt) {
 }
 .tape-name {
   color: #003274;
+}
+.constructor-toggle-header {
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+  user-select: none;
+}
+.constructor-toggle-header--active {
+  opacity: 1;
+}
+.constructor-toggle-header:hover {
+  opacity: 0.7;
 }
 /* ── Progress segments (8 stages) ── */
 .progress-segments {

@@ -27,6 +27,7 @@
  *   @delete(items)   — user confirmed delete via context menu
  *   @add()           — "Добавить" clicked
  *   @row-click(data) — row clicked (only if rowClickable)
+ *   @export({format, items}) — export selected rows (format: 'excel'|'csv'|'json')
  *
  * Slots:
  *   #col-{field}="{ data }"  — custom cell renderer for a column
@@ -50,9 +51,10 @@ const props = defineProps({
   rowClickable: { type: Boolean, default: false },
   showRename:   { type: Boolean, default: true },
   exportEnd:    { type: Boolean, default: false },
+  exportBadge:  { type: Number, default: 0 },  // extra selected count shown on export menu items
 })
 
-const emit = defineEmits(['delete', 'add', 'row-click'])
+const emit = defineEmits(['delete', 'add', 'row-click', 'export', 'header-click'])
 
 // ── Toolbar state ──────────────────────────────────────────────────────
 const localTableName = ref(props.tableName)
@@ -142,11 +144,20 @@ function deleteSelectedRows() {
   ctxMenuVisible.value = false
 }
 
+// exportBadge = total items that will be exported (calculated by parent, includes overlaps)
+const exportCount = computed(() => props.exportBadge || selectedRows.value.size)
+
+function emitExport(format) {
+  const items = props.data.filter(r => selectedRows.value.has(getRowId(r)))
+  emit('export', { format, items })
+  ctxMenuVisible.value = false
+}
+
 // Expose clearSelection for parent use after successful delete
 function clearSelection() {
   selectedRows.value = new Set()
 }
-defineExpose({ clearSelection })
+// defineExpose moved to end of script (after filteredData is declared)
 
 // ── Column filters (Excel-like, from DS) ──────────────────────────────
 const filterOverlay = ref(null)
@@ -384,6 +395,8 @@ onUnmounted(() => {
   const table = tableRef.value?.$el
   if (table && _dblClickHandler) table.removeEventListener('dblclick', _dblClickHandler)
 })
+
+defineExpose({ clearSelection, selectedRows, filteredData })
 </script>
 
 <template>
@@ -483,7 +496,7 @@ onUnmounted(() => {
             class="ct-col-filter-header"
             :class="{ 'ct-col-filter-active': hasActiveFilter(col.field) }"
             @click.stop="onHeaderFilter($event, col.field)">{{ col.header }}</span>
-          <span v-else>{{ col.header }}</span>
+          <span v-else @click.stop="emit('header-click', col.field)" style="cursor:pointer">{{ col.header }}</span>
         </template>
         <template #body="slotProps">
           <!-- Use named slot if page provides one, otherwise render field value -->
@@ -537,6 +550,19 @@ onUnmounted(() => {
   <Teleport to="body">
     <div v-if="ctxMenuVisible" class="ct-ctx-menu"
       :style="{ left: ctxMenuPos.x + 'px', top: ctxMenuPos.y + 'px' }" @click.stop>
+      <button class="ct-ctx-menu-item" @click="emitExport('excel')">
+        <i class="pi pi-file-excel"></i>
+        Экспорт Excel{{ exportCount > 1 ? ` (${exportCount})` : '' }}
+      </button>
+      <button class="ct-ctx-menu-item" @click="emitExport('csv')">
+        <i class="pi pi-file"></i>
+        Экспорт CSV{{ exportCount > 1 ? ` (${exportCount})` : '' }}
+      </button>
+      <button class="ct-ctx-menu-item" @click="emitExport('json')">
+        <i class="pi pi-code"></i>
+        Экспорт JSON{{ exportCount > 1 ? ` (${exportCount})` : '' }}
+      </button>
+      <div class="ct-ctx-menu-separator"></div>
       <button class="ct-ctx-menu-item ct-ctx-menu-danger" @click="deleteSelectedRows">
         <i class="pi pi-trash"></i>
         Удалить{{ selectedRows.size > 1 ? ` (${selectedRows.size})` : '' }}
@@ -898,6 +924,11 @@ onUnmounted(() => {
 }
 .ct-ctx-menu-item:hover {
   background: rgba(0, 50, 116, 0.06);
+}
+.ct-ctx-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: rgba(0, 50, 116, 0.1);
 }
 .ct-ctx-menu-item i {
   font-size: 13px;

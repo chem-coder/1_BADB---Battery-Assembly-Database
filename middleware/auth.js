@@ -57,6 +57,16 @@ async function auth(req, res, next) {
   try {
     const token = header.slice(7);
     const decoded = jwt.verify(token, config.jwt.secret);
+
+    // Verify token_version hasn't been bumped (password change invalidates old tokens)
+    const { rows } = await pool.query(
+      'SELECT token_version FROM users WHERE user_id = $1',
+      [decoded.userId]
+    );
+    if (!rows.length || rows[0].token_version !== decoded.tokenVersion) {
+      return res.status(401).json({ error: 'Token revoked' });
+    }
+
     req.user = decoded;
     next();
   } catch (err) {

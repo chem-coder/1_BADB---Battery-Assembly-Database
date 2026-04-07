@@ -975,4 +975,47 @@ router.get('/:id/electrode-cut-batches', async (req, res) => {
 
 
 
+// READ ONE — must be after /for-electrodes to avoid /:id catching "for-electrodes"
+router.get('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный ID' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        t.tape_id,
+        t.name,
+        t.project_id,
+        t.tape_recipe_id,
+        t.created_by,
+        t.created_at,
+        t.status,
+        t.notes,
+        t.calc_mode,
+        t.target_mass_g,
+        r.role,
+        r.name AS recipe_name,
+        p.name AS project_name
+      FROM tapes t
+      LEFT JOIN tape_recipes r ON r.tape_recipe_id = t.tape_recipe_id
+      LEFT JOIN projects p ON p.project_id = t.project_id
+      WHERE t.tape_id = $1
+      `,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Лента не найдена' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
 module.exports = router;

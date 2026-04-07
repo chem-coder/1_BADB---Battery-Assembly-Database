@@ -57,10 +57,15 @@ async function onSubmit() {
 
   loading.value = true
   try {
-    await api.put('/api/auth/change-password', {
+    const { data } = await api.put('/api/auth/change-password', {
       current_password: currentPassword.value,
       new_password: newPassword.value,
     })
+    // Server issues fresh token after password change (old tokens revoked)
+    if (data.token) {
+      authStore.token = data.token
+      localStorage.setItem('badb_auth_token', data.token)
+    }
     currentPassword.value = ''
     newPassword.value = ''
     confirmPassword.value = ''
