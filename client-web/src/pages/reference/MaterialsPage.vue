@@ -351,24 +351,26 @@ onMounted(loadMaterials)
     <PageHeader title="Материалы" icon="pi pi-warehouse" />
 
     <!-- Create material -->
-    <div class="material-create-form">
+    <div class="create-bar">
       <input
         v-model="newName"
-        class="add-input"
+        class="ds-input create-name"
         placeholder="Название материала"
         autocomplete="off"
         @keydown.enter="createMaterial"
       />
-      <select v-model="newRole" style="margin: 0.25rem 0">
-        <option value="">— выбрать роль —</option>
-        <option value="cathode_active">катодный активный материал</option>
-        <option value="anode_active">анодный активный материал</option>
-        <option value="binder">связующее</option>
-        <option value="conductive_additive">проводящая добавка</option>
-        <option value="solvent">растворитель</option>
-        <option value="other">другое</option>
+      <select v-model="newRole" class="ds-select create-role">
+        <option value="">— роль —</option>
+        <option value="cathode_active">Катодный АМ</option>
+        <option value="anode_active">Анодный АМ</option>
+        <option value="binder">Связующее</option>
+        <option value="conductive_additive">Добавка</option>
+        <option value="solvent">Растворитель</option>
+        <option value="other">Другое</option>
       </select>
-      <button type="button" @click="createMaterial">Добавить</button>
+      <button type="button" class="ds-btn ds-btn--primary" @click="createMaterial">
+        <i class="pi pi-plus"></i> Добавить
+      </button>
     </div>
 
     <div
@@ -381,15 +383,16 @@ onMounted(loadMaterials)
 
     <!-- Toolbar -->
     <div class="materials-toolbar">
-      <button type="button" @click="toggleMaterials">
-        Развернуть/свернуть экземпляры
+      <button type="button" class="ds-btn ds-btn--secondary" @click="toggleMaterials">
+        <i class="pi pi-list"></i> Экземпляры
       </button>
       <button
         type="button"
+        class="ds-btn ds-btn--secondary"
         :disabled="!allMaterialsExpanded"
         @click="toggleCompositions"
       >
-        Развернуть/свернуть составы
+        <i class="pi pi-sitemap"></i> Составы
       </button>
     </div>
 
