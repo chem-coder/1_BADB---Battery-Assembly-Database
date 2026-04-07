@@ -423,8 +423,8 @@ onMounted(loadMaterials)
             <span class="row-title" style="display: inline-block; width: 10vw">{{ m.name }}</span>
             <span class="row-meta" style="display: inline-block; width: 25vw">{{ roleMap[m.role] || m.role }}</span>
             <div class="actions" @click.stop>
-              <button title="Редактировать" @click="startEdit('material', m)">✏️</button>
-              <button title="Удалить" @click="deleteMaterial(m)">🗑</button>
+              <button class="btn-icon" title="Редактировать" @click="startEdit('material', m)"><i class="pi pi-pencil"></i></button>
+              <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteMaterial(m)"><i class="pi pi-trash"></i></button>
             </div>
           </template>
         </div>
@@ -462,8 +462,8 @@ onMounted(loadMaterials)
                 <template v-else>
                   <span class="row-title" style="display: inline-block; width: 35vw">{{ inst.name }}</span>
                   <div class="actions" @click.stop>
-                    <button title="Редактировать" @click="startEdit('instance', inst)">✏️</button>
-                    <button title="Удалить" @click="deleteInstance(inst)">🗑</button>
+                    <button class="btn-icon" title="Редактировать" @click="startEdit('instance', inst)"><i class="pi pi-pencil"></i></button>
+                    <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteInstance(inst)"><i class="pi pi-trash"></i></button>
                   </div>
                 </template>
               </div>
@@ -504,8 +504,8 @@ onMounted(loadMaterials)
                         <span class="row-title" style="display: inline-block; width: 10vw">{{ comp.component_name }}</span>
                         <span class="row-meta" style="display: inline-block; width: 10vw">{{ (comp.mass_fraction * 100).toFixed(2) }} %</span>
                         <div class="actions" @click.stop>
-                          <button title="Редактировать" @click="startEdit('component', comp)">✏️</button>
-                          <button title="Удалить" @click="deleteComponent(comp, inst.material_instance_id)">🗑</button>
+                          <button class="btn-icon" title="Редактировать" @click="startEdit('component', comp)"><i class="pi pi-pencil"></i></button>
+                          <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteComponent(comp, inst.material_instance_id)"><i class="pi pi-trash"></i></button>
                         </div>
                       </template>
                     </div>
@@ -632,34 +632,68 @@ onMounted(loadMaterials)
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.3rem 0.25rem;
+  padding: 0.45rem 0.5rem;
   cursor: pointer;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
+  border-radius: 4px;
+  transition: background 0.12s;
 }
+.tree-summary:hover { background: rgba(0, 50, 116, 0.03); }
 
-.tree-summary:hover {
-  background-color: #f6f7f8;
-}
+.row-title { color: #003274; font-weight: 600; font-size: 13px; }
+.row-meta { color: #6B7280; font-size: 13px; }
 
 .tree-arrow {
   display: inline-block;
-  margin-right: 0.5rem;
-  color: #666;
+  margin-right: 0.4rem;
+  color: #6B7280;
   transition: transform 0.15s ease;
   user-select: none;
+  font-size: 12px;
 }
+.tree-arrow.open { transform: rotate(90deg); }
 
-.tree-arrow.open {
-  transform: rotate(90deg);
+.actions { display: flex; gap: 0.15rem; margin-left: auto; }
+
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6B7280;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  transition: background 0.12s, color 0.12s;
 }
+.btn-icon:hover { background: rgba(0, 50, 116, 0.06); color: #003274; }
+.btn-icon--danger:hover { color: #b00020; }
 
-.inline-create {
-  padding: 0.5rem 0;
+.inline-create { padding: 0.5rem 0; }
+.inline-create input,
+.inline-create select,
+.inline-create textarea {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.inline-create input:focus,
+.inline-create select:focus,
+.inline-create textarea:focus {
+  border-color: #003274;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
 }
 
 .add-child-btn {
   margin: 0.25rem 0;
-  font-size: 0.9rem;
+  font-size: 12px;
   cursor: pointer;
+  background: none;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  color: #003274;
 }
+.add-child-btn:hover { background: rgba(0, 50, 116, 0.04); }
 </style>
