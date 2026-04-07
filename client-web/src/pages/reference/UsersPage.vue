@@ -42,6 +42,7 @@ const columns = [
   { field: 'department_name', header: 'Отдел',       minWidth: '80px',  width: '120px' },
   { field: 'role',            header: 'Роль',        minWidth: '70px',  width: '100px' },
   { field: 'active',          header: 'Статус',      minWidth: '70px',  width: '100px' },
+  { field: 'last_login',      header: 'Последний вход', minWidth: '90px', width: '140px' },
 ]
 
 // ── Save indicator (delete flow) ──────────────────────────────────────
@@ -183,6 +184,9 @@ async function saveUser() {
           {{ data.active ? 'активен' : 'неактивен' }}
         </span>
       </template>
+      <template #col-last_login="{ data }">
+        <span class="last-login">{{ data.last_login ? new Date(data.last_login).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '—' }}</span>
+      </template>
     </CrudTable>
 
     <!-- ── Create / Edit Dialog ── -->
@@ -280,4 +284,5 @@ async function saveUser() {
 .role-badge--admin { background: rgba(176, 0, 32, 0.1); color: #b00020; }
 .role-badge--lead { background: rgba(211, 167, 84, 0.15); color: #9a7030; }
 .role-badge--employee { background: rgba(0, 50, 116, 0.08); color: #003274; }
+.last-login { color: #6B7280; font-size: 12px; }
 </style>

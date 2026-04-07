@@ -42,7 +42,9 @@ router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.user_id, u.name, u.active, u.role, u.position,
-              u.department_id, d.name AS department_name
+              u.department_id, d.name AS department_name,
+              (SELECT MAX(created_at) FROM auth_log
+               WHERE user_id = u.user_id AND event = 'login_success') AS last_login
        FROM users u
        LEFT JOIN departments d ON d.department_id = u.department_id
        ORDER BY u.name`);
