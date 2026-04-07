@@ -1,69 +1,46 @@
 <script setup>
+/**
+ * RecipesPage — "Рецептуры" (справочник)
+ * Uses CrudTable + SaveIndicator (from Design System).
+ * Create/edit form in Dialog with nested recipe lines table.
+ */
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import { useStatus } from '@/composables/useStatus'
 import PageHeader from '@/components/PageHeader.vue'
+import SaveIndicator from '@/components/SaveIndicator.vue'
+import CrudTable from '@/components/CrudTable.vue'
+import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
+import InputText from 'primevue/inputtext'
+import Textarea from 'primevue/textarea'
 
-const { statusMsg, statusError, showStatus } = useStatus()
+const toast = useToast()
+const crudTable = ref(null)
 
+// ── Data ───────────────────────────────────────────────────────────────
 const recipes = ref([])
 const activeUsers = ref([])
-const newName = ref('')
+const loading = ref(false)
 let cachedMaterials = null
 
-// Form state
-const formVisible = ref(false)
-const mode = ref(null)
-const currentId = ref(null)
-const titleText = ref('')
-const titleEditing = ref(false)
-const titleInput = ref('')
-
-const form = ref({
-  created_by: '',
-  variant_label: '',
-  role: '',
-  notes: '',
-})
-
-const recipeLines = ref([])
-let lineCounter = 0
-
-function makeEmptyLine() {
-  return {
-    _key: lineCounter++,
-    recipe_role: '',
-    material_id: '',
-    slurry_percent: '',
-    line_notes: '',
-    filteredMaterials: [],
-  }
-}
-
-function resetForm() {
-  form.value = { created_by: '', variant_label: '', role: '', notes: '' }
-  titleText.value = ''
-  titleEditing.value = false
-  titleInput.value = ''
-  mode.value = null
-  currentId.value = null
-  recipeLines.value = []
-  formVisible.value = false
-}
-
-// API
 async function loadRecipes() {
+  loading.value = true
   try {
     const { data } = await api.get('/api/recipes')
     recipes.value = data
   } catch {
-    console.error('Не удалось загрузить рецептуры')
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить рецептуры', life: 3000 })
+  } finally {
+    loading.value = false
   }
 }
 
 async function loadUsers() {
-  const { data } = await api.get('/api/users')
-  activeUsers.value = data.filter(u => u.active)
+  try {
+    const { data } = await api.get('/api/users')
+    activeUsers.value = data.filter(u => u.active)
+  } catch {}
 }
 
 async function fetchMaterials() {
@@ -76,6 +53,79 @@ async function fetchMaterials() {
 async function fetchRecipeLines(recipeId) {
   const { data } = await api.get(`/api/recipes/${recipeId}/lines`)
   return data
+}
+
+onMounted(() => { loadRecipes(); loadUsers() })
+
+// Invalidate material cache on window refocus
+function onWindowFocus() { cachedMaterials = null }
+onMounted(() => window.addEventListener('focus', onWindowFocus))
+onUnmounted(() => window.removeEventListener('focus', onWindowFocus))
+
+// ── Column config ──────────────────────────────────────────────────────
+const columns = [
+  { field: 'name',                 header: 'Название',       minWidth: '150px' },
+  { field: 'role',                 header: 'Электрод',       minWidth: '80px',  width: '110px' },
+  { field: 'active_percent',       header: '% АМ',           minWidth: '60px',  width: '80px' },
+  { field: 'active_material_name', header: 'Активный материал', minWidth: '120px', width: '180px' },
+  { field: 'variant_label',        header: 'Версия',         minWidth: '100px', width: '180px' },
+]
+
+// ── Save indicator (delete flow) ──────────────────────────────────────
+const pendingDelete = ref([])
+const saveState = ref('idle')
+let saveTimer = null
+
+function onDelete(items) {
+  pendingDelete.value = items
+  saveState.value = 'idle'
+}
+
+async function confirmSave() {
+  try {
+    for (const item of pendingDelete.value) {
+      await api.delete(`/api/recipes/${item.tape_recipe_id}`)
+    }
+    pendingDelete.value = []
+    saveState.value = 'saved'
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
+    crudTable.value?.clearSelection()
+    await loadRecipes()
+  } catch {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
+  }
+}
+
+function discardChanges() {
+  pendingDelete.value = []
+  saveState.value = 'idle'
+  crudTable.value?.clearSelection()
+}
+
+onUnmounted(() => clearTimeout(saveTimer))
+
+// ── Recipe lines ──────────────────────────────────────────────────────
+let lineCounter = 0
+const recipeLines = ref([])
+
+function makeEmptyLine() {
+  return {
+    _key: lineCounter++,
+    recipe_role: '',
+    material_id: '',
+    slurry_percent: '',
+    line_notes: '',
+    filteredMaterials: [],
+  }
+}
+
+function addLine() {
+  recipeLines.value.push(makeEmptyLine())
+}
+
+function removeLine(index) {
+  recipeLines.value.splice(index, 1)
 }
 
 function filterMaterialsByRole(materials, recipeRole) {
@@ -95,61 +145,127 @@ function filterMaterialsByRole(materials, recipeRole) {
 async function updateLineFiltering(line) {
   const materials = await fetchMaterials()
   line.filteredMaterials = filterMaterialsByRole(materials, line.recipe_role)
-
-  // Auto-set recipe role from active material selection
   if (line.recipe_role === 'cathode_active') form.value.role = 'cathode'
   if (line.recipe_role === 'anode_active') form.value.role = 'anode'
 }
 
-function addLine() {
-  const line = makeEmptyLine()
-  recipeLines.value.push(line)
+async function loadLinesIntoForm(lines) {
+  const materials = await fetchMaterials()
+  recipeLines.value = lines.map(l => ({
+    _key: lineCounter++,
+    recipe_role: l.recipe_role || '',
+    material_id: l.material_id || '',
+    slurry_percent: l.slurry_percent ?? '',
+    line_notes: l.line_notes || '',
+    filteredMaterials: filterMaterialsByRole(materials, l.recipe_role),
+  }))
 }
 
-function removeLine(index) {
-  recipeLines.value.splice(index, 1)
+// ── Form (Dialog) ─────────────────────────────────────────────────────
+const formVisible = ref(false)
+const mode = ref(null)
+const currentId = ref(null)
+
+const form = ref({
+  name: '',
+  created_by: '',
+  variant_label: '',
+  role: '',
+  notes: '',
+})
+
+function resetForm() {
+  form.value = { name: '', created_by: '', variant_label: '', role: '', notes: '' }
+  mode.value = null
+  currentId.value = null
+  recipeLines.value = []
+  formVisible.value = false
 }
 
-// Validation
+function openCreate() {
+  resetForm()
+  mode.value = 'create'
+  cachedMaterials = null
+  recipeLines.value = [makeEmptyLine()]
+  formVisible.value = true
+}
+
+async function openEdit(recipe) {
+  mode.value = 'edit'
+  currentId.value = recipe.tape_recipe_id
+  form.value = {
+    name: recipe.name || '',
+    created_by: recipe.created_by || '',
+    variant_label: recipe.variant_label || '',
+    role: recipe.role || '',
+    notes: recipe.notes || '',
+  }
+  formVisible.value = true
+  cachedMaterials = null
+  loadUsers()
+
+  const lines = await fetchRecipeLines(recipe.tape_recipe_id)
+  await loadLinesIntoForm(lines)
+}
+
+async function openDuplicate(recipe) {
+  mode.value = 'create'
+  currentId.value = null
+  form.value = {
+    name: recipe.name + ' (копия)',
+    created_by: '',
+    variant_label: recipe.variant_label || '',
+    role: recipe.role || '',
+    notes: recipe.notes || '',
+  }
+  formVisible.value = true
+  cachedMaterials = null
+  loadUsers()
+
+  const lines = await fetchRecipeLines(recipe.tape_recipe_id)
+  await loadLinesIntoForm(lines)
+}
+
+// ── Validation & Save ─────────────────────────────────────────────────
 function validate() {
-  const missing = []
-  if (!form.value.created_by) missing.push('Кто добавил')
-  if (!form.value.role) missing.push('Роль электрода')
-  if (missing.length) {
-    showStatus('Заполните обязательные поля: ' + missing.join(', '), true)
+  if (!form.value.name?.trim()) {
+    toast.add({ severity: 'warn', summary: 'Заполните название рецепта', life: 3000 })
     return false
   }
-
+  if (!form.value.created_by) {
+    toast.add({ severity: 'warn', summary: 'Укажите кто добавил', life: 3000 })
+    return false
+  }
+  if (!form.value.role) {
+    toast.add({ severity: 'warn', summary: 'Выберите роль электрода', life: 3000 })
+    return false
+  }
   if (recipeLines.value.length === 0) {
-    showStatus('Добавьте хотя бы один компонент', true)
+    toast.add({ severity: 'warn', summary: 'Добавьте хотя бы один компонент', life: 3000 })
     return false
   }
-
   for (const line of recipeLines.value) {
     if (!line.material_id) {
-      showStatus('Выберите материал для каждого компонента', true)
+      toast.add({ severity: 'warn', summary: 'Выберите материал для каждого компонента', life: 3000 })
       return false
     }
     if (line.recipe_role !== 'solvent') {
       const pct = Number(line.slurry_percent)
       if (line.slurry_percent === '' || isNaN(pct) || pct < 0 || pct > 100) {
-        showStatus('Укажите корректный % (0–100) для каждого компонента', true)
+        toast.add({ severity: 'warn', summary: 'Укажите корректный % (0-100) для каждого компонента', life: 3000 })
         return false
       }
     }
   }
-
-  // Duplicate name+variant check
   const variant = (form.value.variant_label || '').trim()
   const exists = recipes.value.some(r => {
     if (mode.value === 'edit' && r.tape_recipe_id === currentId.value) return false
-    return r.name === titleText.value && (r.variant_label || '') === variant
+    return r.name === form.value.name.trim() && (r.variant_label || '') === variant
   })
   if (exists) {
-    showStatus('Рецепт с таким названием и версией уже существует', true)
+    toast.add({ severity: 'warn', summary: 'Рецепт с таким названием и версией уже существует', life: 3000 })
     return false
   }
-
   return true
 }
 
@@ -165,7 +281,7 @@ async function saveRecipe() {
   }))
 
   const payload = {
-    name: titleText.value,
+    name: form.value.name.trim(),
     role: form.value.role,
     variant_label: form.value.variant_label || null,
     notes: form.value.notes || null,
@@ -176,186 +292,111 @@ async function saveRecipe() {
   try {
     if (mode.value === 'create') {
       await api.post('/api/recipes', payload)
-      showStatus('Рецепт сохранён')
+      toast.add({ severity: 'success', summary: 'Рецепт сохранён', life: 3000 })
     } else {
       await api.put(`/api/recipes/${currentId.value}`, payload)
-      showStatus('Изменения сохранены')
+      toast.add({ severity: 'success', summary: 'Изменения сохранены', life: 3000 })
     }
     resetForm()
-    loadRecipes()
+    await loadRecipes()
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка сохранения', true)
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка сохранения', life: 3000 })
   }
-}
-
-async function deleteRecipe(r) {
-  if (!confirm(`Удалить рецепт "${r.name}"?`)) return
-  try {
-    await api.delete(`/api/recipes/${r.tape_recipe_id}`)
-    showStatus('Рецепт удалён')
-    loadRecipes()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка удаления', true)
-  }
-}
-
-// Actions
-async function onAddEnter() {
-  if (formVisible.value) return
-  const name = newName.value.trim()
-  if (!name) return
-
-  mode.value = 'create'
-  currentId.value = null
-  titleText.value = name
-  formVisible.value = true
-  newName.value = ''
-
-  cachedMaterials = null
-  recipeLines.value = []
-  addLine()
-}
-
-async function startEdit(r) {
-  mode.value = 'edit'
-  currentId.value = r.tape_recipe_id
-  titleText.value = r.name
-
-  form.value = {
-    created_by: r.created_by || '',
-    variant_label: r.variant_label || '',
-    role: r.role || '',
-    notes: r.notes || '',
-  }
-
-  formVisible.value = true
-  cachedMaterials = null
-  loadUsers()
-
-  const lines = await fetchRecipeLines(r.tape_recipe_id)
-  await loadLinesIntoForm(lines)
-}
-
-async function duplicateRecipeUI(r) {
-  mode.value = 'create'
-  currentId.value = null
-  titleText.value = r.name + ' (копия)'
-
-  form.value = {
-    created_by: '',
-    variant_label: r.variant_label || '',
-    role: r.role || '',
-    notes: r.notes || '',
-  }
-
-  formVisible.value = true
-  cachedMaterials = null
-  loadUsers()
-
-  const lines = await fetchRecipeLines(r.tape_recipe_id)
-  await loadLinesIntoForm(lines)
-}
-
-async function loadLinesIntoForm(lines) {
-  const materials = await fetchMaterials()
-  recipeLines.value = lines.map(l => ({
-    _key: lineCounter++,
-    recipe_role: l.recipe_role || '',
-    material_id: l.material_id || '',
-    slurry_percent: l.slurry_percent ?? '',
-    line_notes: l.line_notes || '',
-    filteredMaterials: filterMaterialsByRole(materials, l.recipe_role),
-  }))
-}
-
-// Editable title
-function startTitleEdit() {
-  titleInput.value = titleText.value
-  titleEditing.value = true
-}
-
-function finishTitleEdit() {
-  const val = titleInput.value.trim()
-  if (val) titleText.value = val
-  titleEditing.value = false
 }
 
 function roleLabel(role) {
-  return role === 'cathode' ? 'катод' : role === 'anode' ? 'анод' : role
+  return role === 'cathode' ? 'катод' : role === 'anode' ? 'анод' : role || '—'
 }
-
-// Invalidate material cache on window refocus
-function onWindowFocus() { cachedMaterials = null }
-onMounted(() => {
-  window.addEventListener('focus', onWindowFocus)
-  loadRecipes(); loadUsers()
-})
-onUnmounted(() => {
-  window.removeEventListener('focus', onWindowFocus)
-})
 </script>
 
 <template>
   <div class="recipes-page">
-    <PageHeader title="Рецептуры" icon="pi pi-file-edit" />
 
-    <input
-      v-model="newName"
-      class="add-input"
-      :disabled="formVisible"
-      placeholder="+ Добавить рецепт"
-      autocomplete="off"
-      @keydown.enter="onAddEnter"
-    />
-
-    <!-- Form -->
-    <form v-if="formVisible" autocomplete="off" @submit.prevent="saveRecipe">
-      <fieldset>
-        <legend>Метаданные</legend>
-        <label>Кто добавил</label>
-        <select
-          v-model="form.created_by"
-          :class="{ 'required-missing': !form.created_by && mode }"
-          @focus="loadUsers"
-        >
-          <option value="">— выбрать пользователя —</option>
-          <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
-        </select>
-        <RouterLink to="/reference/users" target="_blank" class="ref-link">Управление пользователями</RouterLink>
-      </fieldset>
-
-      <fieldset>
-        <legend>Описание рецепта</legend>
-
-        <input
-          v-if="titleEditing"
-          v-model="titleInput"
-          @blur="finishTitleEdit"
-          @keydown.enter.prevent="finishTitleEdit"
+    <PageHeader title="Рецептуры" icon="pi pi-file-edit">
+      <template #actions>
+        <SaveIndicator
+          :visible="pendingDelete.length > 0 || saveState === 'saved'"
+          :saved="saveState === 'saved'"
+          @save="confirmSave"
+          @cancel="discardChanges"
         />
-        <h2 v-else style="cursor: pointer" @click="startTitleEdit">{{ titleText }}</h2>
+      </template>
+    </PageHeader>
 
-        <label>Вариант/версия</label>
-        <input v-model="form.variant_label" type="text" placeholder="A / B / low binder / v2" />
+    <CrudTable
+      ref="crudTable"
+      :columns="columns"
+      :data="recipes"
+      :loading="loading"
+      id-field="tape_recipe_id"
+      table-name="Рецептуры"
+      show-add
+      row-clickable
+      @add="openCreate"
+      @delete="onDelete"
+      @row-click="(data) => openEdit(data)"
+    >
+      <template #col-name="{ data }">
+        <strong>{{ data.name }}</strong>
+      </template>
+      <template #col-role="{ data }">
+        <span :class="['role-badge', data.role === 'cathode' ? 'role-badge--cathode' : 'role-badge--anode']">
+          {{ roleLabel(data.role) }}
+        </span>
+      </template>
+      <template #col-active_percent="{ data }">
+        {{ data.active_percent != null ? data.active_percent + '%' : '' }}
+      </template>
+      <template #col-active_material_name="{ data }">
+        <span class="meta-text">{{ data.active_material_name || '' }}</span>
+      </template>
+      <template #col-variant_label="{ data }">
+        <span class="meta-text">{{ data.variant_label || '' }}</span>
+      </template>
+    </CrudTable>
 
-        <label>Роль электрода</label>
-        <select
-          v-model="form.role"
-          :class="{ 'required-missing': !form.role && mode }"
-        >
-          <option value="">— выбрать —</option>
-          <option value="cathode">катод</option>
-          <option value="anode">анод</option>
-        </select>
+    <!-- ── Create / Edit Dialog ── -->
+    <Dialog
+      v-model:visible="formVisible"
+      :header="mode === 'create' ? 'Новый рецепт' : 'Редактирование рецепта'"
+      :style="{ width: '700px' }"
+      modal
+    >
+      <div class="form-section">
+        <div class="form-grid">
+          <label>Название</label>
+          <InputText v-model="form.name" placeholder="Название рецепта" class="w-full" />
 
-        <label>Комментарии</label>
-        <textarea v-model="form.notes" rows="3" placeholder="Кратко: что это за рецепт и чем отличается"></textarea>
-      </fieldset>
+          <label>Версия</label>
+          <InputText v-model="form.variant_label" placeholder="A / B / low binder / v2" class="w-full" />
 
-      <fieldset>
-        <legend>Состав рецепта</legend>
-        <div style="overflow-x: auto">
-          <table class="recipe-table">
+          <label>Электрод</label>
+          <select v-model="form.role" class="pv-select">
+            <option value="">-- выбрать --</option>
+            <option value="cathode">катод</option>
+            <option value="anode">анод</option>
+          </select>
+
+          <label>Кто добавил</label>
+          <select v-model="form.created_by" class="pv-select" @focus="loadUsers">
+            <option value="">-- выбрать --</option>
+            <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
+          </select>
+
+          <label>Комментарии</label>
+          <Textarea v-model="form.notes" rows="2" placeholder="Кратко: что это за рецепт" class="w-full" />
+        </div>
+      </div>
+
+      <!-- Recipe lines -->
+      <div class="form-section">
+        <div class="section-header">
+          <span class="section-title">Состав рецепта</span>
+          <Button label="+ Компонент" severity="secondary" outlined size="small" @click="addLine" />
+        </div>
+
+        <div class="lines-table-wrap">
+          <table class="lines-table">
             <thead>
               <tr>
                 <th>Функциональная роль</th>
@@ -366,74 +407,64 @@ onUnmounted(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(line, idx) in recipeLines" :key="line._key" class="recipe-line-row">
+              <tr v-for="(line, idx) in recipeLines" :key="line._key">
                 <td>
-                  <select v-model="line.recipe_role" @change="updateLineFiltering(line)">
-                    <option value="">— выбрать —</option>
-                    <option value="cathode_active">катодный активный материал</option>
-                    <option value="anode_active">анодный активный материал</option>
-                    <option value="binder">Связующее</option>
-                    <option value="additive">Добавка</option>
-                    <option value="solvent">Растворитель</option>
+                  <select v-model="line.recipe_role" class="pv-select" @change="updateLineFiltering(line)">
+                    <option value="">-- выбрать --</option>
+                    <option value="cathode_active">катодный АМ</option>
+                    <option value="anode_active">анодный АМ</option>
+                    <option value="binder">связующее</option>
+                    <option value="additive">добавка</option>
+                    <option value="solvent">растворитель</option>
                   </select>
                 </td>
                 <td>
-                  <select v-model="line.material_id">
-                    <option value="">— выбрать —</option>
-                    <option
-                      v-for="m in line.filteredMaterials"
-                      :key="m.material_id"
-                      :value="m.material_id"
-                    >{{ m.name }}</option>
+                  <select v-model="line.material_id" class="pv-select">
+                    <option value="">-- выбрать --</option>
+                    <option v-for="m in line.filteredMaterials" :key="m.material_id" :value="m.material_id">
+                      {{ m.name }}
+                    </option>
                   </select>
                 </td>
                 <td>
-                  <input v-model="line.slurry_percent" type="number" step="0.01" min="0" max="100" />
+                  <input v-model="line.slurry_percent" type="number" step="0.01" min="0" max="100" class="pv-input pv-input--narrow" />
                 </td>
                 <td>
-                  <input v-model="line.line_notes" type="text" placeholder="Комментарий" />
+                  <input v-model="line.line_notes" type="text" placeholder="Комментарий" class="pv-input" />
                 </td>
                 <td>
-                  <button type="button" class="btn-icon btn-icon--danger" @click="removeLine(idx)"><i class="pi pi-trash"></i></button>
+                  <button type="button" class="btn-icon btn-icon--danger" @click="removeLine(idx)">
+                    <i class="pi pi-trash"></i>
+                  </button>
                 </td>
+              </tr>
+              <tr v-if="recipeLines.length === 0">
+                <td colspan="5" class="empty-lines">Нет компонентов</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <button type="button" @click="addLine">+ Добавить компонент</button>
-        <RouterLink to="/reference/materials" target="_blank" class="ref-link">Управление материалами</RouterLink>
-      </fieldset>
+      </div>
 
-      <button type="submit">Сохранить запись</button>
-      <button type="button" @click="resetForm">Выйти</button>
-    </form>
-
-    <div
-      v-if="statusMsg"
-      class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : '#1a8a64' }"
-    >
-      {{ statusMsg }}
-    </div>
-
-    <!-- List -->
-    <ul class="items-list">
-      <li v-for="r in recipes" :key="r.tape_recipe_id" class="item-row">
-        <div class="item-info">
-          <span style="display: inline-block; width: 14vw">{{ r.name }}</span>
-          <span style="display: inline-block; width: 7vw">{{ roleLabel(r.role) }}</span>
-          <span v-if="r.active_percent != null" style="display: inline-block; width: 4vw">{{ r.active_percent }}%</span>
-          <span v-else style="display: inline-block; width: 4vw"></span>
-          <span style="display: inline-block; width: 10vw">{{ r.active_material_name || '' }}</span>
-          <span style="display: inline-block; width: 20vw">{{ r.variant_label || '' }}</span>
+      <template #footer>
+        <div class="dialog-footer">
+          <div>
+            <Button
+              v-if="mode === 'edit'"
+              label="Дублировать"
+              severity="secondary"
+              outlined
+              @click="() => { const r = recipes.find(r => r.tape_recipe_id === currentId); if (r) openDuplicate(r) }"
+            />
+          </div>
+          <div class="dialog-footer-right">
+            <Button label="Отмена" severity="secondary" outlined @click="resetForm" />
+            <Button :label="mode === 'create' ? 'Создать' : 'Сохранить'" @click="saveRecipe" />
+          </div>
         </div>
-        <div class="actions">
-          <button class="btn-icon" title="Редактировать" @click="startEdit(r)"><i class="pi pi-pencil"></i></button>
-          <button class="btn-icon" title="Дублировать" @click="duplicateRecipeUI(r)"><i class="pi pi-copy"></i></button>
-          <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteRecipe(r)"><i class="pi pi-trash"></i></button>
-        </div>
-      </li>
-    </ul>
+      </template>
+    </Dialog>
+
   </div>
 </template>
 
@@ -448,157 +479,110 @@ onUnmounted(() => {
 }
 .recipes-page :deep(.page-header) { margin-bottom: 3px !important; }
 
-/* ── Add input ── */
-.add-input {
-  padding: 0.5rem 0.75rem;
+/* ── Form styles ── */
+.form-section {
+  margin-bottom: 1.25rem;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 10px 16px;
+  align-items: center;
+}
+.form-grid label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #003274;
+}
+.w-full { width: 100%; }
+.pv-select {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
   border: 1px solid #D1D7DE;
   border-radius: 6px;
   font-size: 13px;
-  max-width: 360px;
+  background: white;
 }
-.add-input:focus {
-  border-color: #003274;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
-}
-.add-input:disabled { opacity: 0.5; }
 
-/* ── Form ── */
-form {
-  background: #fff;
-  border: 1px solid rgba(0, 50, 116, 0.1);
-  border-radius: 10px;
-  padding: 1.25rem;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-}
-fieldset {
-  border: none;
-  padding: 0;
-  margin: 0 0 1rem;
+/* ── Section header ── */
+.section-header {
   display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
 }
-legend {
-  font-size: 11px;
+.section-title {
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: rgba(0, 50, 116, 0.5);
-  margin-bottom: 0.5rem;
 }
-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #4B5563;
-  margin-top: 0.25rem;
-}
-select, input[type="text"], input[type="number"], textarea {
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-  max-width: 360px;
-}
-select:focus, input:focus, textarea:focus {
-  border-color: #003274;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
-}
-textarea { max-width: 500px; }
-h2 { font-size: 18px; font-weight: 700; color: #003274; margin: 0.25rem 0; }
-.required-missing { border-color: #D3A754 !important; }
-.ref-link { font-size: 12px; color: #6B7280; margin-top: 0.25rem; }
 
-/* ── Form buttons ── */
-button[type="submit"] {
-  padding: 0.5rem 1.2rem;
-  background: #003274;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  margin-right: 0.5rem;
+/* ── Lines table ── */
+.lines-table-wrap {
+  overflow-x: auto;
 }
-button[type="submit"]:hover { background: #002050; }
-button[type="button"] {
-  padding: 0.4rem 0.8rem;
-  background: transparent;
-  color: #003274;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-}
-button[type="button"]:hover { background: rgba(0, 50, 116, 0.04); }
-
-/* ── Recipe lines table ── */
-.recipe-table {
+.lines-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 800px;
+  min-width: 600px;
 }
-.recipe-table th {
+.lines-table th {
   text-align: left;
   font-size: 12px;
   font-weight: 600;
   color: #4B5563;
-  padding: 0.3rem 0.4rem;
+  padding: 0.35rem 0.4rem;
   border-bottom: 1px solid #D1D7DE;
 }
-.recipe-table td {
+.lines-table td {
   padding: 0.3rem 0.4rem;
   vertical-align: middle;
 }
-.recipe-table select,
-.recipe-table input {
+.lines-table select,
+.lines-table input {
   width: 100%;
   max-width: none;
-  padding: 0.35rem 0.4rem;
+}
+.lines-table th:nth-child(1), .lines-table td:nth-child(1) { width: 160px; }
+.lines-table th:nth-child(2), .lines-table td:nth-child(2) { width: 200px; }
+.lines-table th:nth-child(3), .lines-table td:nth-child(3) { width: 80px; }
+.lines-table th:nth-child(5), .lines-table td:nth-child(5) { width: 40px; }
+
+.empty-lines {
+  text-align: center;
+  color: #6B7280;
+  font-size: 13px;
+  padding: 1rem 0;
+}
+
+.pv-input {
+  width: 100%;
+  padding: 0.4rem 0.5rem;
   border: 1px solid #D1D7DE;
   border-radius: 6px;
   font-size: 13px;
 }
-.recipe-table th:nth-child(1),
-.recipe-table td:nth-child(1) { width: 180px; }
-.recipe-table th:nth-child(2),
-.recipe-table td:nth-child(2) { width: 260px; }
+.pv-input:focus, .pv-select:focus {
+  border-color: #003274;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
+}
+.pv-input--narrow { width: 80px; }
 
-/* ── Status ── */
-.status-feedback { font-size: 13px; padding: 0.4rem 0; }
+/* ── Role badges ── */
+.role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.role-badge--cathode { background: rgba(0, 50, 116, 0.08); color: #003274; }
+.role-badge--anode { background: rgba(211, 167, 84, 0.15); color: #9a7030; }
 
-/* ── Items list ── */
-.items-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-.item-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
-  border-radius: 4px;
-  transition: background 0.12s;
-}
-.item-row:hover { background: rgba(0, 50, 116, 0.03); }
-.item-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 13px;
-  color: #003274;
-}
-.actions {
-  display: flex;
-  gap: 0.15rem;
-}
+.meta-text { color: #6B7280; font-size: 13px; }
 
 /* ── Icon buttons ── */
 .btn-icon {
@@ -613,4 +597,16 @@ button[type="button"]:hover { background: rgba(0, 50, 116, 0.04); }
 }
 .btn-icon:hover { background: rgba(0, 50, 116, 0.06); color: #003274; }
 .btn-icon--danger:hover { color: #b00020; }
+
+/* ── Dialog footer ── */
+.dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+.dialog-footer-right {
+  display: flex;
+  gap: 0.5rem;
+}
 </style>
