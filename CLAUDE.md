@@ -28,7 +28,7 @@ BADB-Battery-Assembly-Database/
 │   ├── index.js        — route registration
 │   ├── auth.js         — /api/auth: login, register, me
 │   ├── submit.js       — /api/submit: append-only raw_submissions
-│   └── (14+ CRUD route files, 72 endpoints)
+│   └── (13 CRUD route files, ~130 endpoints)
 ├── migrations/         — forward-only SQL migrations
 ├── public/             — Dalia's static HTML (DO NOT MODIFY)
 ├── contracts/          — JSON Schema contracts (versioned)
