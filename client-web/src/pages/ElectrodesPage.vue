@@ -1,33 +1,51 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+/**
+ * ElectrodesPage — "Электроды"
+ * Cascade filters (Role → Project → Tape) + CrudTable of cut batches + inline Constructor.
+ * Follows TapesPage pattern: CrudTable + TapeConstructor (parametrized for electrodes).
+ */
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import Button from 'primevue/button'
-import Panel from 'primevue/panel'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
 import PageHeader from '@/components/PageHeader.vue'
+import SaveIndicator from '@/components/SaveIndicator.vue'
+import CrudTable from '@/components/CrudTable.vue'
+import TapeConstructor from '@/components/TapeConstructor.vue'
+import Checkbox from 'primevue/checkbox'
+import { ELECTRODE_STAGES } from '@/config/electrodeStages'
+import { useElectrodeState } from '@/composables/useElectrodeState'
 
 const router = useRouter()
 const toast = useToast()
+const crudTable = ref(null)
 
 const roleRu = { cathode: 'Катод', anode: 'Анод' }
 
-// --- Reference data ---
+// ── Reference data ──
 const tapes = ref([])
 const projects = ref([])
 
-// --- Selection ---
+// ── Selection (cascade filters) ──
 const selectedRole = ref('')
 const selectedProjectId = ref('')
 const selectedTapeId = ref('')
 
-// --- Cut batches ---
+// ── Cut batches ──
 const cutBatches = ref([])
 const loading = ref(false)
 
-// --- Computed ---
+// ── Columns ──
+const columns = [
+  { field: '_constructor', header: '🔧', minWidth: '45px', width: '45px', sortable: false, filterable: false },
+  { field: 'cut_batch_id', header: '№ партии', minWidth: '70px', width: '90px' },
+  { field: 'created_at', header: 'Дата', minWidth: '90px', width: '120px' },
+  { field: 'shape_display', header: 'Форма', minWidth: '80px', width: '130px' },
+  { field: 'electrode_count', header: 'Электродов', minWidth: '80px', width: '100px' },
+  { field: 'status_display', header: 'Статус', minWidth: '80px', width: '100px' },
+]
+
+// ── Computed ──
 const filteredTapes = computed(() => {
   return tapes.value.filter(t =>
     (!selectedRole.value || t.role === selectedRole.value) &&
@@ -38,9 +56,20 @@ const filteredTapes = computed(() => {
 const cathodeTapes = computed(() => filteredTapes.value.filter(t => t.role === 'cathode'))
 const anodeTapes = computed(() => filteredTapes.value.filter(t => t.role === 'anode'))
 
-const workflowVisible = computed(() => !!selectedTapeId.value && !!selectedProjectId.value)
+// Enrich cutBatches for CrudTable
+const tableData = computed(() =>
+  cutBatches.value.map(b => ({
+    ...b,
+    shape_display: b.shape === 'circle'
+      ? (b.diameter_mm ? `Круг ⌀${b.diameter_mm}` : 'Круг')
+      : b.shape === 'rectangle'
+        ? (b.length_mm && b.width_mm ? `${b.length_mm}×${b.width_mm}` : 'Прямоуг.')
+        : '—',
+    status_display: batchStatus(b),
+  }))
+)
 
-// --- API ---
+// ── API ──
 async function loadTapes() {
   try {
     const { data } = await api.get('/api/tapes/for-electrodes')
@@ -75,6 +104,7 @@ function onTapeChange() {
     selectedRole.value = tape.role || selectedRole.value
     selectedProjectId.value = String(tape.project_id) || selectedProjectId.value
   }
+  constructorIds.value = []
   if (selectedTapeId.value && selectedProjectId.value) {
     loadCutBatches(Number(selectedTapeId.value))
   } else {
@@ -85,6 +115,7 @@ function onTapeChange() {
 function onRoleOrProjectChange() {
   selectedTapeId.value = ''
   cutBatches.value = []
+  constructorIds.value = []
 }
 
 function formatDate(dateStr) {
@@ -98,114 +129,176 @@ function batchStatus(batch) {
   return 'в работе'
 }
 
-function electrodeCountWord(count) {
-  const n = Number(count) || 0
-  if (n % 10 === 1 && n % 100 !== 11) return 'электрод'
-  if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'электрода'
-  return 'электродов'
+function createBatch() {
+  if (!selectedTapeId.value) return
+  router.push(`/electrodes/new?tape=${selectedTapeId.value}`)
 }
 
-async function confirmDelete(batch) {
-  if (!confirm(`Удалить партию #${batch.cut_batch_id}?`)) return
+// ── Constructor (same pattern as TapesPage) ──
+const constructorIds = ref([])
+
+function toggleConstructor(batchId) {
+  const idx = constructorIds.value.indexOf(batchId)
+  if (idx >= 0) constructorIds.value.splice(idx, 1)
+  else constructorIds.value.push(batchId)
+}
+
+function isInConstructor(batchId) {
+  return constructorIds.value.includes(batchId)
+}
+
+function toggleAllConstructor() {
+  if (constructorIds.value.length > 0) {
+    constructorIds.value.splice(0)
+  } else {
+    const visible = crudTable.value?.filteredData || tableData.value
+    constructorIds.value = visible.map(b => b.cut_batch_id)
+  }
+}
+
+// State factory for TapeConstructor
+function electrodeStateFactory(id) {
+  return useElectrodeState({ batchId: id })
+}
+
+// ── Delete flow ──
+const pendingDelete = ref([])
+const saveState = ref('idle')
+let saveTimer = null
+
+function onDelete(items) {
+  pendingDelete.value = items
+  saveState.value = 'idle'
+}
+
+async function confirmSave() {
   try {
-    await api.delete(`/api/electrodes/electrode-cut-batches/${batch.cut_batch_id}`)
-    toast.add({ severity: 'success', summary: 'Удалено', life: 3000 })
-    await loadCutBatches(Number(selectedTapeId.value))
+    for (const item of pendingDelete.value) {
+      await api.delete(`/api/electrodes/electrode-cut-batches/${item.cut_batch_id}`)
+    }
+    pendingDelete.value = []
+    crudTable.value?.clearSelection()
+    if (selectedTapeId.value) await loadCutBatches(Number(selectedTapeId.value))
+    saveState.value = 'saved'
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
   } catch {
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
   }
 }
 
+function discardChanges() {
+  pendingDelete.value = []
+  crudTable.value?.clearSelection()
+  saveState.value = 'idle'
+}
+
 onMounted(async () => {
   await Promise.allSettled([loadTapes(), loadProjects()])
 })
+onUnmounted(() => clearTimeout(saveTimer))
 </script>
 
 <template>
   <div class="electrodes-page">
     <PageHeader title="Электроды" icon="pi pi-stop-circle">
       <template #actions>
-        <Button
-          v-if="selectedTapeId"
-          label="Новая партия"
-          icon="pi pi-plus"
-          @click="router.push(`/electrodes/new?tape=${selectedTapeId}`)"
+        <SaveIndicator
+          :visible="pendingDelete.length > 0 || saveState === 'saved'"
+          :saved="saveState === 'saved'"
+          @save="confirmSave"
+          @cancel="discardChanges"
         />
       </template>
     </PageHeader>
 
-    <!-- Tape selection -->
-    <Panel header="Выбор ленты">
-      <fieldset>
-        <label>Тип электрода:</label>
+    <!-- Cascade filters -->
+    <div class="filter-bar">
+      <div class="filter-group">
+        <label>Тип</label>
         <select v-model="selectedRole" @change="onRoleOrProjectChange">
-          <option value="">— выбрать —</option>
+          <option value="">Все</option>
           <option value="cathode">Катоды</option>
           <option value="anode">Аноды</option>
         </select>
-
-        <label>Проект:</label>
+      </div>
+      <div class="filter-group">
+        <label>Проект</label>
         <select v-model="selectedProjectId" @change="onRoleOrProjectChange">
-          <option value="">— выбрать проект —</option>
+          <option value="">Все</option>
           <option v-for="p in projects" :key="p.project_id" :value="p.project_id">{{ p.name }}</option>
         </select>
-
-        <label>Лента:</label>
+      </div>
+      <div class="filter-group">
+        <label>Лента</label>
         <select v-model="selectedTapeId" @change="onTapeChange">
-          <option value="">— выбрать ленту —</option>
+          <option value="">— выбрать —</option>
           <optgroup v-if="cathodeTapes.length" label="Катоды">
             <option v-for="t in cathodeTapes" :key="t.tape_id" :value="t.tape_id">
-              #{{ t.tape_id }} | {{ t.name }} ({{ roleRu[t.role] }}) | {{ t.finished_at || '—' }} | {{ t.created_by }}
+              #{{ t.tape_id }} — {{ t.name }}
             </option>
           </optgroup>
           <optgroup v-if="anodeTapes.length" label="Аноды">
             <option v-for="t in anodeTapes" :key="t.tape_id" :value="t.tape_id">
-              #{{ t.tape_id }} | {{ t.name }} ({{ roleRu[t.role] }}) | {{ t.finished_at || '—' }} | {{ t.created_by }}
+              #{{ t.tape_id }} — {{ t.name }}
             </option>
           </optgroup>
         </select>
-      </fieldset>
-    </Panel>
-
-    <!-- Batch list -->
-    <div v-if="workflowVisible" class="batch-list-section">
-      <div v-if="!cutBatches.length && !loading" class="empty-text">
-        Пока нет вырезанных партий электродов
       </div>
-
-      <DataTable
-        v-if="cutBatches.length"
-        :value="cutBatches"
-        :loading="loading"
-        stripedRows
-        rowHover
-        @rowClick="e => router.push(`/electrodes/${e.data.cut_batch_id}`)"
-        style="cursor: pointer"
-      >
-        <Column header="Партия" style="width: 100px">
-          <template #body="{ data }">#{{ data.cut_batch_id }}</template>
-        </Column>
-        <Column header="Дата">
-          <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
-        </Column>
-        <Column header="Электродов">
-          <template #body="{ data }">{{ Number(data.electrode_count) || 0 }} {{ electrodeCountWord(data.electrode_count) }}</template>
-        </Column>
-        <Column header="Статус">
-          <template #body="{ data }">{{ batchStatus(data) }}</template>
-        </Column>
-        <Column header="" style="width: 80px; text-align: right">
-          <template #body="{ data }">
-            <div class="batch-actions">
-              <Button icon="pi pi-pencil" text rounded size="small" severity="secondary"
-                @click.stop="router.push(`/electrodes/${data.cut_batch_id}`)" title="Редактировать" />
-              <Button icon="pi pi-trash" text rounded size="small" severity="danger"
-                @click.stop="confirmDelete(data)" title="Удалить" />
-            </div>
-          </template>
-        </Column>
-      </DataTable>
     </div>
+
+    <!-- Empty state -->
+    <div v-if="!selectedTapeId" class="empty-hint">
+      <i class="pi pi-info-circle"></i> Выберите ленту для просмотра партий электродов
+    </div>
+
+    <!-- Batch table -->
+    <CrudTable
+      v-if="selectedTapeId"
+      ref="crudTable"
+      :columns="columns"
+      :data="tableData"
+      :loading="loading"
+      id-field="cut_batch_id"
+      table-name="Партии нарезки"
+      show-add
+      row-clickable
+      @add="createBatch"
+      @delete="onDelete"
+      @row-click="(data) => toggleConstructor(data.cut_batch_id)"
+      @header-click="(field) => field === '_constructor' && toggleAllConstructor()"
+    >
+      <template #col-_constructor="{ data }">
+        <Checkbox
+          :modelValue="isInConstructor(data.cut_batch_id)"
+          @update:modelValue="toggleConstructor(data.cut_batch_id)"
+          :binary="true"
+          v-tooltip.right="'В конструктор'"
+        />
+      </template>
+      <template #col-cut_batch_id="{ data }">
+        <span class="batch-id">#{{ data.cut_batch_id }}</span>
+      </template>
+      <template #col-created_at="{ data }">{{ formatDate(data.created_at) }}</template>
+      <template #col-electrode_count="{ data }">{{ Number(data.electrode_count) || 0 }}</template>
+      <template #col-status_display="{ data }">
+        <span :class="['status-badge', `status-badge--${data.status_display === 'готово' ? 'done' : data.status_display === 'сушится' ? 'drying' : 'work'}`]">
+          {{ data.status_display }}
+        </span>
+      </template>
+    </CrudTable>
+
+    <!-- Constructor (same component as TapesPage, parametrized for electrodes) -->
+    <TapeConstructor
+      v-if="selectedTapeId"
+      :selectedTapeIds="constructorIds"
+      :tapeList="tableData"
+      :stageConfigs="ELECTRODE_STAGES"
+      :stateFactory="electrodeStateFactory"
+      idField="cut_batch_id"
+      title="КОНСТРУКТОР ЭЛЕКТРОДОВ"
+      emptyHint="Отметьте партии в таблице для работы в конструкторе"
+    />
   </div>
 </template>
 
@@ -218,42 +311,60 @@ onMounted(async () => {
   flex-direction: column;
   gap: 1.25rem;
 }
-.electrodes-page :deep(.page-header) {
-  margin-bottom: 3px !important;
-}
+.electrodes-page :deep(.page-header) { margin-bottom: 3px !important; }
 
-fieldset {
-  border: none;
-  padding: 0.5rem 0;
+/* ── Cascade filter bar ── */
+.filter-bar {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.filter-group {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.25rem;
 }
-
-label { font-weight: 500; font-size: 0.9rem; margin-top: 0.3rem; }
-
-select {
+.filter-group label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(0, 50, 116, 0.5);
+}
+.filter-group select {
   padding: 0.4rem 0.5rem;
   border: 1px solid #D1D7DE;
   border-radius: 6px;
-  font-size: 0.9rem;
-  max-width: 360px;
+  font-size: 13px;
+  min-width: 180px;
 }
-select:focus {
-  border-color: #003366;
+.filter-group select:focus {
+  border-color: #003274;
   outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
 }
 
-.batch-list-section { margin-top: 1rem; }
-.empty-text { color: #6B7280; font-size: 0.9rem; margin: 0.5rem 0; }
+/* ── Table cells ── */
+.batch-id { color: #003274; font-weight: 600; }
+.status-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.status-badge--done { background: rgba(82, 201, 166, 0.15); color: #1a8a64; }
+.status-badge--drying { background: rgba(211, 167, 84, 0.15); color: #9a7030; }
+.status-badge--work { background: rgba(0, 50, 116, 0.08); color: #003274; }
 
-.batch-actions {
+.empty-hint {
+  color: #6B7280;
+  font-size: 13px;
   display: flex;
-  gap: 0.15rem;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2rem 0;
+  justify-content: center;
 }
-
-:deep(.p-panel) { margin-bottom: 0.5rem; }
-:deep(.p-panel-header) { padding: 0.6rem 0.8rem; }
 </style>

@@ -1,13 +1,16 @@
 <script setup>
 /**
- * TapeConstructor — main constructor zone below CrudTable on TapesPage.
+ * TapeConstructor — generic entity constructor zone below CrudTable.
+ *
+ * Works for tapes (default), electrodes, or any entity with stage-based editing.
+ * Pass stageConfigs + stateFactory to customize for different entity types.
  *
  * Features:
- *  - Manages reactive Map of useTapeState() instances
- *  - Tabs: first (leftmost) = target tape, draggable to reorder
- *  - Yellow tab highlight for dirty (unsaved) tapes
+ *  - Manages reactive Map of entity state instances
+ *  - Tabs: first (leftmost) = target, draggable to reorder
+ *  - Yellow tab highlight for dirty (unsaved) entities
  *  - Expose saveAll() for parent SaveIndicator
- *  - Emits 'dirty' when any tape has unsaved changes
+ *  - Emits 'dirty' when any entity has unsaved changes
  */
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
@@ -22,6 +25,12 @@ const props = defineProps({
   tapeList: { type: Array, default: () => [] },
   refs: { type: Object, default: () => ({}) },
   authStore: { type: Object, default: null },
+  // Generic overrides (defaults = tape behavior)
+  stageConfigs: { type: Array, default: () => TAPE_STAGES },
+  stateFactory: { type: Function, default: null },   // (id, refs, authStore) => state instance
+  idField: { type: String, default: 'tape_id' },
+  title: { type: String, default: 'КОНСТРУКТОР ЛЕНТ' },
+  emptyHint: { type: String, default: 'Отметьте ленты в таблице для работы в конструкторе' },
 })
 
 const emit = defineEmits(['dirty', 'remove-tape'])
@@ -43,7 +52,7 @@ const tapeNames = computed(() => {
   const map = {}
   for (const tid of Object.keys(tapeStates)) {
     const ts = tapeStates[tid]
-    map[tid] = ts?.general?.name || props.tapeList.find(t => t.tape_id === Number(tid))?.name || `#${tid}`
+    map[tid] = ts?.general?.name || props.tapeList.find(t => t[props.idField] === Number(tid))?.name || `#${tid}`
   }
   return map
 })
@@ -53,7 +62,7 @@ const targetTapeId = computed(() => tabOrder.value[0] || null)
 
 // Active stage config
 const activeStageConfig = computed(() =>
-  TAPE_STAGES.find(s => s.code === activeStage.value) || TAPE_STAGES[0]
+  props.stageConfigs.find(s => s.code === activeStage.value) || props.stageConfigs[0]
 )
 
 // Any dirty?
@@ -98,11 +107,13 @@ async function loadTape(id) {
   const tid = String(id)
   _loadingCount.value++
   try {
-    const ts = useTapeState({ tapeId: id, refs: props.refs, authStore: props.authStore })
+    const ts = props.stateFactory
+      ? props.stateFactory(id, props.refs, props.authStore)
+      : useTapeState({ tapeId: id, refs: props.refs, authStore: props.authStore })
     tapeStates[tid] = ts
     await ts.restore()
   } catch (e) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: `Не удалось загрузить ленту #${id}`, life: 3000 })
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: `Не удалось загрузить #${id}`, life: 3000 })
     delete tapeStates[tid]
   } finally {
     _loadingCount.value--
@@ -176,7 +187,12 @@ function onKeydown(e) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  if (!activeStage.value && props.stageConfigs.length) {
+    activeStage.value = props.stageConfigs[0].code
+  }
+})
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   for (const ts of Object.values(tapeStates)) {
@@ -205,7 +221,7 @@ function onReorder(newOrder) {
       <!-- Left sidebar: title + stages -->
       <div class="constructor-sidebar">
         <div class="constructor-title-row">
-          <div class="constructor-title">КОНСТРУКТОР ЛЕНТ</div>
+          <div class="constructor-title">{{ title }}</div>
           <div class="constructor-undo-redo">
             <Button
               icon="pi pi-arrow-left"
@@ -232,7 +248,7 @@ function onReorder(newOrder) {
           </div>
         </div>
         <StageNavigator
-          :stages="TAPE_STAGES"
+          :stages="stageConfigs"
           :activeStage="activeStage"
           :tapeStates="tapeStates"
           :activeTapeId="activeTapeId"
@@ -271,7 +287,7 @@ function onReorder(newOrder) {
   <!-- Empty state -->
   <div v-else class="constructor-empty">
     <i class="pi pi-info-circle"></i>
-    <span>Отметьте ленты в таблице для работы в конструкторе</span>
+    <span>{{ emptyHint }}</span>
   </div>
 </template>
 

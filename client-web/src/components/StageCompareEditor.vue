@@ -36,22 +36,24 @@ function onTapeHeaderClick(tid) {
   emit('select-tape', Number(tid))
 }
 
+// Default ref → id/name mappings (backward compat for tapeStages that don't have refConfig)
+const _defaultIdFields = {
+  users: 'user_id', projects: 'project_id', recipes: 'tape_recipe_id',
+  atmospheres: 'code', dryMixingMethods: 'dry_mixing_id',
+  wetMixingMethods: 'wet_mixing_id', foils: 'foil_id', coatingMethods: 'coating_id',
+}
+const _defaultNameFields = {
+  users: 'name', projects: 'name', recipes: 'name',
+  atmospheres: 'display', dryMixingMethods: 'description',
+  wetMixingMethods: 'description', foils: 'type', coatingMethods: 'comments',
+}
+
 function getRefOptions(field) {
   if (field.options) return field.options.map(o => ({ value: o.value, label: o.label }))
   if (field.ref && props.refs[field.ref]?.length) {
     const items = props.refs[field.ref]
-    const idFields = {
-      users: 'user_id', projects: 'project_id', recipes: 'tape_recipe_id',
-      atmospheres: 'code', dryMixingMethods: 'dry_mixing_id',
-      wetMixingMethods: 'wet_mixing_id', foils: 'foil_id', coatingMethods: 'coating_id',
-    }
-    const nameFields = {
-      users: 'name', projects: 'name', recipes: 'name',
-      atmospheres: 'display', dryMixingMethods: 'description',
-      wetMixingMethods: 'description', foils: 'type', coatingMethods: 'comments',
-    }
-    const idKey = idFields[field.ref] || 'id'
-    const nameKey = nameFields[field.ref] || 'name'
+    const idKey = field.refConfig?.idField || _defaultIdFields[field.ref] || 'id'
+    const nameKey = field.refConfig?.nameField || _defaultNameFields[field.ref] || 'name'
     return items.map(i => ({ value: i[idKey], label: i[nameKey] || `#${i[idKey]}` }))
   }
   return []
