@@ -762,14 +762,14 @@ select, input[type="text"], input[type="number"], textarea {
   padding: 0.4rem 0.5rem; border: 1px solid #D1D7DE; border-radius: 6px; font-size: 0.9rem;
 }
 select:focus, input:focus, textarea:focus {
-  border-color: #003366; outline: none; box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
+  border-color: #003274; outline: none; box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
 }
 textarea { min-height: 2.5rem; resize: vertical; }
 
 select, input[type="number"], input[type="text"] { max-width: 360px; }
 textarea { max-width: 600px; }
 
-.computed-field { font-weight: bold; color: #003366; }
+.computed-field { font-weight: bold; color: #003274; }
 .hint-text { font-size: 0.85rem; color: #6B7280; margin: 0 0 0.5rem 0; }
 
 .stack-table {

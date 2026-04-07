@@ -346,7 +346,7 @@ function statusLabel(status) {
   background: white;
 }
 .pv-select:focus {
-  border-color: #003366;
+  border-color: #003274;
   outline: none;
   box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
 }

@@ -362,7 +362,7 @@ function formatDate(dt) {
   transition: background 0.3s;
 }
 .progress-seg--done {
-  background: #2ECC94;
+  background: #52C9A6;
 }
 
 .text-muted {

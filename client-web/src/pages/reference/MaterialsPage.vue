@@ -374,7 +374,7 @@ onMounted(loadMaterials)
     <div
       v-if="statusMsg"
       class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : 'darkcyan' }"
+      :style="{ color: statusError ? '#b00020' : '#1a8a64' }"
     >
       {{ statusMsg }}
     </div>
@@ -549,7 +549,7 @@ onMounted(loadMaterials)
                     @click="startCreateComponent(inst.material_instance_id)"
                   >+ Состав</button>
                 </template>
-                <div v-else style="margin-left: 3rem; color: #999">Загрузка...</div>
+                <div v-else style="margin-left: 3rem; color: #6B7280">Загрузка...</div>
               </div>
             </div>
 
@@ -580,7 +580,7 @@ onMounted(loadMaterials)
               @click="startCreateInstance(m.material_id)"
             >+ Экземпляр</button>
           </template>
-          <div v-else style="margin-left: 1.5rem; color: #999">Загрузка...</div>
+          <div v-else style="margin-left: 1.5rem; color: #6B7280">Загрузка...</div>
         </div>
       </li>
     </ul>

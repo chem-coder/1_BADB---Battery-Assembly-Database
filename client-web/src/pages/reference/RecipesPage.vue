@@ -411,7 +411,7 @@ onUnmounted(() => {
     <div
       v-if="statusMsg"
       class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : 'darkcyan' }"
+      :style="{ color: statusError ? '#b00020' : '#1a8a64' }"
     >
       {{ statusMsg }}
     </div>

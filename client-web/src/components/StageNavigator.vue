@@ -278,8 +278,8 @@ const isSingleDay = computed(() => timeRange.value?.spanMs === 0)
 }
 
 .stage-number--done {
-  background: #2ECC94;
-  border-color: #2ECC94;
+  background: #52C9A6;
+  border-color: #52C9A6;
   color: white;
 }
 

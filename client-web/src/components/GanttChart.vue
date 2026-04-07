@@ -30,7 +30,7 @@ const props = defineProps({
 
 const emit = defineEmits(['navigate'])
 
-const TAPE_COLORS = ['#003274', '#2ECC94', '#E67E22', '#9B59B6', '#E74C3C', '#1ABC9C', '#F39C12', '#3498DB']
+const TAPE_COLORS = ['#003274', '#52C9A6', '#E67E22', '#9B59B6', '#E74C3C', '#1ABC9C', '#F39C12', '#3498DB']
 
 const tapeIds = computed(() => Object.keys(props.tapeStates))
 
@@ -233,7 +233,7 @@ function isTarget(tapeId) {
 
 .gantt-legend-star {
   font-size: 8px;
-  color: #2ECC94;
+  color: #52C9A6;
 }
 
 /* Grid */

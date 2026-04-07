@@ -936,7 +936,7 @@ defineExpose({ clearSelection, selectedRows, filteredData })
   text-align: center;
 }
 .ct-ctx-menu-danger {
-  color: #E74C3C;
+  color: #b00020;
 }
 .ct-ctx-menu-danger:hover {
   background: rgba(231, 76, 60, 0.08);

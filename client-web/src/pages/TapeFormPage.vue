@@ -1459,7 +1459,7 @@ onUnmounted(() => {
 .tape-title:hover { text-decoration: underline; }
 .tape-name-input {
   font-size: 1.4rem; font-weight: 700; padding: 0.2rem 0.4rem;
-  width: 100%; border: 1px solid #2ECC94; border-radius: 6px;
+  width: 100%; border: 1px solid #52C9A6; border-radius: 6px;
 }
 
 /* Stepper */
@@ -1490,7 +1490,7 @@ select, input[type="text"], input[type="number"], input[type="date"], input[type
   padding: 0.4rem 0.5rem; border: 1px solid #D1D7DE; border-radius: 6px; font-size: 0.9rem;
 }
 select:focus, input:focus, textarea:focus {
-  border-color: #003366; outline: none; box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
+  border-color: #003274; outline: none; box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
 }
 textarea { min-height: 2.5rem; resize: vertical; }
 hr { margin: 0.5rem 0; border: none; border-top: 1px solid #E8ECF0; }
@@ -1500,7 +1500,7 @@ hr { margin: 0.5rem 0; border: none; border-top: 1px solid #E8ECF0; }
 
 /* Markers */
 .panel-header-text { font-weight: 600; font-size: 0.95rem; }
-.dirty-marker { color: #e74c3c; font-size: 0.8rem; margin-left: 8px; }
+.dirty-marker { color: #b00020; font-size: 0.8rem; margin-left: 8px; }
 .time-since { color: #8A939D; font-size: 0.85rem; margin-bottom: 0.4rem; }
 
 /* Time badge */
@@ -1528,7 +1528,7 @@ hr { margin: 0.5rem 0; border: none; border-top: 1px solid #E8ECF0; }
 
 /* Mix params */
 .mix-params {
-  margin-left: 1rem; padding-left: 0.75rem; border-left: 3px solid #2ECC94;
+  margin-left: 1rem; padding-left: 0.75rem; border-left: 3px solid #52C9A6;
   display: flex; flex-direction: column; gap: 0.3rem;
 }
 .method-preview {

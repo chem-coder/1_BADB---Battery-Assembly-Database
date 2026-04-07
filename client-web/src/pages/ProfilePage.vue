@@ -265,7 +265,7 @@ async function onSubmit() {
   font-family: 'Rosatom', system-ui, sans-serif;
   font-size: 20px;
   font-weight: 700;
-  color: #003366;
+  color: #003274;
   margin: 0 0 1.5rem 0;
 }
 
@@ -281,7 +281,7 @@ async function onSubmit() {
   font-family: 'Rosatom', system-ui, sans-serif;
   font-size: 15px;
   font-weight: 700;
-  color: #003366;
+  color: #003274;
   margin: 0 0 1rem 0;
   display: flex;
   align-items: center;
@@ -382,14 +382,14 @@ details.profile-card[open] > .card-title .chevron {
 }
 
 .field-error {
-  color: #E74C3C;
+  color: #b00020;
   font-size: 12px;
   display: block;
   margin-top: 0.25rem;
 }
 
 .form-error {
-  color: #E74C3C;
+  color: #b00020;
   font-size: 13px;
   text-align: center;
   margin: 0 0 0.75rem 0;
@@ -399,11 +399,11 @@ details.profile-card[open] > .card-title .chevron {
   text-align: center;
   font-size: 13px;
   margin: 0.75rem 0 0 0;
-  color: #2ECC94;
+  color: #52C9A6;
 }
 
 .status-msg.error {
-  color: #E74C3C;
+  color: #b00020;
 }
 
 :deep(.p-inputtext) {
@@ -413,7 +413,7 @@ details.profile-card[open] > .card-title .chevron {
 }
 
 :deep(.p-inputtext:focus) {
-  border-color: #003366;
+  border-color: #003274;
   box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
 }
 
