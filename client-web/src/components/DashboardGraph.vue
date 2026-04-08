@@ -19,7 +19,7 @@ let cy = null
 const tooltip = ref({ visible: false, x: 0, y: 0, label: '', type: '', details: '' })
 
 // ── Layout settings (Obsidian-style sliders) ──
-const layoutMode = ref('breadthfirst') // 'breadthfirst' | 'cose'
+const layoutMode = ref('layered') // 'layered' | 'cose'
 const spacing = ref(90)
 const compactness = ref(1.5)
 
@@ -41,8 +41,9 @@ const NODE_SHAPES = {
   battery: 'star',
 }
 
-// Hierarchy order for breadthfirst: project first, battery last
-const TYPE_DEPTH = { project: 0, tape: 1, recipe: 2, electrode_batch: 3, battery: 4, material: 2 }
+// Strict layer order (top to bottom)
+const LAYER_ORDER = ['project', 'tape', 'recipe', 'electrode_batch', 'battery']
+const LAYER_Y = { project: 0, tape: 1, recipe: 2, electrode_batch: 3, battery: 4 }
 
 const TYPE_LABELS = {
   project: 'Проект',
@@ -54,18 +55,8 @@ const TYPE_LABELS = {
 }
 
 function getLayoutConfig() {
-  if (layoutMode.value === 'breadthfirst') {
-    return {
-      name: 'breadthfirst',
-      directed: true,
-      spacingFactor: spacing.value / 40,
-      avoidOverlap: true,
-      padding: 30,
-      animate: true,
-      animationDuration: 600,
-      // Roots = projects (top of hierarchy)
-      roots: cy ? cy.nodes('[type="project"]') : undefined,
-    }
+  if (layoutMode.value === 'layered') {
+    return computeLayeredLayout()
   }
   return {
     name: 'cose',
@@ -75,6 +66,76 @@ function getLayoutConfig() {
     idealEdgeLength: spacing.value * compactness.value,
     gravity: 0.4 / compactness.value,
     padding: 30,
+  }
+}
+
+// Strict layered layout: each type on its own row, orphans stacked aside
+function computeLayeredLayout() {
+  if (!cy) return { name: 'preset' }
+
+  const gap = spacing.value
+  const layerGap = gap * 2.2
+  const containerW = containerRef.value?.clientWidth || 800
+
+  // Separate connected vs orphan nodes
+  const connectedIds = new Set()
+  cy.edges().forEach(e => {
+    connectedIds.add(e.source().id())
+    connectedIds.add(e.target().id())
+  })
+
+  // Group nodes by type
+  const layers = {}
+  const orphans = []
+  for (const layer of LAYER_ORDER) layers[layer] = []
+
+  cy.nodes().forEach(node => {
+    const type = node.data('type')
+    if (!connectedIds.has(node.id())) {
+      orphans.push(node)
+    } else if (layers[type]) {
+      layers[type].push(node)
+    }
+  })
+
+  // Calculate positions
+  const positions = {}
+  let currentY = 60
+
+  for (const layerType of LAYER_ORDER) {
+    const nodes = layers[layerType]
+    if (nodes.length === 0) continue
+
+    const totalWidth = nodes.length * gap
+    const startX = (containerW - totalWidth) / 2 + gap / 2
+
+    nodes.forEach((node, i) => {
+      positions[node.id()] = {
+        x: startX + i * gap,
+        y: currentY,
+      }
+    })
+    currentY += layerGap
+  }
+
+  // Orphans: compact stack on the right side
+  if (orphans.length > 0) {
+    const orphanX = containerW - 80
+    const orphanStartY = 60
+    const orphanGap = Math.min(gap * 0.6, 40)
+    orphans.forEach((node, i) => {
+      positions[node.id()] = {
+        x: orphanX,
+        y: orphanStartY + i * orphanGap,
+      }
+    })
+  }
+
+  return {
+    name: 'preset',
+    positions: (node) => positions[node.id()] || { x: containerW / 2, y: currentY },
+    animate: true,
+    animationDuration: 500,
   }
 }
 
@@ -153,7 +214,7 @@ function initCytoscape() {
       { selector: 'edge.dimmed', style: { 'opacity': 0.06 } },
       { selector: 'edge.highlighted', style: { 'width': 3, 'line-color': 'rgba(0, 50, 116, 0.5)' } },
     ],
-    layout: { name: 'preset' }, // layout applied after init
+    layout: { name: 'grid' }, // temp layout, replaced by relayout()
     minZoom: 0.2,
     maxZoom: 4,
     wheelSensitivity: 0.25,
@@ -241,7 +302,7 @@ function resetHighlight() {
 }
 
 function toggleLayout() {
-  layoutMode.value = layoutMode.value === 'breadthfirst' ? 'cose' : 'breadthfirst'
+  layoutMode.value = layoutMode.value === 'layered' ? 'cose' : 'layered'
   relayout()
 }
 
@@ -265,8 +326,8 @@ onUnmounted(() => { if (cy) cy.destroy() })
     <div class="graph-toolbar">
       <button class="graph-btn" @click="fitGraph" title="Вписать в экран"><i class="pi pi-expand"></i></button>
       <button class="graph-btn" @click="resetHighlight" title="Сбросить выделение"><i class="pi pi-replay"></i></button>
-      <button class="graph-btn" @click="toggleLayout" :title="layoutMode === 'breadthfirst' ? 'Свободный layout' : 'Иерархический layout'">
-        <i :class="layoutMode === 'breadthfirst' ? 'pi pi-objects-column' : 'pi pi-sitemap'"></i>
+      <button class="graph-btn" @click="toggleLayout" :title="layoutMode === 'layered' ? 'Свободный layout' : 'Иерархический layout'">
+        <i :class="layoutMode === 'layered' ? 'pi pi-objects-column' : 'pi pi-sitemap'"></i>
       </button>
 
       <div class="graph-slider">

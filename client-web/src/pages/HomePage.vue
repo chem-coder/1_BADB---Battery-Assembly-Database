@@ -22,7 +22,9 @@ const filterOptions = ref({ projects: [], operators: [] })
 const activity = ref([])
 const production = ref([])
 const graphData = ref({ nodes: [], edges: [] })
-const allTapes = ref([]) // for pipeline view
+const allTapes = ref([])
+const allBatches = ref([])
+const allElectrodeBatches = ref([])
 const loading = ref(true)
 
 // ── Filters ───────────────────────────────────────────────────────────
@@ -51,13 +53,15 @@ async function loadDashboard() {
   try {
     const projectParam = selectedProject.value ? `&project_id=${selectedProject.value}` : ''
 
-    const [kpi, filters, act, prod, graph, tapesRes] = await Promise.allSettled([
+    const [kpi, filters, act, prod, graph, tapesRes, batchesRes, batteriesRes] = await Promise.allSettled([
       api.get(`/api/dashboard/kpi?period=${period}`),
       api.get('/api/dashboard/filter-options'),
       api.get('/api/dashboard/activity?limit=15'),
       api.get(`/api/dashboard/production?weeks=12`),
       api.get(`/api/dashboard/graph?limit=200${projectParam}`),
       api.get('/api/tapes'),
+      api.get('/api/electrodes/electrode-cut-batches'),
+      api.get('/api/batteries'),
     ])
 
     if (kpi.status === 'fulfilled') kpiData.value = kpi.value.data
@@ -66,6 +70,8 @@ async function loadDashboard() {
     if (prod.status === 'fulfilled') production.value = prod.value.data
     if (graph.status === 'fulfilled') graphData.value = graph.value.data
     if (tapesRes.status === 'fulfilled') allTapes.value = tapesRes.value.data
+    if (batchesRes.status === 'fulfilled') allElectrodeBatches.value = batchesRes.value.data
+    if (batteriesRes.status === 'fulfilled') allBatches.value = batteriesRes.value.data
   } catch { /* individual errors handled above */ }
 
   // Reference counts (lightweight)
@@ -262,7 +268,7 @@ function formatTime(ts) {
     <!-- ════════ PIPELINE TAB ════════ -->
     <template v-if="activeTab === 'pipeline'">
       <div class="glass-card pipeline-section">
-        <DashboardPipeline :tapes="allTapes" />
+        <DashboardPipeline :tapes="allTapes" :electrodeBatches="allElectrodeBatches" :batteries="allBatches" />
       </div>
     </template>
 
