@@ -18,10 +18,20 @@ const containerRef = ref(null)
 let cy = null
 const tooltip = ref({ visible: false, x: 0, y: 0, label: '', type: '', details: '' })
 
-// ── Layout settings (Obsidian-style sliders) ──
-const layoutMode = ref('layered') // 'layered' | 'cose'
+// ── Layout settings ──
+const layoutMode = ref('layered')
 const spacing = ref(90)
 const compactness = ref(1.5)
+
+// ── Filters (Obsidian-style) ──
+const searchQuery = ref('')
+const visibleTypes = ref({
+  project: true,
+  tape: true,
+  recipe: true,
+  electrode_batch: true,
+  battery: true,
+})
 
 const NODE_COLORS = {
   project: '#003274',
@@ -70,12 +80,14 @@ function getLayoutConfig() {
 }
 
 // Strict layered layout: each type on its own row, orphans stacked aside
+// Horizontal layered layout: left → right, each type = vertical column
+// Проекты → Ленты → Рецепты → Партии электродов → Аккумуляторы
 function computeLayeredLayout() {
   if (!cy) return { name: 'preset' }
 
   const gap = spacing.value
-  const layerGap = gap * 2.2
-  const containerW = containerRef.value?.clientWidth || 800
+  const colGap = gap * 2.5  // horizontal distance between type columns
+  const containerH = containerRef.value?.clientHeight || 500
 
   // Separate connected vs orphan nodes
   const connectedIds = new Set()
@@ -84,7 +96,6 @@ function computeLayeredLayout() {
     connectedIds.add(e.target().id())
   })
 
-  // Group nodes by type
   const layers = {}
   const orphans = []
   for (const layer of LAYER_ORDER) layers[layer] = []
@@ -98,42 +109,41 @@ function computeLayeredLayout() {
     }
   })
 
-  // Calculate positions
   const positions = {}
-  let currentY = 60
+  let currentX = 80
 
   for (const layerType of LAYER_ORDER) {
     const nodes = layers[layerType]
     if (nodes.length === 0) continue
 
-    const totalWidth = nodes.length * gap
-    const startX = (containerW - totalWidth) / 2 + gap / 2
+    const totalHeight = nodes.length * gap
+    const startY = Math.max(60, (containerH - totalHeight) / 2)
 
     nodes.forEach((node, i) => {
       positions[node.id()] = {
-        x: startX + i * gap,
-        y: currentY,
+        x: currentX,
+        y: startY + i * gap,
       }
     })
-    currentY += layerGap
+    currentX += colGap
   }
 
-  // Orphans: compact stack on the right side
+  // Orphans: compact stack at the bottom
   if (orphans.length > 0) {
-    const orphanX = containerW - 80
-    const orphanStartY = 60
-    const orphanGap = Math.min(gap * 0.6, 40)
+    const orphanStartX = 80
+    const orphanY = containerH - 50
+    const orphanGap = Math.min(gap * 0.7, 50)
     orphans.forEach((node, i) => {
       positions[node.id()] = {
-        x: orphanX,
-        y: orphanStartY + i * orphanGap,
+        x: orphanStartX + i * orphanGap,
+        y: orphanY,
       }
     })
   }
 
   return {
     name: 'preset',
-    positions: (node) => positions[node.id()] || { x: containerW / 2, y: currentY },
+    positions: (node) => positions[node.id()] || { x: currentX, y: containerH / 2 },
     animate: true,
     animationDuration: 500,
   }
@@ -293,6 +303,44 @@ function relayout() {
   if (cy) cy.layout(getLayoutConfig()).run()
 }
 
+function applyFilters() {
+  if (!cy) return
+  const q = searchQuery.value.toLowerCase().trim()
+
+  cy.nodes().forEach(node => {
+    const type = node.data('type')
+    const label = (node.data('label') || '').toLowerCase()
+
+    const typeVisible = visibleTypes.value[type] !== false
+    const searchMatch = !q || label.includes(q)
+
+    if (typeVisible && searchMatch) {
+      node.style('display', 'element')
+    } else {
+      node.style('display', 'none')
+    }
+  })
+
+  // Hide edges where either endpoint is hidden
+  cy.edges().forEach(edge => {
+    const srcVisible = edge.source().style('display') !== 'none'
+    const tgtVisible = edge.target().style('display') !== 'none'
+    edge.style('display', srcVisible && tgtVisible ? 'element' : 'none')
+  })
+
+  // Relayout only visible nodes
+  relayout()
+}
+
+function toggleType(type) {
+  visibleTypes.value[type] = !visibleTypes.value[type]
+  applyFilters()
+}
+
+function onSearchInput() {
+  applyFilters()
+}
+
 function fitGraph() {
   if (cy) cy.fit(undefined, 30)
 }
@@ -325,21 +373,29 @@ onUnmounted(() => { if (cy) cy.destroy() })
     <!-- Toolbar -->
     <div class="graph-toolbar">
       <button class="graph-btn" @click="fitGraph" title="Вписать в экран"><i class="pi pi-expand"></i></button>
-      <button class="graph-btn" @click="resetHighlight" title="Сбросить выделение"><i class="pi pi-replay"></i></button>
-      <button class="graph-btn" @click="toggleLayout" :title="layoutMode === 'layered' ? 'Свободный layout' : 'Иерархический layout'">
-        <i :class="layoutMode === 'layered' ? 'pi pi-objects-column' : 'pi pi-sitemap'"></i>
-      </button>
+      <button class="graph-btn" @click="resetHighlight" title="Сбросить"><i class="pi pi-replay"></i></button>
 
-      <div class="graph-slider">
-        <span class="slider-label">Расстояние</span>
-        <input type="range" v-model.number="spacing" min="20" max="120" @change="relayout" />
+      <div class="graph-search">
+        <i class="pi pi-search"></i>
+        <input v-model="searchQuery" @input="onSearchInput" placeholder="Поиск..." />
       </div>
 
-      <div class="graph-legend">
-        <span v-for="(color, type) in NODE_COLORS" :key="type" class="legend-item">
-          <span class="legend-dot" :style="{ background: color }"></span>
+      <div class="graph-slider">
+        <input type="range" v-model.number="spacing" min="40" max="160" @change="relayout" />
+      </div>
+
+      <!-- Type filters (Obsidian-style toggles) -->
+      <div class="graph-type-filters">
+        <button
+          v-for="(color, type) in NODE_COLORS"
+          :key="type"
+          :class="['type-toggle', visibleTypes[type] ? '' : 'inactive']"
+          @click="toggleType(type)"
+          :title="(visibleTypes[type] ? 'Скрыть' : 'Показать') + ' ' + (TYPE_LABELS[type] || type)"
+        >
+          <span class="legend-dot" :style="{ background: visibleTypes[type] ? color : '#ccc' }"></span>
           {{ TYPE_LABELS[type] || type }}
-        </span>
+        </button>
       </div>
     </div>
 
@@ -398,36 +454,68 @@ onUnmounted(() => { if (cy) cy.destroy() })
 }
 .graph-btn:hover { background: rgba(255, 255, 255, 0.98); }
 
-.graph-slider {
+.graph-search {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 10px;
+  gap: 5px;
+  padding: 3px 10px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  border: 0.5px solid rgba(180, 210, 255, 0.55);
+  border-radius: 8px;
+}
+.graph-search i { font-size: 12px; color: #6B7280; }
+.graph-search input {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  width: 120px;
+  outline: none;
+  font-family: inherit;
+  color: #333;
+}
+.graph-search input::placeholder { color: #9CA3AF; }
+
+.graph-slider {
+  padding: 2px 8px;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(8px);
   border: 0.5px solid rgba(180, 210, 255, 0.55);
   border-radius: 8px;
 }
-.slider-label { font-size: 11px; color: #6B7280; white-space: nowrap; }
 .graph-slider input[type="range"] {
-  width: 80px;
+  width: 70px;
   height: 4px;
   accent-color: #003274;
 }
 
-.graph-legend {
+.graph-type-filters {
   display: flex;
-  gap: 0.6rem;
-  padding: 4px 10px;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(8px);
-  border: 0.5px solid rgba(180, 210, 255, 0.55);
-  border-radius: 8px;
-  font-size: 11px;
-  color: #333;
+  gap: 0.3rem;
   margin-left: auto;
 }
-.legend-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.type-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 0.5px solid rgba(180, 210, 255, 0.55);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.type-toggle:hover { border-color: rgba(0, 50, 116, 0.3); }
+.type-toggle.inactive {
+  opacity: 0.5;
+  background: rgba(200, 200, 200, 0.3);
+  text-decoration: line-through;
+}
 .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
 .graph-container {
