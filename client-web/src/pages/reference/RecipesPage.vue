@@ -14,6 +14,7 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
+import Select from 'primevue/select'
 
 const toast = useToast()
 const crudTable = ref(null)
@@ -371,17 +372,17 @@ function roleLabel(role) {
           <InputText v-model="form.variant_label" placeholder="A / B / low binder / v2" class="w-full" />
 
           <label>Электрод</label>
-          <select v-model="form.role" class="pv-select">
-            <option value="">-- выбрать --</option>
-            <option value="cathode">катод</option>
-            <option value="anode">анод</option>
-          </select>
+          <Select
+            v-model="form.role"
+            :options="[{ label: 'катод', value: 'cathode' }, { label: 'анод', value: 'anode' }]"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="-- выбрать --"
+            class="w-full"
+          />
 
           <label>Кто добавил</label>
-          <select v-model="form.created_by" class="pv-select" @focus="loadUsers">
-            <option value="">-- выбрать --</option>
-            <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
-          </select>
+          <Select v-model="form.created_by" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="-- выбрать --" class="w-full" @focus="loadUsers" />
 
           <label>Комментарии</label>
           <Textarea v-model="form.notes" rows="2" placeholder="Кратко: что это за рецепт" class="w-full" />
@@ -409,33 +410,32 @@ function roleLabel(role) {
             <tbody>
               <tr v-for="(line, idx) in recipeLines" :key="line._key">
                 <td>
-                  <select v-model="line.recipe_role" class="pv-select" @change="updateLineFiltering(line)">
-                    <option value="">-- выбрать --</option>
-                    <option value="cathode_active">катодный АМ</option>
-                    <option value="anode_active">анодный АМ</option>
-                    <option value="binder">связующее</option>
-                    <option value="additive">добавка</option>
-                    <option value="solvent">растворитель</option>
-                  </select>
+                  <Select
+                    v-model="line.recipe_role"
+                    :options="[{ label: 'катодный АМ', value: 'cathode_active' }, { label: 'анодный АМ', value: 'anode_active' }, { label: 'связующее', value: 'binder' }, { label: 'добавка', value: 'additive' }, { label: 'растворитель', value: 'solvent' }]"
+                    optionLabel="label"
+                    optionValue="value"
+                    placeholder="-- роль --"
+                    @change="updateLineFiltering(line)"
+                  />
                 </td>
                 <td>
-                  <select v-model="line.material_id" class="pv-select">
-                    <option value="">-- выбрать --</option>
-                    <option v-for="m in line.filteredMaterials" :key="m.material_id" :value="m.material_id">
-                      {{ m.name }}
-                    </option>
-                  </select>
+                  <Select
+                    v-model="line.material_id"
+                    :options="line.filteredMaterials"
+                    optionLabel="name"
+                    optionValue="material_id"
+                    placeholder="-- материал --"
+                  />
                 </td>
                 <td>
-                  <input v-model="line.slurry_percent" type="number" step="0.01" min="0" max="100" class="pv-input pv-input--narrow" />
+                  <InputText v-model="line.slurry_percent" style="width: 80px" />
                 </td>
                 <td>
-                  <input v-model="line.line_notes" type="text" placeholder="Комментарий" class="pv-input" />
+                  <InputText v-model="line.line_notes" placeholder="Комментарий" />
                 </td>
                 <td>
-                  <button type="button" class="btn-icon btn-icon--danger" @click="removeLine(idx)">
-                    <i class="pi pi-trash"></i>
-                  </button>
+                  <Button icon="pi pi-trash" severity="danger" text @click="removeLine(idx)" />
                 </td>
               </tr>
               <tr v-if="recipeLines.length === 0">
@@ -495,14 +495,6 @@ function roleLabel(role) {
   color: #003274;
 }
 .w-full { width: 100%; }
-.pv-select {
-  width: 100%;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-  background: white;
-}
 
 /* ── Section header ── */
 .section-header {
@@ -540,10 +532,9 @@ function roleLabel(role) {
   padding: 0.3rem 0.4rem;
   vertical-align: middle;
 }
-.lines-table select,
-.lines-table input {
+.lines-table :deep(.p-select),
+.lines-table :deep(.p-inputtext) {
   width: 100%;
-  max-width: none;
 }
 .lines-table th:nth-child(1), .lines-table td:nth-child(1) { width: 160px; }
 .lines-table th:nth-child(2), .lines-table td:nth-child(2) { width: 200px; }
@@ -557,19 +548,6 @@ function roleLabel(role) {
   padding: 1rem 0;
 }
 
-.pv-input {
-  width: 100%;
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-}
-.pv-input:focus, .pv-select:focus {
-  border-color: #003274;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
-}
-.pv-input--narrow { width: 80px; }
 
 /* ── Role badges ── */
 .role-badge {
@@ -583,20 +561,6 @@ function roleLabel(role) {
 .role-badge--anode { background: rgba(211, 167, 84, 0.15); color: #9a7030; }
 
 .meta-text { color: #6B7280; font-size: 13px; }
-
-/* ── Icon buttons ── */
-.btn-icon {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #6B7280;
-  padding: 4px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-  transition: background 0.12s, color 0.12s;
-}
-.btn-icon:hover { background: rgba(0, 50, 116, 0.06); color: #003274; }
-.btn-icon--danger:hover { color: #b00020; }
 
 /* ── Dialog footer ── */
 .dialog-footer {

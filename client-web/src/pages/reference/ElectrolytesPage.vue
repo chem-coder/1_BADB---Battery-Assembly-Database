@@ -14,6 +14,7 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
+import Select from 'primevue/select'
 
 const toast = useToast()
 const crudTable = ref(null)
@@ -248,16 +249,10 @@ function statusLabel(status) {
         <InputText v-model="form.name" placeholder="Название электролита" class="w-full" />
 
         <label>Кто добавил</label>
-        <select v-model="form.created_by" class="pv-select">
-          <option value="">— выбрать —</option>
-          <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
-        </select>
+        <Select v-model="form.created_by" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— выбрать —" class="w-full" />
 
         <label>Тип электролита</label>
-        <select v-model="form.electrolyte_type" class="pv-select">
-          <option value="">— выбрать —</option>
-          <option v-for="opt in typeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
+        <Select v-model="form.electrolyte_type" :options="typeOptions" optionLabel="label" optionValue="value" placeholder="— выбрать —" class="w-full" />
 
         <label>Растворители (система)</label>
         <InputText v-model="form.solvent_system" placeholder="EC/DMC 1:1" class="w-full" />
@@ -272,9 +267,7 @@ function statusLabel(status) {
         <InputText v-model="form.additives" placeholder="2% VC" class="w-full" />
 
         <label>Статус</label>
-        <select v-model="form.status" class="pv-select">
-          <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
+        <Select v-model="form.status" :options="statusOptions" optionLabel="label" optionValue="value" class="w-full" />
 
         <label>Примечания</label>
         <Textarea v-model="form.notes" rows="3" placeholder="Дополнительная информация" class="w-full" />
@@ -315,20 +308,6 @@ function statusLabel(status) {
   color: #003274;
 }
 .w-full { width: 100%; }
-.pv-select {
-  width: 100%;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-  background: white;
-}
-.pv-select:focus {
-  border-color: #003274;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
-}
-
 /* ── Page-specific cell styles ── */
 .type-badge {
   display: inline-flex;

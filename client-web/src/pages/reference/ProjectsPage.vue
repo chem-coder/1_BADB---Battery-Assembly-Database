@@ -14,6 +14,7 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
+import Select from 'primevue/select'
 
 const toast = useToast()
 const crudTable = ref(null)
@@ -284,33 +285,28 @@ async function revokeAccess(userId) {
         <InputText v-model="form.name" placeholder="Название проекта" class="w-full" />
 
         <label>Кто добавил</label>
-        <select v-model="form.created_by" class="pv-select">
-          <option value="">— выбрать —</option>
-          <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
-        </select>
+        <Select v-model="form.created_by" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— выбрать —" class="w-full" />
 
         <label>Руководитель</label>
-        <select v-model="form.lead_id" class="pv-select">
-          <option value="">— выбрать —</option>
-          <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
-        </select>
+        <Select v-model="form.lead_id" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— выбрать —" class="w-full" />
 
         <label>Описание</label>
         <Textarea v-model="form.description" rows="3" placeholder="Описание проекта" class="w-full" />
 
         <label>Дата начала</label>
-        <input v-model="form.start_date" type="date" class="pv-select" />
+        <InputText v-model="form.start_date" type="date" class="w-full" />
 
         <label>Дата окончания</label>
-        <input v-model="form.due_date" type="date" class="pv-select" />
+        <InputText v-model="form.due_date" type="date" class="w-full" />
 
         <label>Статус</label>
-        <select v-model="form.status" class="pv-select">
-          <option value="active">активный</option>
-          <option value="paused">приостановлен</option>
-          <option value="completed">завершён</option>
-          <option value="archived">архивирован</option>
-        </select>
+        <Select
+          v-model="form.status"
+          :options="[{ label: 'активный', value: 'active' }, { label: 'приостановлен', value: 'paused' }, { label: 'завершён', value: 'completed' }, { label: 'архивирован', value: 'archived' }]"
+          optionLabel="label"
+          optionValue="value"
+          class="w-full"
+        />
       </div>
 
       <!-- Access management (edit mode only) -->
@@ -321,15 +317,14 @@ async function revokeAccess(userId) {
 
         <!-- Grant form -->
         <div class="grant-row">
-          <select v-model="grantUserId" class="pv-select grant-user">
-            <option value="">— сотрудник —</option>
-            <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
-          </select>
-          <select v-model="grantLevel" class="pv-select grant-level">
-            <option value="view">Просмотр</option>
-            <option value="edit">Редактирование</option>
-            <option value="admin">Администратор</option>
-          </select>
+          <Select v-model="grantUserId" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— сотрудник —" class="grant-user" />
+          <Select
+            v-model="grantLevel"
+            :options="[{ label: 'Просмотр', value: 'view' }, { label: 'Редактирование', value: 'edit' }, { label: 'Администратор', value: 'admin' }]"
+            optionLabel="label"
+            optionValue="value"
+            class="grant-level"
+          />
           <Button icon="pi pi-plus" size="small" @click="grantAccess" :disabled="!grantUserId" />
         </div>
 
@@ -341,9 +336,7 @@ async function revokeAccess(userId) {
             <span :class="['access-level', `access-level--${a.access_level}`]">
               {{ a.access_level === 'view' ? 'Просмотр' : a.access_level === 'edit' ? 'Ред.' : 'Админ' }}
             </span>
-            <button class="btn-revoke" @click="revokeAccess(a.user_id)" title="Отозвать доступ">
-              <i class="pi pi-times"></i>
-            </button>
+            <Button icon="pi pi-times" severity="danger" text size="small" @click="revokeAccess(a.user_id)" title="Отозвать доступ" />
           </div>
           <div v-if="!accessList.length && !accessLoading" class="access-empty">Нет явных допусков</div>
         </div>
@@ -384,20 +377,6 @@ async function revokeAccess(userId) {
   color: #003274;
 }
 .w-full { width: 100%; }
-.pv-select {
-  width: 100%;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-  background: white;
-}
-.pv-select:focus {
-  border-color: #003274;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
-}
-
 /* ── Page-specific cell styles ── */
 .desc-text {
   font-size: 13px;
@@ -475,14 +454,5 @@ async function revokeAccess(userId) {
 .access-level--view { background: rgba(0, 50, 116, 0.08); color: #003274; }
 .access-level--edit { background: rgba(82, 201, 166, 0.12); color: #1a8a64; }
 .access-level--admin { background: rgba(176, 0, 32, 0.1); color: #b00020; }
-.btn-revoke {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #6B7280;
-  padding: 2px 4px;
-  border-radius: 4px;
-}
-.btn-revoke:hover { color: #b00020; background: rgba(176, 0, 32, 0.06); }
 .access-empty { color: #6B7280; font-size: 12px; padding: 0.5rem 0; }
 </style>

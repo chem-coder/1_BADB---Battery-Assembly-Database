@@ -14,6 +14,7 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
+import Select from 'primevue/select'
 
 const toast = useToast()
 const crudTable = ref(null)
@@ -254,10 +255,7 @@ function statusLabel(status) {
         <InputText v-model="form.name" placeholder="Название сепаратора" class="w-full" />
 
         <label>Кто добавил</label>
-        <select v-model="form.created_by" class="pv-select">
-          <option value="">— выбрать —</option>
-          <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
-        </select>
+        <Select v-model="form.created_by" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— выбрать —" class="w-full" />
 
         <label>Поставщик</label>
         <InputText v-model="form.supplier" placeholder="Celgard" class="w-full" />
@@ -269,10 +267,7 @@ function statusLabel(status) {
         <InputText v-model="form.batch" placeholder="A1" class="w-full" />
 
         <label>Тип структуры</label>
-        <select v-model="form.structure_id" class="pv-select">
-          <option value="">— выбрать —</option>
-          <option v-for="s in structures" :key="s.sep_str_id" :value="s.sep_str_id">{{ s.name }}</option>
-        </select>
+        <Select v-model="form.structure_id" :options="structures" optionLabel="name" optionValue="sep_str_id" placeholder="— выбрать —" class="w-full" />
 
         <label>Воздушная проницаемость</label>
         <InputText v-model="form.air_perm" placeholder="20" class="w-full" />
@@ -287,15 +282,17 @@ function statusLabel(status) {
         <InputText v-model="form.porosity" placeholder="40" class="w-full" />
 
         <label>Статус</label>
-        <select v-model="form.status" class="pv-select">
-          <option value="available">в наличии</option>
-          <option value="used">израсходован</option>
-          <option value="scrap">списан</option>
-        </select>
+        <Select
+          v-model="form.status"
+          :options="[{ label: 'в наличии', value: 'available' }, { label: 'израсходован', value: 'used' }, { label: 'списан', value: 'scrap' }]"
+          optionLabel="label"
+          optionValue="value"
+          class="w-full"
+        />
 
         <template v-if="form.status !== 'available'">
           <label>Дата списания</label>
-          <input v-model="form.depleted_at" type="date" class="pv-select" />
+          <InputText v-model="form.depleted_at" type="date" class="w-full" />
         </template>
 
         <label>Комментарии</label>
@@ -337,20 +334,6 @@ function statusLabel(status) {
   color: #003274;
 }
 .w-full { width: 100%; }
-.pv-select {
-  width: 100%;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-  background: white;
-}
-.pv-select:focus {
-  border-color: #003274;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
-}
-
 /* ── Page-specific cell styles ── */
 .status-pill {
   display: inline-flex;
