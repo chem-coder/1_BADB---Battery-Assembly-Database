@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 const WORKFLOW_STATUS_ORDER = [
   { code: 'recipe_materials', label: 'Выбор экземпляров' },
@@ -367,6 +368,10 @@ router.get('/', auth, async (req, res) => {
       r.role,
       r.name AS recipe_name,
       p.name AS project_name,
+      u_created.name AS created_by_name,
+      t.updated_by,
+      t.updated_at,
+      u_updated.name AS updated_by_name,
       (
         SELECT string_agg(DISTINCT u.name, ', ' ORDER BY u.name)
         FROM tape_process_steps ts
@@ -382,6 +387,8 @@ router.get('/', auth, async (req, res) => {
     FROM tapes t
     LEFT JOIN tape_recipes r ON r.tape_recipe_id = t.tape_recipe_id
     LEFT JOIN projects p ON p.project_id = t.project_id
+    LEFT JOIN users u_created ON u_created.user_id = t.created_by
+    LEFT JOIN users u_updated ON u_updated.user_id = t.updated_by
   `;
 
   try {
@@ -434,6 +441,14 @@ router.put('/:id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query(
+      'SELECT name, project_id, tape_recipe_id, created_by, notes, calc_mode, target_mass_g FROM tapes WHERE tape_id = $1',
+      [id]
+    );
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Лента не найдена' });
+    }
+
     const result = await pool.query(
       `
       UPDATE tapes
@@ -444,8 +459,10 @@ router.put('/:id', auth, async (req, res) => {
         created_by = $4,
         notes = $5,
         calc_mode = $6,
-        target_mass_g = $7
-      WHERE tape_id = $8
+        target_mass_g = $7,
+        updated_by = $8,
+        updated_at = now()
+      WHERE tape_id = $9
       RETURNING *
       `,
       [
@@ -456,6 +473,7 @@ router.put('/:id', auth, async (req, res) => {
         notes ?? null,
         calc_mode ?? null,
         target_mass_g ?? null,
+        req.user.userId,
         id
       ]
     );
@@ -463,6 +481,13 @@ router.put('/:id', auth, async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Лента не найдена' });
     }
+
+    await trackChanges(pool, 'tape', 'tapes', 'tape_id', id,
+      current.rows[0],
+      { name, project_id: projectId, tape_recipe_id: recipeId, created_by: createdBy, notes: notes ?? null, calc_mode: calc_mode ?? null, target_mass_g: target_mass_g ?? null },
+      req.user.userId
+    );
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);

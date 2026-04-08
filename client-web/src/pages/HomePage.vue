@@ -30,6 +30,7 @@ const loading = ref(true)
 // ── Filters ───────────────────────────────────────────────────────────
 const selectedPeriod = ref('30d')
 const selectedProject = ref(null)
+const selectedOperator = ref(null)
 
 const periodOptions = [
   { label: '7 дней', value: '7d' },
@@ -52,13 +53,14 @@ async function loadDashboard() {
 
   try {
     const projectParam = selectedProject.value ? `&project_id=${selectedProject.value}` : ''
+    const operatorParam = selectedOperator.value ? `&operator_id=${selectedOperator.value}` : ''
 
     const [kpi, filters, act, prod, graph, tapesRes, batchesRes, batteriesRes] = await Promise.allSettled([
-      api.get(`/api/dashboard/kpi?period=${period}`),
+      api.get(`/api/dashboard/kpi?period=${period}${projectParam}${operatorParam}`),
       api.get('/api/dashboard/filter-options'),
       api.get('/api/dashboard/activity?limit=15'),
       api.get(`/api/dashboard/production?weeks=12`),
-      api.get(`/api/dashboard/graph?limit=200${projectParam}`),
+      api.get(`/api/dashboard/graph?limit=200${projectParam}${operatorParam}`),
       api.get('/api/tapes'),
       api.get('/api/electrodes/electrode-cut-batches'),
       api.get('/api/batteries'),
@@ -210,6 +212,17 @@ function formatTime(ts) {
           placeholder="Все проекты"
           showClear
           class="filter-project"
+          @change="loadDashboard()"
+        />
+        <Select
+          v-model="selectedOperator"
+          :options="filterOptions.operators"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Все операторы"
+          showClear
+          class="filter-operator"
+          @change="loadDashboard()"
         />
       </div>
       <div class="filter-presets">
@@ -348,6 +361,7 @@ function formatTime(ts) {
 }
 .filter-period { width: 140px; }
 .filter-project { width: 200px; }
+.filter-operator { width: 200px; }
 .filter-presets {
   display: flex;
   gap: 0.4rem;
@@ -448,6 +462,6 @@ function formatTime(ts) {
   .bottom-grid { grid-template-columns: 1fr; }
   .filter-bar { flex-direction: column; align-items: stretch; }
   .filter-bar-left { flex-wrap: wrap; }
-  .filter-period, .filter-project { width: 100%; }
+  .filter-period, .filter-project, .filter-operator { width: 100%; }
 }
 </style>

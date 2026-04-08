@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -223,9 +224,13 @@ router.get('/', auth, async (req, res) => {
         r.created_at,
         act.active_material_name,
         act.active_percent,
-        u.name AS created_by_name
+        u_created.name AS created_by_name,
+        r.updated_by,
+        r.updated_at,
+        u_updated.name AS updated_by_name
       FROM tape_recipes r
-      JOIN users u ON u.user_id = r.created_by
+      LEFT JOIN users u_created ON u_created.user_id = r.created_by
+      LEFT JOIN users u_updated ON u_updated.user_id = r.updated_by
       LEFT JOIN LATERAL (
         SELECT
           m.name AS active_material_name,
@@ -361,6 +366,19 @@ router.put('/:id', auth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Snapshot current header for changelog
+    const current = await client.query(
+      'SELECT role, name, variant_label, notes FROM tape_recipes WHERE tape_recipe_id = $1',
+      [recipeId]
+    );
+    if (current.rowCount === 0) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(404).json({ error: 'Рецепт не найден' });
+    }
+
+    const newVals = { role, name, variant_label: variant_label || null, notes: notes || null };
+
     const updateResult = await client.query(
       `
       UPDATE tape_recipes
@@ -368,7 +386,9 @@ router.put('/:id', auth, async (req, res) => {
         role = $2,
         name = $3,
         variant_label = $4,
-        notes = $5
+        notes = $5,
+        updated_by = $6,
+        updated_at = now()
       WHERE tape_recipe_id = $1
       `,
       [
@@ -376,7 +396,8 @@ router.put('/:id', auth, async (req, res) => {
         role,
         name,
         variant_label || null,
-        notes || null
+        notes || null,
+        req.user.userId
       ]
     );
 
@@ -451,6 +472,8 @@ router.put('/:id', auth, async (req, res) => {
         ]
       );
     }
+
+    await trackChanges(client, 'recipe', 'tape_recipes', 'tape_recipe_id', recipeId, current.rows[0], newVals, req.user.userId);
 
     await client.query('COMMIT');
     res.json({ success: true });

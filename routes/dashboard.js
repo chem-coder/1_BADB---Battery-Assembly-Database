@@ -7,8 +7,18 @@ const { auth } = require('../middleware/auth');
 // Returns counts and breakdowns for all entity types
 router.get('/kpi', auth, async (req, res) => {
   try {
-    const { period } = req.query // '7d', '30d', '90d', 'all'
+    const { period, project_id, operator_id } = req.query // '7d', '30d', '90d', 'all'
     const dateFilter = periodToDateFilter(period)
+    const operatorFilter = operator_id ? Number(operator_id) : null
+    const projectFilterKpi = project_id ? Number(project_id) : null
+
+    // Build dynamic WHERE clauses for tapes
+    const tapeConditions = []
+    const tapeParams = []
+    if (dateFilter) { tapeParams.push(dateFilter); tapeConditions.push(`t.created_at >= $${tapeParams.length}`) }
+    if (operatorFilter) { tapeParams.push(operatorFilter); tapeConditions.push(`t.created_by = $${tapeParams.length}`) }
+    if (projectFilterKpi) { tapeParams.push(projectFilterKpi); tapeConditions.push(`t.project_id = $${tapeParams.length}`) }
+    const tapeWhere = tapeConditions.length ? `WHERE ${tapeConditions.join(' AND ')}` : ''
 
     const [tapes, electrodes, batteries, projects, materials, recipes] = await Promise.all([
       pool.query(`
@@ -20,9 +30,9 @@ router.get('/kpi', auth, async (req, res) => {
           SELECT t.tape_id,
             (SELECT count(*) FROM tape_process_steps s WHERE s.tape_id = t.tape_id AND s.performed_by IS NOT NULL) AS step_count
           FROM tapes t
-          ${dateFilter ? `WHERE t.created_at >= $1` : ''}
+          ${tapeWhere}
         ) sub
-      `, dateFilter ? [dateFilter] : []),
+      `, tapeParams),
 
       pool.query(`
         SELECT
@@ -178,7 +188,17 @@ router.get('/production', auth, async (req, res) => {
 router.get('/graph', auth, async (req, res) => {
   try {
     const projectFilter = req.query.project_id ? Number(req.query.project_id) : null
+    const operatorFilterGraph = req.query.operator_id ? Number(req.query.operator_id) : null
     const limit = Math.min(Number(req.query.limit) || 200, 500)
+
+    // Build dynamic WHERE for tapes in graph
+    const graphConditions = []
+    const graphParams = []
+    if (projectFilter) { graphParams.push(projectFilter); graphConditions.push(`t.project_id = $${graphParams.length}`) }
+    if (operatorFilterGraph) { graphParams.push(operatorFilterGraph); graphConditions.push(`t.created_by = $${graphParams.length}`) }
+    const graphTapeWhere = graphConditions.length ? `WHERE ${graphConditions.join(' AND ')}` : ''
+    graphParams.push(limit)
+    const graphLimitParam = `$${graphParams.length}`
 
     // Fetch all entity data in parallel
     const [projects, tapes, recipes, recipeLines, materials, batches, batteries,
@@ -188,9 +208,9 @@ router.get('/graph', auth, async (req, res) => {
         SELECT t.tape_id, t.name, t.project_id, t.tape_recipe_id, t.created_by,
                u.name AS operator_name
         FROM tapes t LEFT JOIN users u ON u.user_id = t.created_by
-        ${projectFilter ? 'WHERE t.project_id = $1' : ''}
-        ORDER BY t.tape_id DESC LIMIT $${projectFilter ? 2 : 1}
-      `, projectFilter ? [projectFilter, limit] : [limit]),
+        ${graphTapeWhere}
+        ORDER BY t.tape_id DESC LIMIT ${graphLimitParam}
+      `, graphParams),
       pool.query(`SELECT tape_recipe_id, name, role FROM tape_recipes`),
       pool.query(`SELECT tape_recipe_id, material_id FROM tape_recipe_lines`),
       pool.query(`SELECT m.material_id, m.name, m.role FROM materials m`),

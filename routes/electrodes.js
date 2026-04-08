@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -18,7 +19,8 @@ router.get('/electrode-cut-batches', auth, async (req, res) => {
         t.project_id,
         p.name AS project_name,
         r.role AS tape_role,
-        u.name AS created_by_name,
+        u_created.name AS created_by_name,
+        u_updated.name AS updated_by_name,
         d.start_time AS drying_start,
         d.end_time AS drying_end,
         COALESCE(ec.electrode_count, 0) AS electrode_count
@@ -29,8 +31,10 @@ router.get('/electrode-cut-batches', auth, async (req, res) => {
         ON p.project_id = t.project_id
       LEFT JOIN tape_recipes r
         ON r.tape_recipe_id = t.tape_recipe_id
-      LEFT JOIN users u
-        ON u.user_id = b.created_by
+      LEFT JOIN users u_created
+        ON u_created.user_id = b.created_by
+      LEFT JOIN users u_updated
+        ON u_updated.user_id = b.updated_by
       LEFT JOIN electrode_drying d
         ON d.cut_batch_id = b.cut_batch_id
       LEFT JOIN (
@@ -127,6 +131,16 @@ router.put('/electrode-cut-batches/:id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query(
+      'SELECT shape, diameter_mm, length_mm, width_mm, comments FROM electrode_cut_batches WHERE cut_batch_id = $1',
+      [cutBatchId]
+    );
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Партия не найдена' });
+    }
+
+    const newVals = { shape: shape || null, diameter_mm: diameter_mm ?? null, length_mm: length_mm ?? null, width_mm: width_mm ?? null, comments: comments || null };
+
     const result = await pool.query(
       `
       UPDATE electrode_cut_batches
@@ -135,23 +149,20 @@ router.put('/electrode-cut-batches/:id', auth, async (req, res) => {
         diameter_mm = $2,
         length_mm = $3,
         width_mm = $4,
-        comments = $5
-      WHERE cut_batch_id = $6
+        comments = $5,
+        updated_by = $6,
+        updated_at = now()
+      WHERE cut_batch_id = $7
       RETURNING *
       `,
-      [
-        shape || null,
-        diameter_mm ?? null,
-        length_mm ?? null,
-        width_mm ?? null,
-        comments || null,
-        cutBatchId
-      ]
+      [newVals.shape, newVals.diameter_mm, newVals.length_mm, newVals.width_mm, newVals.comments, req.user.userId, cutBatchId]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Партия не найдена' });
     }
+
+    await trackChanges(pool, 'electrode_cut_batch', 'electrode_cut_batches', 'cut_batch_id', cutBatchId, current.rows[0], newVals, req.user.userId);
 
     res.json(result.rows[0]);
 
@@ -336,6 +347,11 @@ router.put('/foil-measurements/:id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT mass_g FROM foil_mass_measurements WHERE foil_measurement_id = $1', [measurementId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Измерение не найдено' });
+    }
+
     const result = await pool.query(
       `
       UPDATE foil_mass_measurements
@@ -349,6 +365,8 @@ router.put('/foil-measurements/:id', auth, async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Измерение не найдено' });
     }
+
+    await trackChanges(pool, 'foil_measurement', 'foil_mass_measurements', 'foil_measurement_id', measurementId, current.rows[0], { mass_g }, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -464,6 +482,13 @@ router.put('/:id/status', auth, async (req, res) => {
   }
   
   try {
+    const current = await pool.query('SELECT status_code, used_in_battery_id, scrapped_reason FROM electrodes WHERE electrode_id = $1', [electrodeId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Электрод не найден' });
+    }
+
+    const newVals = { status_code, used_in_battery_id: used_in_battery_id || null, scrapped_reason: scrapped_reason || null };
+
     const result = await pool.query(
       `
       UPDATE electrodes
@@ -473,17 +498,14 @@ router.put('/:id/status', auth, async (req, res) => {
       WHERE electrode_id = $4
       RETURNING *
       `,
-      [
-        status_code,
-        used_in_battery_id || null,
-        scrapped_reason || null,
-        electrodeId
-      ]
+      [newVals.status_code, newVals.used_in_battery_id, newVals.scrapped_reason, electrodeId]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Электрод не найден' });
     }
+
+    await trackChanges(pool, 'electrode', 'electrodes', 'electrode_id', electrodeId, current.rows[0], newVals, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -507,6 +529,10 @@ router.put('/:id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT electrode_mass_g, cup_number, comments FROM electrodes WHERE electrode_id = $1', [electrodeId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Electrode not found' });
+    }
 
     const result = await pool.query(
       `
@@ -529,6 +555,12 @@ router.put('/:id', auth, async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Electrode not found' });
     }
+
+    const newVals = {};
+    if (electrode_mass_g !== undefined) newVals.electrode_mass_g = electrode_mass_g;
+    if (cup_number !== undefined) newVals.cup_number = cup_number;
+    if (comments !== undefined) newVals.comments = comments;
+    await trackChanges(pool, 'electrode', 'electrodes', 'electrode_id', electrodeId, current.rows[0], newVals, req.user.userId, null, false);
 
     res.json(result.rows[0]);
 
@@ -691,6 +723,13 @@ router.put('/electrode-drying/:id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT start_time, end_time, temperature_c, other_parameters, comments FROM electrode_drying WHERE drying_id = $1', [dryingId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Запись не найдена' });
+    }
+
+    const newVals = { start_time: start_time || null, end_time: end_time || null, temperature_c: temperature_c ?? null, other_parameters: other_parameters || null, comments: comments || null };
+
     const result = await pool.query(
       `
       UPDATE electrode_drying
@@ -702,19 +741,14 @@ router.put('/electrode-drying/:id', auth, async (req, res) => {
       WHERE drying_id = $6
       RETURNING *
       `,
-      [
-        start_time || null,
-        end_time || null,
-        temperature_c ?? null,
-        other_parameters || null,
-        comments || null,
-        dryingId
-      ]
+      [newVals.start_time, newVals.end_time, newVals.temperature_c, newVals.other_parameters, newVals.comments, dryingId]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Запись не найдена' });
     }
+
+    await trackChanges(pool, 'electrode_drying', 'electrode_drying', 'drying_id', dryingId, current.rows[0], newVals, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {

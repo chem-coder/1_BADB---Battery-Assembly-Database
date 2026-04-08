@@ -4,6 +4,7 @@ const path = require('path');
 const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 const ALLOWED_COIN_LAYOUTS = new Set(['SE', 'ES', 'ESE']);
 
@@ -119,14 +120,19 @@ router.get('/', auth, async (req, res) => {
         p.name AS project_name,
         b.form_factor,
         b.created_by,
-        u.name AS created_by_name,
+        u_created.name AS created_by_name,
         b.battery_notes AS notes,
-        b.created_at
+        b.created_at,
+        b.updated_by,
+        b.updated_at,
+        u_updated.name AS updated_by_name
       FROM batteries b
       LEFT JOIN projects p
         ON p.project_id = b.project_id
-      LEFT JOIN users u
-        ON u.user_id = b.created_by
+      LEFT JOIN users u_created
+        ON u_created.user_id = b.created_by
+      LEFT JOIN users u_updated
+        ON u_updated.user_id = b.updated_by
       ORDER BY b.battery_id DESC
       `
     );
@@ -260,6 +266,14 @@ router.patch('/:id', auth, async (req, res) => {
 
     const current = currentRes.rows[0];
 
+    const newVals = {
+      project_id: project_id !== undefined ? Number(project_id) : current.project_id,
+      form_factor: form_factor !== undefined ? form_factor : current.form_factor,
+      created_by: created_by !== undefined ? Number(created_by) : current.created_by,
+      battery_notes: battery_notes !== undefined ? battery_notes : current.battery_notes,
+      status: status !== undefined ? status : current.status,
+    };
+
     const result = await pool.query(
       `
       UPDATE batteries
@@ -268,8 +282,10 @@ router.patch('/:id', auth, async (req, res) => {
         form_factor = $2,
         created_by = $3,
         battery_notes = $4,
-        status = $5
-      WHERE battery_id = $6
+        status = $5,
+        updated_by = $6,
+        updated_at = now()
+      WHERE battery_id = $7
       RETURNING
         battery_id,
         project_id,
@@ -277,21 +293,18 @@ router.patch('/:id', auth, async (req, res) => {
         created_by,
         battery_notes AS notes,
         status,
-        created_at
+        created_at,
+        updated_by,
+        updated_at
       `,
-      [
-        project_id !== undefined ? Number(project_id) : current.project_id,
-        form_factor !== undefined ? form_factor : current.form_factor,
-        created_by !== undefined ? Number(created_by) : current.created_by,
-        battery_notes !== undefined ? battery_notes : current.battery_notes,
-        status !== undefined ? status : current.status,
-        batteryId
-      ]
+      [newVals.project_id, newVals.form_factor, newVals.created_by, newVals.battery_notes, newVals.status, req.user.userId, batteryId]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Батарея не найдена' });
     }
+
+    await trackChanges(pool, 'battery', 'batteries', 'battery_id', batteryId, current, newVals, req.user.userId);
 
     res.json(result.rows[0]);
 
@@ -445,6 +458,10 @@ router.patch('/battery_coin_config/:battery_id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query(
+      'SELECT coin_cell_mode, coin_size_code, half_cell_type, li_foil_notes, spacer_thickness_mm, spacer_count, spacer_notes, coin_layout FROM battery_coin_config WHERE battery_id = $1',
+      [batteryId]
+    );
 
     const result = await pool.query(
       `
@@ -497,6 +514,19 @@ router.patch('/battery_coin_config/:battery_id', auth, async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Конфигурация не найдена' });
+    }
+
+    if (current.rowCount > 0) {
+      const newVals = {};
+      if (hasCoinCellMode) newVals.coin_cell_mode = req.body.coin_cell_mode || null;
+      if (hasCoinSizeCode) newVals.coin_size_code = req.body.coin_size_code || null;
+      if (hasHalfCellType) newVals.half_cell_type = req.body.half_cell_type || null;
+      if (hasLiFoilNotes) newVals.li_foil_notes = req.body.li_foil_notes || null;
+      if (hasSpacerThickness) newVals.spacer_thickness_mm = req.body.spacer_thickness_mm != null ? Number(req.body.spacer_thickness_mm) : null;
+      if (hasSpacerCount) newVals.spacer_count = req.body.spacer_count != null ? Number(req.body.spacer_count) : null;
+      if (hasSpacerNotes) newVals.spacer_notes = req.body.spacer_notes || null;
+      if (hasCoinLayout) newVals.coin_layout = req.body.coin_layout || null;
+      await trackChanges(pool, 'battery_coin_config', 'battery_coin_config', 'battery_id', batteryId, current.rows[0], newVals, req.user.userId, null, false);
     }
 
     res.json(result.rows[0]);
@@ -607,6 +637,7 @@ router.patch('/battery_pouch_config/:battery_id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT pouch_notes FROM battery_pouch_config WHERE battery_id = $1', [batteryId]);
 
     const result = await pool.query(
       `
@@ -626,6 +657,10 @@ router.patch('/battery_pouch_config/:battery_id', auth, async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Конфигурация не найдена' });
+    }
+
+    if (current.rowCount > 0) {
+      await trackChanges(pool, 'battery_pouch_config', 'battery_pouch_config', 'battery_id', batteryId, current.rows[0], { pouch_notes: pouch_notes || null }, req.user.userId, null, false);
     }
 
     res.json(result.rows[0]);
@@ -743,6 +778,7 @@ router.patch('/battery_cyl_config/:battery_id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT cyl_size_code, cyl_notes FROM battery_cyl_config WHERE battery_id = $1', [batteryId]);
 
     const result = await pool.query(
       `
@@ -765,6 +801,10 @@ router.patch('/battery_cyl_config/:battery_id', auth, async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Конфигурация не найдена' });
+    }
+
+    if (current.rowCount > 0) {
+      await trackChanges(pool, 'battery_cyl_config', 'battery_cyl_config', 'battery_id', batteryId, current.rows[0], { cyl_size_code: cyl_size_code || null, cyl_notes: cyl_notes || null }, req.user.userId, null, false);
     }
 
     res.json(result.rows[0]);
@@ -1005,6 +1045,13 @@ router.patch('/battery_electrode_sources/:battery_id', auth, async (req, res) =>
   }
 
   try {
+    // Snapshot current state
+    const currentSources = await pool.query(
+      'SELECT role, tape_id, cut_batch_id, source_notes FROM battery_electrode_sources WHERE battery_id = $1',
+      [batteryId]
+    );
+    const oldCathode = currentSources.rows.find(r => r.role === 'cathode') || {};
+    const oldAnode = currentSources.rows.find(r => r.role === 'anode') || {};
 
     await pool.query(
       `
@@ -1041,6 +1088,12 @@ router.patch('/battery_electrode_sources/:battery_id', auth, async (req, res) =>
         anode_source_notes || null
       ]
       );
+
+      const cathodeNew = { tape_id: cathode_tape_id || null, cut_batch_id: cathode_cut_batch_id || null, source_notes: cathode_source_notes || null };
+      const anodeNew = { tape_id: anode_tape_id || null, cut_batch_id: anode_cut_batch_id || null, source_notes: anode_source_notes || null };
+
+      await trackChanges(pool, 'battery_electrode_source_cathode', 'battery_electrode_sources', 'battery_id', batteryId, oldCathode, cathodeNew, req.user.userId, null, false);
+      await trackChanges(pool, 'battery_electrode_source_anode', 'battery_electrode_sources', 'battery_id', batteryId, oldAnode, anodeNew, req.user.userId, null, false);
 
       res.json({ success: true });
 

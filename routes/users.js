@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const pool = require('../db/pool');
 const { auth, requireRole } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 const router = Router();
 
 
@@ -71,6 +72,11 @@ router.put('/:id', auth, requireRole('admin', 'lead'), async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT name, active, role, position, department_id FROM users WHERE user_id = $1', [id]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
+
     const result = await pool.query(
       `UPDATE users SET name = $1, active = $2, role = COALESCE($3, role),
               position = COALESCE($4, position), department_id = COALESCE($5, department_id)
@@ -81,6 +87,8 @@ router.put('/:id', auth, requireRole('admin', 'lead'), async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Пользователь не найден' });
     }
+
+    await trackChanges(pool, 'user', 'users', 'user_id', Number(id), current.rows[0], { name, active, role: role || null, position: position || null, department_id: department_id || null }, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {

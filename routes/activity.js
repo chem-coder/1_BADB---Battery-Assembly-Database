@@ -53,4 +53,28 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+// GET /api/activity/changelog/:entityType/:entityId — field-level change history
+router.get('/changelog/:entityType/:entityId', auth, async (req, res) => {
+  const { entityType, entityId } = req.params;
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+
+  try {
+    const result = await pool.query(`
+      SELECT fc.id, fc.field_name, fc.old_value, fc.new_value,
+             fc.changed_at, fc.changed_by,
+             u.name AS changed_by_name
+      FROM field_changelog fc
+      LEFT JOIN users u ON u.user_id = fc.changed_by
+      WHERE fc.entity_type = $1 AND fc.entity_id = $2
+      ORDER BY fc.changed_at DESC
+      LIMIT $3
+    `, [entityType, Number(entityId), limit]);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
 module.exports = router;

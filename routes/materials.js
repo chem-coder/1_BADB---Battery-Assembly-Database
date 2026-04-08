@@ -6,6 +6,7 @@ function normalizeMassFraction(value) {
 }
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -84,9 +85,15 @@ router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT material_id, name, role
-      FROM materials
-      ORDER BY name
+      SELECT m.material_id, m.name, m.role,
+             u_created.name AS created_by_name,
+             m.updated_by,
+             m.updated_at,
+             u_updated.name AS updated_by_name
+      FROM materials m
+      LEFT JOIN users u_created ON u_created.user_id = m.created_by
+      LEFT JOIN users u_updated ON u_updated.user_id = m.updated_by
+      ORDER BY m.name
       `
     );
     res.json(result.rows);
@@ -114,19 +121,28 @@ router.put('/:id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT name, role FROM materials WHERE material_id = $1', [id]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Материал не найден' });
+    }
+
+    const newVals = { name: name.trim(), role };
+
     const result = await pool.query(
       `
       UPDATE materials
-      SET name = $1, role = $2
-      WHERE material_id = $3
-      RETURNING material_id, name, role
+      SET name = $1, role = $2, updated_by = $3, updated_at = now()
+      WHERE material_id = $4
+      RETURNING material_id, name, role, updated_by, updated_at
       `,
-      [name.trim(), role, id]
+      [newVals.name, newVals.role, req.user.userId, id]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Материал не найден' });
     }
+
+    await trackChanges(pool, 'material', 'materials', 'material_id', id, current.rows[0], newVals, req.user.userId);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -281,6 +297,13 @@ router.put('/instances/:id', auth, async (req, res) => {
   const { name, notes } = req.body;
 
   try {
+    const current = await pool.query('SELECT name, notes FROM material_instances WHERE material_instance_id = $1', [instanceId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Экземпляр материала не найден' });
+    }
+
+    const newVals = { name, notes: notes || null };
+
     const result = await pool.query(
       `
       UPDATE material_instances
@@ -295,16 +318,14 @@ router.put('/instances/:id', auth, async (req, res) => {
         notes,
         created_at
       `,
-      [
-        name,
-        notes || null,
-        instanceId
-      ]
+      [newVals.name, newVals.notes, instanceId]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Экземпляр материала не найден' });
     }
+
+    await trackChanges(pool, 'material_instance', 'material_instances', 'material_instance_id', instanceId, current.rows[0], newVals, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -470,6 +491,12 @@ router.put('/instances/:id/components', auth, async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Snapshot old composition for changelog
+    const oldComp = await client.query(
+      'SELECT component_material_instance_id, mass_fraction, notes FROM material_instance_components WHERE parent_material_instance_id = $1 ORDER BY component_material_instance_id',
+      [parentId]
+    );
+
     await client.query(
       `
       DELETE FROM material_instance_components
@@ -521,6 +548,13 @@ router.put('/instances/:id/components', auth, async (req, res) => {
       [parentId]
     );
 
+    // Log composition change as JSON diff
+    await trackChanges(client, 'material_composition', 'material_instances', 'material_instance_id', parentId,
+      { composition: JSON.stringify(oldComp.rows) },
+      { composition: JSON.stringify(normalized) },
+      req.user.userId, null, false
+    );
+
     await client.query('COMMIT');
     res.json(result.rows);
   } catch (err) {
@@ -554,6 +588,13 @@ router.put('/instances/components/:id', auth, async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT mass_fraction, notes FROM material_instance_components WHERE material_instance_component_id = $1', [id]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Компонент не найден' });
+    }
+
+    const newVals = { mass_fraction: mf, notes: notes || null };
+
     const result = await pool.query(
       `
       UPDATE material_instance_components
@@ -569,6 +610,8 @@ router.put('/instances/components/:id', auth, async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Компонент не найден' });
     }
+
+    await trackChanges(pool, 'material_component', 'material_instance_components', 'material_instance_component_id', id, current.rows[0], newVals, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {
