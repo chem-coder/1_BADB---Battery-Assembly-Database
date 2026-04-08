@@ -173,6 +173,97 @@ router.get('/production', auth, async (req, res) => {
   }
 })
 
+// ── GET /api/dashboard/graph ───────────────────────────────────────────
+// Returns nodes + edges for entity relationship graph (Cytoscape.js)
+router.get('/graph', auth, async (req, res) => {
+  try {
+    const projectFilter = req.query.project_id ? Number(req.query.project_id) : null
+    const limit = Math.min(Number(req.query.limit) || 200, 500)
+
+    // Fetch all entity data in parallel
+    const [projects, tapes, recipes, materials, batches, batteries] = await Promise.all([
+      pool.query(`SELECT project_id, name, status FROM projects ${projectFilter ? 'WHERE project_id = $1' : ''} ORDER BY project_id`, projectFilter ? [projectFilter] : []),
+      pool.query(`
+        SELECT t.tape_id, t.name, t.project_id, t.tape_recipe_id, t.created_by,
+               u.name AS operator_name
+        FROM tapes t LEFT JOIN users u ON u.user_id = t.created_by
+        ${projectFilter ? 'WHERE t.project_id = $1' : ''}
+        ORDER BY t.tape_id DESC LIMIT $${projectFilter ? 2 : 1}
+      `, projectFilter ? [projectFilter, limit] : [limit]),
+      pool.query(`SELECT tape_recipe_id, name, role FROM tape_recipes`),
+      pool.query(`SELECT m.material_id, m.name, m.role FROM materials m`),
+      pool.query(`
+        SELECT b.cut_batch_id, b.tape_id, count(e.electrode_id) AS electrode_count
+        FROM electrode_cut_batches b
+        LEFT JOIN electrodes e ON e.cut_batch_id = b.cut_batch_id
+        GROUP BY b.cut_batch_id, b.tape_id
+      `),
+      pool.query(`
+        SELECT bt.battery_id, bt.project_id, bt.form_factor,
+               bs.tape_id AS source_tape_id, bs.cut_batch_id AS source_batch_id
+        FROM batteries bt
+        LEFT JOIN battery_electrode_sources bs ON bs.battery_id = bt.battery_id
+        ${projectFilter ? 'WHERE bt.project_id = $1' : ''}
+      `, projectFilter ? [projectFilter] : []),
+    ])
+
+    const nodes = []
+    const edges = []
+    const nodeSet = new Set()
+
+    function addNode(id, type, label, data = {}) {
+      if (nodeSet.has(id)) return
+      nodeSet.add(id)
+      nodes.push({ id, type, label, data })
+    }
+
+    // Projects
+    for (const p of projects.rows) {
+      addNode(`project-${p.project_id}`, 'project', p.name, { status: p.status })
+    }
+
+    // Tapes
+    for (const t of tapes.rows) {
+      addNode(`tape-${t.tape_id}`, 'tape', t.name || `Лента #${t.tape_id}`, { operator: t.operator_name })
+      if (t.project_id) edges.push({ source: `project-${t.project_id}`, target: `tape-${t.tape_id}`, type: 'contains' })
+      if (t.tape_recipe_id) edges.push({ source: `tape-${t.tape_id}`, target: `recipe-${t.tape_recipe_id}`, type: 'uses_recipe' })
+    }
+
+    // Recipes (only those referenced by tapes)
+    const usedRecipeIds = new Set(tapes.rows.map(t => t.tape_recipe_id).filter(Boolean))
+    for (const r of recipes.rows) {
+      if (usedRecipeIds.has(r.tape_recipe_id)) {
+        addNode(`recipe-${r.tape_recipe_id}`, 'recipe', r.name, { role: r.role })
+      }
+    }
+
+    // Electrode batches
+    const tapeIds = new Set(tapes.rows.map(t => t.tape_id))
+    for (const b of batches.rows) {
+      if (tapeIds.has(b.tape_id)) {
+        addNode(`batch-${b.cut_batch_id}`, 'electrode_batch', `Партия #${b.cut_batch_id}`, { electrodes: b.electrode_count })
+        edges.push({ source: `tape-${b.tape_id}`, target: `batch-${b.cut_batch_id}`, type: 'cut_from' })
+      }
+    }
+
+    // Batteries
+    for (const bt of batteries.rows) {
+      addNode(`battery-${bt.battery_id}`, 'battery', `${bt.form_factor || 'Акк.'} #${bt.battery_id}`, { form_factor: bt.form_factor })
+      if (bt.project_id) edges.push({ source: `project-${bt.project_id}`, target: `battery-${bt.battery_id}`, type: 'contains' })
+      if (bt.source_batch_id) edges.push({ source: `batch-${bt.source_batch_id}`, target: `battery-${bt.battery_id}`, type: 'assembled_into' })
+      if (bt.source_tape_id) edges.push({ source: `tape-${bt.source_tape_id}`, target: `battery-${bt.battery_id}`, type: 'source_tape' })
+    }
+
+    // Filter edges to only reference existing nodes
+    const validEdges = edges.filter(e => nodeSet.has(e.source) && nodeSet.has(e.target))
+
+    res.json({ nodes, edges: validEdges })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Ошибка загрузки графа' })
+  }
+})
+
 // ── Helper ────────────────────────────────────────────────────────────
 function periodToDateFilter(period) {
   if (!period || period === 'all') return null

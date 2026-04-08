@@ -7,15 +7,22 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
+import DashboardPipeline from '@/components/DashboardPipeline.vue'
+import DashboardGraph from '@/components/DashboardGraph.vue'
 import { workflowSections, referenceSections } from '@/config/navigation'
 
 const router = useRouter()
+
+// ── Tab state ─────────────────────────────────────────────────────────
+const activeTab = ref('overview') // 'overview' | 'pipeline' | 'graph'
 
 // ── Dashboard data ────────────────────────────────────────────────────
 const kpiData = ref(null)
 const filterOptions = ref({ projects: [], operators: [] })
 const activity = ref([])
 const production = ref([])
+const graphData = ref({ nodes: [], edges: [] })
+const allTapes = ref([]) // for pipeline view
 const loading = ref(true)
 
 // ── Filters ───────────────────────────────────────────────────────────
@@ -42,17 +49,23 @@ async function loadDashboard() {
   const period = selectedPeriod.value
 
   try {
-    const [kpi, filters, act, prod] = await Promise.allSettled([
+    const projectParam = selectedProject.value ? `&project_id=${selectedProject.value}` : ''
+
+    const [kpi, filters, act, prod, graph, tapesRes] = await Promise.allSettled([
       api.get(`/api/dashboard/kpi?period=${period}`),
       api.get('/api/dashboard/filter-options'),
       api.get('/api/dashboard/activity?limit=15'),
       api.get(`/api/dashboard/production?weeks=12`),
+      api.get(`/api/dashboard/graph?limit=200${projectParam}`),
+      api.get('/api/tapes'),
     ])
 
     if (kpi.status === 'fulfilled') kpiData.value = kpi.value.data
     if (filters.status === 'fulfilled') filterOptions.value = filters.value.data
     if (act.status === 'fulfilled') activity.value = act.value.data
     if (prod.status === 'fulfilled') production.value = prod.value.data
+    if (graph.status === 'fulfilled') graphData.value = graph.value.data
+    if (tapesRes.status === 'fulfilled') allTapes.value = tapesRes.value.data
   } catch { /* individual errors handled above */ }
 
   // Reference counts (lightweight)
@@ -90,8 +103,12 @@ function onPeriodChange() { loadDashboard() }
 const kpis = computed(() => {
   if (!kpiData.value) return workflowSections.map(s => ({ key: s.key, label: s.shortLabel || s.label, icon: s.icon, customIcon: s.customIcon ?? null, route: s.path, total: '…', lines: [] }))
   const d = kpiData.value
+  // Use Dalia's workflow_complete from /api/tapes for accurate counts
+  const tapeComplete = allTapes.value.filter(t => t.workflow_complete).length
+  const tapeInProgress = allTapes.value.filter(t => !t.workflow_complete).length
+  const tapeTotal = allTapes.value.length || d.tapes?.total || 0
   return [
-    { key: 'tapes', label: 'Ленты', icon: 'pi pi-bars', route: '/tapes', total: d.tapes?.total ?? 0, lines: [`Завершено: ${d.tapes?.completed ?? 0}`, `В работе: ${d.tapes?.in_progress ?? 0}`] },
+    { key: 'tapes', label: 'Ленты', icon: 'pi pi-bars', route: '/tapes', total: tapeTotal, lines: [`Завершено: ${tapeComplete}`, `В работе: ${tapeInProgress}`] },
     { key: 'electrodes', label: 'Электроды', icon: 'pi pi-clone', route: '/electrodes', total: `${d.electrodes?.batches ?? 0} / ${d.electrodes?.electrodes ?? 0}`, lines: ['Партий / шт.'] },
     { key: 'assembly', label: 'Аккумуляторы', icon: 'pi pi-box', route: '/assembly', total: d.batteries?.total ?? 0, lines: [`Собрано: ${d.batteries?.assembled ?? 0}`, `Тестируется: ${d.batteries?.testing ?? 0}`] },
     { key: 'modules', label: 'Модули', icon: 'pi pi-th-large', route: '/modules', total: '—', lines: [] },
@@ -155,6 +172,19 @@ function formatTime(ts) {
   <div class="home-page">
     <PageHeader title="Главная" icon="pi pi-home" />
 
+    <!-- ── Tab switcher ── -->
+    <div class="tab-switcher">
+      <button :class="['tab-btn', activeTab === 'overview' ? 'active' : '']" @click="activeTab = 'overview'">
+        <i class="pi pi-chart-bar"></i> Обзор
+      </button>
+      <button :class="['tab-btn', activeTab === 'pipeline' ? 'active' : '']" @click="activeTab = 'pipeline'">
+        <i class="pi pi-arrow-right-arrow-left"></i> Pipeline
+      </button>
+      <button :class="['tab-btn', activeTab === 'graph' ? 'active' : '']" @click="activeTab = 'graph'">
+        <i class="pi pi-sitemap"></i> Граф
+      </button>
+    </div>
+
     <!-- ── Filter bar ── -->
     <div class="glass-card filter-bar">
       <div class="filter-bar-left">
@@ -183,6 +213,9 @@ function formatTime(ts) {
       </div>
     </div>
 
+    <!-- ════════ OVERVIEW TAB ════════ -->
+    <template v-if="activeTab === 'overview'">
+
     <!-- ── KPI cards ── -->
     <div class="kpi-grid">
       <div v-for="kpi in kpis" :key="kpi.key" class="glass-card kpi-card" @click="goTo(kpi.route)">
@@ -207,32 +240,8 @@ function formatTime(ts) {
       </div>
     </div>
 
-    <!-- ── Two-column: Recent + Activity timeline ── -->
-    <div class="bottom-grid">
-      <!-- Recent records -->
-      <div class="recent-column">
-        <div v-for="sec in recentSections" :key="sec.key" class="glass-card recent-card">
-          <div class="recent-card-title">{{ sec.recentLabel }}</div>
-          <div v-if="!sec.hasApi" class="empty-state empty-state--soon">
-            <i class="pi pi-clock"></i><span>Скоро</span>
-          </div>
-          <p v-else-if="!sec.items.length && !sec.hasError" class="empty-state">Нет записей</p>
-          <p v-else-if="sec.hasError" class="empty-state">Не удалось загрузить</p>
-          <DataTable v-else :value="sec.items" rowHover @rowClick="e => goTo(`${sec.path}/${e.data[sec.idField]}`)" class="recent-table" style="cursor: pointer">
-            <Column :field="sec.nameField" header="Название">
-              <template #body="{ data: row }">{{ sec.nameFormat ? sec.nameFormat(row) : (row[sec.nameField] || '—') }}</template>
-            </Column>
-            <Column field="workflow_status_label" header="Статус" style="width: 140px">
-              <template #body="{ data: row }">
-                <StatusBadge :status="row.workflow_status_label || row.status || 'draft'" />
-              </template>
-            </Column>
-          </DataTable>
-        </div>
-      </div>
-
-      <!-- Activity timeline -->
-      <div class="glass-card timeline-card">
+    <!-- ── Activity timeline ── -->
+    <div class="glass-card timeline-card">
         <div class="timeline-title">Активность</div>
         <div v-if="activity.length === 0" class="empty-state">Нет событий</div>
         <div v-else class="timeline-list">
@@ -247,7 +256,23 @@ function formatTime(ts) {
           </div>
         </div>
       </div>
-    </div>
+
+    </template><!-- /overview -->
+
+    <!-- ════════ PIPELINE TAB ════════ -->
+    <template v-if="activeTab === 'pipeline'">
+      <div class="glass-card pipeline-section">
+        <DashboardPipeline :tapes="allTapes" />
+      </div>
+    </template>
+
+    <!-- ════════ GRAPH TAB ════════ -->
+    <template v-if="activeTab === 'graph'">
+      <div class="glass-card graph-section">
+        <DashboardGraph :graphData="graphData" />
+      </div>
+    </template>
+
   </div>
 </template>
 
@@ -261,6 +286,45 @@ function formatTime(ts) {
   gap: 1.25rem;
 }
 .home-page :deep(.page-header) { margin-bottom: 3px !important; }
+
+/* ── Tab switcher ── */
+.tab-switcher {
+  display: flex;
+  gap: 0.25rem;
+  background: rgba(0, 50, 116, 0.04);
+  padding: 4px;
+  border-radius: 10px;
+  width: fit-content;
+}
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.45rem 1rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #6B7280;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.tab-btn:hover { color: #003274; background: rgba(255, 255, 255, 0.5); }
+.tab-btn.active {
+  background: rgba(255, 255, 255, 0.85);
+  color: #003274;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 50, 116, 0.1);
+}
+.tab-btn i { font-size: 13px; }
+
+/* ── Pipeline section ── */
+.pipeline-section { padding: 1rem; }
+
+/* ── Graph section ── */
+.graph-section { padding: 0; min-height: 500px; overflow: hidden; }
 
 /* ── Filter bar ── */
 .filter-bar {
@@ -346,40 +410,6 @@ function formatTime(ts) {
   background: rgba(0, 50, 116, 0.08); padding: 1px 6px;
   border-radius: 10px; min-width: 20px; text-align: center;
 }
-
-/* ── Bottom grid: Recent + Timeline ── */
-.bottom-grid {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 1.25rem;
-}
-.recent-column {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-/* Recent cards */
-.recent-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
-.recent-card :deep(.p-datatable), .recent-card .empty-state { flex: 1; }
-.recent-card-title {
-  padding: 1rem 1.5rem 0.7rem; font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.05em; color: rgba(0, 50, 116, 0.5);
-  border-bottom: 1px solid rgba(180, 210, 255, 0.25);
-}
-.empty-state { text-align: center; padding: 2rem 1rem; color: #6B7280; font-size: 13px; }
-.empty-state--soon { display: flex; flex-direction: column; align-items: center; gap: 6px; color: rgba(0, 50, 116, 0.3); }
-.empty-state--soon i { font-size: 1.5rem; }
-
-.recent-card :deep(.p-datatable-table-container), .recent-card :deep(.p-datatable) { background: transparent; }
-.recent-card :deep(.p-datatable-thead > tr > th) {
-  background: rgba(0, 50, 116, 0.055); color: #003274;
-  font-weight: 700; font-size: 12px; text-transform: uppercase;
-  letter-spacing: 0.04em; border-bottom: 1px solid rgba(180, 210, 255, 0.35);
-}
-.recent-card :deep(.p-datatable-tbody > tr) { background: transparent; border-bottom: 1px solid rgba(180, 210, 255, 0.18); }
-.recent-card :deep(.p-datatable-tbody > tr:last-child) { border-bottom: none; }
-.recent-card :deep(.p-datatable-tbody > tr:hover) { background: rgba(0, 50, 116, 0.04) !important; }
 
 /* ── Timeline ── */
 .timeline-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
