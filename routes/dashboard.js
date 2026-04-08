@@ -181,7 +181,8 @@ router.get('/graph', auth, async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 200, 500)
 
     // Fetch all entity data in parallel
-    const [projects, tapes, recipes, materials, batches, batteries] = await Promise.all([
+    const [projects, tapes, recipes, recipeLines, materials, batches, batteries,
+           separators, structures, electrolytes] = await Promise.all([
       pool.query(`SELECT project_id, name, status FROM projects ${projectFilter ? 'WHERE project_id = $1' : ''} ORDER BY project_id`, projectFilter ? [projectFilter] : []),
       pool.query(`
         SELECT t.tape_id, t.name, t.project_id, t.tape_recipe_id, t.created_by,
@@ -191,6 +192,7 @@ router.get('/graph', auth, async (req, res) => {
         ORDER BY t.tape_id DESC LIMIT $${projectFilter ? 2 : 1}
       `, projectFilter ? [projectFilter, limit] : [limit]),
       pool.query(`SELECT tape_recipe_id, name, role FROM tape_recipes`),
+      pool.query(`SELECT tape_recipe_id, material_id FROM tape_recipe_lines`),
       pool.query(`SELECT m.material_id, m.name, m.role FROM materials m`),
       pool.query(`
         SELECT b.cut_batch_id, b.tape_id, count(e.electrode_id) AS electrode_count
@@ -205,6 +207,9 @@ router.get('/graph', auth, async (req, res) => {
         LEFT JOIN battery_electrode_sources bs ON bs.battery_id = bt.battery_id
         ${projectFilter ? 'WHERE bt.project_id = $1' : ''}
       `, projectFilter ? [projectFilter] : []),
+      pool.query(`SELECT sep_id, name, structure_id, created_by FROM separators`),
+      pool.query(`SELECT sep_str_id, name FROM separator_structures`),
+      pool.query(`SELECT electrolyte_id, name, electrolyte_type, created_by FROM electrolytes`),
     ])
 
     const nodes = []
@@ -229,24 +234,54 @@ router.get('/graph', auth, async (req, res) => {
       if (t.tape_recipe_id) edges.push({ source: `tape-${t.tape_id}`, target: `recipe-${t.tape_recipe_id}`, type: 'uses_recipe' })
     }
 
-    // Recipes (only those referenced by tapes)
-    const usedRecipeIds = new Set(tapes.rows.map(t => t.tape_recipe_id).filter(Boolean))
+    // Materials (all — they are the foundation)
+    const materialMap = new Map()
+    for (const m of materials.rows) {
+      materialMap.set(m.material_id, m)
+      addNode(`material-${m.material_id}`, 'material', m.name, { role: m.role })
+    }
+
+    // Recipes
     for (const r of recipes.rows) {
-      if (usedRecipeIds.has(r.tape_recipe_id)) {
-        addNode(`recipe-${r.tape_recipe_id}`, 'recipe', r.name, { role: r.role })
+      addNode(`recipe-${r.tape_recipe_id}`, 'recipe', r.name, { role: r.role })
+    }
+
+    // Recipe → Material edges (via recipe_lines)
+    for (const rl of recipeLines.rows) {
+      if (nodeSet.has(`recipe-${rl.tape_recipe_id}`) && nodeSet.has(`material-${rl.material_id}`)) {
+        edges.push({ source: `material-${rl.material_id}`, target: `recipe-${rl.tape_recipe_id}`, type: 'used_in_recipe' })
       }
+    }
+
+    // Tape → Recipe edges
+    for (const t of tapes.rows) {
+      if (t.tape_recipe_id) edges.push({ source: `recipe-${t.tape_recipe_id}`, target: `tape-${t.tape_id}`, type: 'uses_recipe' })
     }
 
     // Electrode batches
     const tapeIds = new Set(tapes.rows.map(t => t.tape_id))
     for (const b of batches.rows) {
+      addNode(`batch-${b.cut_batch_id}`, 'electrode_batch', `Партия #${b.cut_batch_id}`, { electrodes: b.electrode_count })
       if (tapeIds.has(b.tape_id)) {
-        addNode(`batch-${b.cut_batch_id}`, 'electrode_batch', `Партия #${b.cut_batch_id}`, { electrodes: b.electrode_count })
         edges.push({ source: `tape-${b.tape_id}`, target: `batch-${b.cut_batch_id}`, type: 'cut_from' })
       }
     }
 
-    // Batteries
+    // Separators + structures
+    for (const s of structures.rows) {
+      addNode(`structure-${s.sep_str_id}`, 'sep_structure', s.name)
+    }
+    for (const s of separators.rows) {
+      addNode(`separator-${s.sep_id}`, 'separator', s.name)
+      if (s.structure_id) edges.push({ source: `structure-${s.structure_id}`, target: `separator-${s.sep_id}`, type: 'has_structure' })
+    }
+
+    // Electrolytes
+    for (const el of electrolytes.rows) {
+      addNode(`electrolyte-${el.electrolyte_id}`, 'electrolyte', el.name, { type: el.electrolyte_type })
+    }
+
+    // Batteries (with links to separators, electrolytes, electrode batches)
     for (const bt of batteries.rows) {
       addNode(`battery-${bt.battery_id}`, 'battery', `${bt.form_factor || 'Акк.'} #${bt.battery_id}`, { form_factor: bt.form_factor })
       if (bt.project_id) edges.push({ source: `project-${bt.project_id}`, target: `battery-${bt.battery_id}`, type: 'contains' })

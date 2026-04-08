@@ -27,40 +27,52 @@ const compactness = ref(1.5)
 const searchQuery = ref('')
 const visibleTypes = ref({
   project: true,
-  tape: true,
+  material: true,
   recipe: true,
+  tape: true,
   electrode_batch: true,
+  separator: true,
+  sep_structure: false,  // hidden by default (too granular)
+  electrolyte: true,
   battery: true,
 })
 
 const NODE_COLORS = {
   project: '#003274',
-  tape: '#52C9A6',
-  recipe: '#6CACE4',
   material: '#8A939D',
+  recipe: '#6CACE4',
+  tape: '#52C9A6',
   electrode_batch: '#025EA1',
+  separator: '#9B59B6',
+  sep_structure: '#8E7CC3',
+  electrolyte: '#E67E22',
   battery: '#D3A754',
 }
 
 const NODE_SHAPES = {
   project: 'diamond',
-  tape: 'round-rectangle',
-  recipe: 'ellipse',
   material: 'ellipse',
+  recipe: 'round-rectangle',
+  tape: 'round-rectangle',
   electrode_batch: 'hexagon',
+  separator: 'round-triangle',
+  sep_structure: 'round-triangle',
+  electrolyte: 'ellipse',
   battery: 'star',
 }
 
-// Strict layer order (top to bottom)
-const LAYER_ORDER = ['project', 'tape', 'recipe', 'electrode_batch', 'battery']
-const LAYER_Y = { project: 0, tape: 1, recipe: 2, electrode_batch: 3, battery: 4 }
+// Production flow: left → right
+const LAYER_ORDER = ['project', 'material', 'recipe', 'tape', 'electrode_batch', 'separator', 'electrolyte', 'battery']
 
 const TYPE_LABELS = {
   project: 'Проект',
-  tape: 'Лента',
-  recipe: 'Рецепт',
   material: 'Материал',
-  electrode_batch: 'Партия электродов',
+  recipe: 'Рецепт',
+  tape: 'Лента',
+  electrode_batch: 'Электроды',
+  separator: 'Сепаратор',
+  sep_structure: 'Структура сеп.',
+  electrolyte: 'Электролит',
   battery: 'Аккумулятор',
 }
 
@@ -206,23 +218,20 @@ function initCytoscape() {
       {
         selector: 'edge',
         style: {
-          'width': 1.5,
-          'line-color': 'rgba(0, 50, 116, 0.15)',
-          'target-arrow-color': 'rgba(0, 50, 116, 0.25)',
+          'width': 1,
+          'line-color': 'rgba(0, 50, 116, 0.08)',
+          'target-arrow-color': 'rgba(0, 50, 116, 0.12)',
           'target-arrow-shape': 'triangle',
           'curve-style': 'bezier',
-          'arrow-scale': 0.7,
+          'arrow-scale': 0.6,
+          'opacity': 0.4,
         },
       },
-      { selector: 'edge[type="contains"]', style: { 'line-color': 'rgba(0, 50, 116, 0.2)', 'width': 2 } },
-      { selector: 'edge[type="uses_recipe"]', style: { 'line-color': 'rgba(108, 172, 228, 0.35)', 'line-style': 'dashed' } },
-      { selector: 'edge[type="assembled_into"]', style: { 'line-color': 'rgba(211, 167, 84, 0.4)', 'width': 2 } },
-      { selector: 'edge[type="cut_from"]', style: { 'line-color': 'rgba(2, 94, 161, 0.3)' } },
-      // States
-      { selector: 'node.highlighted', style: { 'border-width': 3, 'border-color': '#003274', 'overlay-color': '#003274', 'overlay-padding': 5, 'overlay-opacity': 0.08 } },
-      { selector: 'node.dimmed', style: { 'opacity': 0.15 } },
-      { selector: 'edge.dimmed', style: { 'opacity': 0.06 } },
-      { selector: 'edge.highlighted', style: { 'width': 3, 'line-color': 'rgba(0, 50, 116, 0.5)' } },
+      // States — highlight on hover/click
+      { selector: 'node.highlighted', style: { 'border-width': 3, 'border-color': '#003274', 'overlay-color': '#003274', 'overlay-padding': 5, 'overlay-opacity': 0.08, 'z-index': 10 } },
+      { selector: 'node.dimmed', style: { 'opacity': 0.12 } },
+      { selector: 'edge.dimmed', style: { 'opacity': 0.03 } },
+      { selector: 'edge.highlighted', style: { 'width': 2.5, 'line-color': 'rgba(0, 50, 116, 0.5)', 'target-arrow-color': 'rgba(0, 50, 116, 0.6)', 'opacity': 1, 'z-index': 10 } },
     ],
     layout: { name: 'grid' }, // temp layout, replaced by relayout()
     minZoom: 0.2,
@@ -233,7 +242,17 @@ function initCytoscape() {
   // Apply layout
   cy.layout(getLayoutConfig()).run()
 
-  // ── Interactions ──
+  // ── Interactions — hover highlights connected nodes ──
+  cy.on('mouseover', 'node', (evt) => {
+    const node = evt.target
+    cy.elements().removeClass('highlighted dimmed')
+    const neighborhood = node.neighborhood().add(node)
+    cy.elements().not(neighborhood).addClass('dimmed')
+    neighborhood.addClass('highlighted')
+    neighborhood.edges().addClass('highlighted')
+  })
+
+  // Click locks the highlight
   cy.on('tap', 'node', (evt) => {
     const node = evt.target
     cy.elements().removeClass('highlighted dimmed')
@@ -241,6 +260,9 @@ function initCytoscape() {
     cy.elements().not(neighborhood).addClass('dimmed')
     neighborhood.addClass('highlighted')
     neighborhood.edges().addClass('highlighted')
+    // Remove mouseout reset while clicked
+    cy._lockedHighlight = true
+    setTimeout(() => { cy._lockedHighlight = false }, 100)
   })
 
   cy.on('tap', (evt) => {
@@ -256,24 +278,20 @@ function initCytoscape() {
     navigateToEntity(data.type, data.id)
   })
 
+  // Tooltip (merged with hover highlight above)
   cy.on('mouseover', 'node', (evt) => {
     const node = evt.target
     const pos = node.renderedPosition()
     const data = node.data()
-    tooltip.value = {
-      visible: true,
-      x: pos.x + 20,
-      y: pos.y - 10,
-      label: data.label,
-      type: data.type,
-      details: formatDetails(data),
-    }
+    tooltip.value = { visible: true, x: pos.x + 20, y: pos.y - 10, label: data.label, type: data.type, details: formatDetails(data) }
     containerRef.value.style.cursor = 'pointer'
   })
 
   cy.on('mouseout', 'node', () => {
     tooltip.value.visible = false
     if (containerRef.value) containerRef.value.style.cursor = 'default'
+    // Reset highlight only if not locked by click
+    if (!cy._lockedHighlight) cy.elements().removeClass('highlighted dimmed')
   })
 }
 
