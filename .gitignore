@@ -10,7 +10,11 @@ Thumbs.db
 dist/
 build/
 .claude/
+sql_backups/auto/
+mempalace.yaml
+entities.json
 public-vue/
 pg_dump workflow.txt
 sql_backups/0330-badb_app_v1_reconcile-before-mergeback.sql
 sql_backups/0330-badb_app_v1-current-before-reconcile-fix.sql.local/
+ql.local/

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mempalace": {
+      "command": "python3",
+      "args": ["-m", "mempalace.mcp_server"]
+    }
+  }
+}
+    "env": {
+        "PYTHONPATH": "/Users/i_dmitri_i/Library/Python/3.9/lib/python/site-packages"
+      }
+    }
+  }
+}
