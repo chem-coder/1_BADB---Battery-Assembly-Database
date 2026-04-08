@@ -7,7 +7,7 @@ Dima contributes via feature branches → Pull Requests into Dalia's main.
 
 ## Stack
 
-- **Server:** Node.js + Express 5 (modular), PostgreSQL 16 (badb_v1, 42 tables — Dalia's production DB)
+- **Server:** Node.js + Express 5 (modular), PostgreSQL 16 (badb_app_v1, 42 tables — Dalia's production DB)
 - **Client (VBA):** Excel VBA (DatabaseUI.xlam)
 - **Client (Web):** Vue 3 + PrimeVue 4 + Vite (planned)
 - **Contracts:** JSON Schema draft-07 (contracts/)
@@ -28,7 +28,7 @@ BADB-Battery-Assembly-Database/
 │   ├── index.js        — route registration
 │   ├── auth.js         — /api/auth: login, register, me
 │   ├── submit.js       — /api/submit: append-only raw_submissions
-│   └── (14+ CRUD route files, 72 endpoints)
+│   └── (13 CRUD route files, ~130 endpoints)
 ├── migrations/         — forward-only SQL migrations
 ├── public/             — Dalia's static HTML (DO NOT MODIFY)
 ├── contracts/          — JSON Schema contracts (versioned)
@@ -53,25 +53,38 @@ BADB-Battery-Assembly-Database/
 
 | task    | command                                          |
 |---------|--------------------------------------------------|
-| dev     | `npm run dev` (server :3001 + Vite :5173)        |
-| server  | `node server.js` (port 3001)                     |
+| dev     | `npm run dev` (server :3003 + Vite :5173)        |
+| server  | `node server.js` (port 3003)                     |
 | test    | VBA: cmdSelfTest.RunAll()                        |
+
+### Dev server lifecycle (MANDATORY)
+
+**Before starting `npm run dev`, ALWAYS kill existing processes first:**
+
+```bash
+lsof -ti:3003 2>/dev/null | xargs kill -9 2>/dev/null
+lsof -ti:5173 2>/dev/null | xargs kill -9 2>/dev/null
+```
+
+**Why:** `npm run dev` spawns 4+ child processes (npm, concurrently, nodemon, vite, node server.js). If you restart without killing first, old processes stay alive. Each leaked restart wastes ~200MB RAM. After 3-4 restarts the system becomes unresponsive.
+
+**Rule:** Never run `npm run dev` without killing ports 3003 + 5173 first. No exceptions.
 
 ## Dev environment — ports and networking
 
-- **BADB server:** port **3001** (`config/index.js` → `PORT || 3001`)
+- **BADB server:** port **3003** (`config/index.js` → `PORT || 3003`)
 - **Vite dev server:** port **5173**
-- **Port 3000** — was Dalia's old standalone server. After integration, only port 3001 is used.
+- **Port 3000** — was Dalia's old standalone server. After integration, only port 3003 is used.
 - **Browser URL:** http://localhost:5173
 
 ### How API requests flow (CRITICAL)
 
 ```
-Browser (5173) → /api/* (relative) → Vite proxy → localhost:3001 → PostgreSQL
+Browser (5173) → /api/* (relative) → Vite proxy → localhost:3003 → PostgreSQL
 ```
 
 Axios `baseURL` MUST be empty string `''` in dev. Direct cross-origin requests
-(5173 → 3001) are blocked by CORS. Always route through Vite proxy.
+(5173 → 3003) are blocked by CORS. Always route through Vite proxy.
 
 ### Frontend networking invariants (NEVER violate)
 
@@ -91,6 +104,15 @@ Axios `baseURL` MUST be empty string `''` in dev. Direct cross-origin requests
 5. Do NOT modify public/ — Dalia's HTML files
 6. LAN-only system — no external API calls
 7. Optimistic locking — WHERE version = $expected, 409 on mismatch
+
+## Tape export (context menu)
+
+Right-click any tape row → export full tape data (all process steps) in Excel/CSV/JSON.
+- Multi-select: Shift+Click / Ctrl+Click in table + constructor checkboxes (🔧 column) — union is exported
+- 🔧 header click: toggle select all visible (respects column filters) / deselect all
+- Composable: `client-web/src/composables/useExportTapes.js` — fetches full data via `GET /api/tapes/:id` + 7 step endpoints
+- CrudTable emit: `@export({ format, items })` — parent handles data collection
+- CrudTable prop: `export-badge` — external count shown in menu labels
 
 ## Frontend component architecture
 
@@ -230,3 +252,47 @@ echo "Pre-commit check: PASSED"
 4. Confirm public/ untouched
 5. Confirm no secrets (.env, passwords, tokens) in diff
 6. `node -e "require('./app')"` — syntax check passes
+
+## Code audit procedure
+
+When running a code audit (bug search), follow this two-phase process.
+
+### Phase 1 — Discovery (agents)
+
+Launch parallel agents to scan for bug candidates by category (security, data integrity, frontend state, error handling, etc.). Agents are good at broad coverage — they can quickly flag suspicious patterns across many files.
+
+**Agent output = hypotheses, not facts.** Agents match patterns (e.g. "CRUD route without rowCount check") but frequently do not read surrounding code carefully enough to confirm the issue is real.
+
+### Phase 2 — Verification (manual, MANDATORY)
+
+Every candidate from Phase 1 MUST be verified before it goes into a report, a fix, or a commit:
+
+| Check | How |
+|-------|-----|
+| "File X has no Y" | Open file, read the relevant function — does it actually lack Y? |
+| "SQL injection in Z" | Grep for string interpolation in the actual query — are values parameterized? |
+| "Missing validation" | Read the handler — is validation present but in a different form? |
+| "Hardcoded value" | Grep for the literal — does it actually exist in the file? |
+
+**Rules:**
+1. **No unverified bugs in reports or commits.** If you can't confirm it by reading the code, drop it.
+2. **Read the actual code, not a summary.** Agent descriptions of what a file "probably does" are unreliable.
+3. **Check for false patterns.** A file named `users.js` does not necessarily handle passwords. A CRUD route may already have the check the agent claims is missing.
+4. **Verify fixes too.** After applying a fix, re-read the changed code to confirm it's correct and doesn't break existing logic.
+
+### Common false positive patterns
+
+These were observed in practice (April 2026 audit) and should be watched for:
+
+- **"No password hashing"** — agent assumed a users endpoint handles passwords when it only handles names
+- **"SQL injection"** — agent flagged template literals but all values were parameterized (`$1, $2`)
+- **"Missing 404 check"** — agent didn't read far enough to see the existing `rowCount === 0` check
+- **"Hardcoded URL/port"** — agent assumed a common anti-pattern without grepping the actual files
+- **"No input validation"** — agent missed validation done in a different style (e.g. `Number.isInteger()` instead of `if (!field)`)
+
+### Audit output format
+
+After verification, split findings into:
+- **Confirmed bugs in our code** → fix directly in the current branch
+- **Confirmed bugs in Dalia's code** → document in a report file, but only after verification
+- **Unconfirmed / stylistic** → drop silently

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "concurrently \"nodemon server.js\" \"npm run dev --prefix client-web\"",
+    "dev:bypass": "concurrently \"AUTH_BYPASS=true BYPASS_LOGIN=dsmenyaylov nodemon server.js\" \"npm run dev --prefix client-web\"",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

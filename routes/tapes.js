@@ -164,8 +164,13 @@ async function fetchWorkflowStatusMap(tapeIds) {
 }
 
 router.get('/test', async (req, res) => {
-  const result = await pool.query('SELECT 1 as ok');
-  res.json(result.rows);
+  try {
+    const result = await pool.query('SELECT 1 as ok');
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database connection failed' });
+  }
 });
 
 
@@ -294,16 +299,18 @@ router.post('/', async (req, res) => {
     target_mass_g
   } = req.body;
 
-  const projectId = Number(project_id);
-  const recipeId  = Number(tape_recipe_id);
+  const projectId = project_id ? Number(project_id) : null;
+  const recipeId  = tape_recipe_id ? Number(tape_recipe_id) : null;
   const createdBy = Number(created_by);
 
-  if (
-    !Number.isInteger(projectId) ||
-    !Number.isInteger(recipeId) ||
-    !Number.isInteger(createdBy)
-  ) {
-    return res.status(400).json({ error: 'Некорректные данные' });
+  if (!Number.isInteger(createdBy)) {
+    return res.status(400).json({ error: 'Некорректные данные: created_by обязателен' });
+  }
+  if (project_id && !Number.isInteger(projectId)) {
+    return res.status(400).json({ error: 'Некорректный project_id' });
+  }
+  if (tape_recipe_id && !Number.isInteger(recipeId)) {
+    return res.status(400).json({ error: 'Некорректный tape_recipe_id' });
   }
 
   try {
@@ -326,9 +333,9 @@ router.post('/', async (req, res) => {
         projectId,
         recipeId,
         createdBy,
-        notes || null,
-        calc_mode || null,
-        target_mass_g || null
+        notes ?? null,
+        calc_mode ?? null,
+        target_mass_g ?? null
       ]
     );
 
@@ -344,52 +351,42 @@ router.post('/', async (req, res) => {
 router.get('/', async (req, res) => {
   const { role } = req.query;
 
+  const baseQuery = `
+    SELECT
+      t.tape_id,
+      t.name,
+      t.project_id,
+      t.tape_recipe_id,
+      t.created_by,
+      t.created_at,
+      t.status,
+      t.notes,
+      t.calc_mode,
+      t.target_mass_g,
+      r.role,
+      r.name AS recipe_name,
+      p.name AS project_name,
+      (
+        SELECT string_agg(DISTINCT u.name, ', ' ORDER BY u.name)
+        FROM tape_process_steps ts
+        JOIN users u ON u.user_id = ts.performed_by
+        WHERE ts.tape_id = t.tape_id
+      ) AS operators,
+      (
+        SELECT COUNT(DISTINCT ot2.code)
+        FROM tape_process_steps ts2
+        JOIN operation_types ot2 ON ot2.operation_type_id = ts2.operation_type_id
+        WHERE ts2.tape_id = t.tape_id
+      ) AS completed_steps
+    FROM tapes t
+    LEFT JOIN tape_recipes r ON r.tape_recipe_id = t.tape_recipe_id
+    LEFT JOIN projects p ON p.project_id = t.project_id
+  `;
+
   try {
     const result = role
-      ? await pool.query(
-          `
-          SELECT
-            t.tape_id,
-            t.name,
-            t.project_id,
-            t.tape_recipe_id,
-            t.created_by,
-            t.created_at,
-            t.status,
-            t.notes,
-            t.calc_mode,
-            t.target_mass_g,
-            r.role,
-            r.name AS recipe_name
-          FROM tapes t
-          JOIN tape_recipes r
-            ON r.tape_recipe_id = t.tape_recipe_id
-          WHERE r.role = $1
-          ORDER BY t.created_at DESC
-          `,
-          [role]
-        )
-      : await pool.query(
-          `
-          SELECT
-            t.tape_id,
-            t.name,
-            t.project_id,
-            t.tape_recipe_id,
-            t.created_by,
-            t.created_at,
-            t.status,
-            t.notes,
-            t.calc_mode,
-            t.target_mass_g,
-            r.role,
-            r.name AS recipe_name
-          FROM tapes t
-          JOIN tape_recipes r
-            ON r.tape_recipe_id = t.tape_recipe_id
-          ORDER BY t.created_at DESC
-          `
-        );
+      ? await pool.query(baseQuery + ' WHERE r.role = $1 ORDER BY t.created_at DESC', [role])
+      : await pool.query(baseQuery + ' ORDER BY t.created_at DESC');
 
     const rows = result.rows || [];
     const statusMap = await fetchWorkflowStatusMap(rows.map((row) => row.tape_id));
@@ -427,16 +424,12 @@ router.put('/:id', async (req, res) => {
     target_mass_g
   } = req.body;
 
-  const projectId = Number(project_id);
-  const recipeId  = Number(tape_recipe_id);
+  const projectId = project_id ? Number(project_id) : null;
+  const recipeId  = tape_recipe_id ? Number(tape_recipe_id) : null;
   const createdBy = Number(created_by);
 
-  if (
-    !Number.isInteger(projectId) ||
-    !Number.isInteger(recipeId) ||
-    !Number.isInteger(createdBy)
-  ) {
-    return res.status(400).json({ error: 'Некорректные данные' });
+  if (!Number.isInteger(createdBy)) {
+    return res.status(400).json({ error: 'Некорректные данные: created_by обязателен' });
   }
 
   try {
@@ -459,13 +452,16 @@ router.put('/:id', async (req, res) => {
         projectId,
         recipeId,
         createdBy,
-        notes || null,
-        calc_mode || null,
-        target_mass_g || null,
+        notes ?? null,
+        calc_mode ?? null,
+        target_mass_g ?? null,
         id
       ]
     );
 
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Лента не найдена' });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -1169,5 +1165,48 @@ router.get('/:id/electrode-cut-batches', async (req, res) => {
 });
 
 
+
+// READ ONE — must be after /for-electrodes to avoid /:id catching "for-electrodes"
+router.get('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный ID' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        t.tape_id,
+        t.name,
+        t.project_id,
+        t.tape_recipe_id,
+        t.created_by,
+        t.created_at,
+        t.status,
+        t.notes,
+        t.calc_mode,
+        t.target_mass_g,
+        r.role,
+        r.name AS recipe_name,
+        p.name AS project_name
+      FROM tapes t
+      LEFT JOIN tape_recipes r ON r.tape_recipe_id = t.tape_recipe_id
+      LEFT JOIN projects p ON p.project_id = t.project_id
+      WHERE t.tape_id = $1
+      `,
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Лента не найдена' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
 
 module.exports = router;

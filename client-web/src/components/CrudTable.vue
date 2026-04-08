@@ -27,6 +27,7 @@
  *   @delete(items)   — user confirmed delete via context menu
  *   @add()           — "Добавить" clicked
  *   @row-click(data) — row clicked (only if rowClickable)
+ *   @export({format, items}) — export selected rows (format: 'excel'|'csv'|'json')
  *
  * Slots:
  *   #col-{field}="{ data }"  — custom cell renderer for a column
@@ -48,9 +49,12 @@ const props = defineProps({
   loading:      { type: Boolean, default: false },
   showAdd:      { type: Boolean, default: false },
   rowClickable: { type: Boolean, default: false },
+  showRename:   { type: Boolean, default: true },
+  exportEnd:    { type: Boolean, default: false },
+  exportBadge:  { type: Number, default: 0 },  // extra selected count shown on export menu items
 })
 
-const emit = defineEmits(['delete', 'add', 'row-click'])
+const emit = defineEmits(['delete', 'add', 'row-click', 'export', 'header-click'])
 
 // ── Toolbar state ──────────────────────────────────────────────────────
 const localTableName = ref(props.tableName)
@@ -93,9 +97,11 @@ function getRowId(data) {
 }
 
 function onRowClick(event, data, index) {
+  // index from PrimeVue is relative to paginatedData; convert to filteredData index
+  const absIndex = tableFirst.value + index
   if (event.shiftKey && lastClickedIdx !== null) {
-    const from = Math.min(lastClickedIdx, index)
-    const to = Math.max(lastClickedIdx, index)
+    const from = Math.min(lastClickedIdx, absIndex)
+    const to = Math.max(lastClickedIdx, absIndex)
     for (let i = from; i <= to; i++) {
       selectedRows.value.add(getRowId(filteredData.value[i]))
     }
@@ -104,9 +110,14 @@ function onRowClick(event, data, index) {
     if (selectedRows.value.has(id)) selectedRows.value.delete(id)
     else selectedRows.value.add(id)
   } else {
-    selectedRows.value = new Set([getRowId(data)])
+    // When rowClickable, regular click emits row-click without persisting selection
+    if (props.rowClickable) {
+      selectedRows.value = new Set()
+    } else {
+      selectedRows.value = new Set([getRowId(data)])
+    }
   }
-  lastClickedIdx = index
+  lastClickedIdx = absIndex
   selectedRows.value = new Set(selectedRows.value) // trigger reactivity
 
   if (props.rowClickable && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
@@ -116,10 +127,11 @@ function onRowClick(event, data, index) {
 
 function onRowContextMenu(event, data, index) {
   event.preventDefault()
+  const absIndex = tableFirst.value + index
   const id = getRowId(data)
   if (!selectedRows.value.has(id)) {
     selectedRows.value = new Set([id])
-    lastClickedIdx = index
+    lastClickedIdx = absIndex
   }
   ctxMenuPos.value = { x: event.clientX, y: event.clientY }
   ctxMenuVisible.value = true
@@ -132,11 +144,20 @@ function deleteSelectedRows() {
   ctxMenuVisible.value = false
 }
 
+// exportBadge = total items that will be exported (calculated by parent, includes overlaps)
+const exportCount = computed(() => props.exportBadge || selectedRows.value.size)
+
+function emitExport(format) {
+  const items = props.data.filter(r => selectedRows.value.has(getRowId(r)))
+  emit('export', { format, items })
+  ctxMenuVisible.value = false
+}
+
 // Expose clearSelection for parent use after successful delete
 function clearSelection() {
   selectedRows.value = new Set()
 }
-defineExpose({ clearSelection })
+// defineExpose moved to end of script (after filteredData is declared)
 
 // ── Column filters (Excel-like, from DS) ──────────────────────────────
 const filterOverlay = ref(null)
@@ -237,19 +258,80 @@ function onPageChange(event) {
   tableFirst.value = event.first
 }
 
-// ── CSV export ────────────────────────────────────────────────────────
+// ── Export (Excel / CSV / JSON) ───────────────────────────────────────
+const exportMenuVisible = ref(false)
+const exportBtnRef = ref(null)
+
+function toggleExportMenu() {
+  exportMenuVisible.value = !exportMenuVisible.value
+}
+
+function downloadBlob(blob, filename) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function getExportData() {
+  return filteredData.value.map((r, i) => {
+    const row = { '№': i + 1 }
+    props.columns.forEach(c => { row[c.header] = r[c.field] ?? '' })
+    return row
+  })
+}
+
 function exportCSV() {
   const headers = ['№', ...props.columns.map(c => c.header)]
   const rows = filteredData.value.map((r, i) =>
-    [i + 1, ...props.columns.map(c => r[c.field] ?? '')].join(';')
+    [i + 1, ...props.columns.map(c => String(r[c.field] ?? '').replace(/;/g, ','))].join(';')
   )
   const csv = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = (localTableName.value || 'table') + '.csv'
-  a.click()
-  URL.revokeObjectURL(a.href)
+  downloadBlob(
+    new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+    (localTableName.value || 'table') + '.csv'
+  )
+  exportMenuVisible.value = false
+}
+
+function exportJSON() {
+  const data = filteredData.value.map(r => {
+    const row = {}
+    props.columns.forEach(c => { row[c.field] = r[c.field] ?? null })
+    return row
+  })
+  const json = JSON.stringify(data, null, 2)
+  downloadBlob(
+    new Blob([json], { type: 'application/json;charset=utf-8' }),
+    (localTableName.value || 'table') + '.json'
+  )
+  exportMenuVisible.value = false
+}
+
+function exportExcel() {
+  // HTML-table format — Excel opens natively without any library
+  const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const headers = ['№', ...props.columns.map(c => c.header)]
+  const headerRow = headers.map(h => `<th>${esc(h)}</th>`).join('')
+  const bodyRows = filteredData.value.map((r, i) => {
+    const cells = [i + 1, ...props.columns.map(c => r[c.field] ?? '')]
+    return '<tr>' + cells.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>'
+  }).join('\n')
+
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:x="urn:schemas-microsoft-com:office:excel"
+xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"/>
+<style>th{background:#e8edf5;font-weight:bold;border:1px solid #ccc;padding:4px 8px}
+td{border:1px solid #ddd;padding:4px 8px}</style></head>
+<body><table>${'<tr>' + headerRow + '</tr>'}\n${bodyRows}</table></body></html>`
+
+  downloadBlob(
+    new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8' }),
+    (localTableName.value || 'table') + '.xls'
+  )
+  exportMenuVisible.value = false
 }
 
 // ── Auto-fit column on double-click resizer ───────────────────────────
@@ -285,25 +367,36 @@ function onDocClick(e) {
     filterOverlay.value.style.display = 'none'
   }
   ctxMenuVisible.value = false
+  // Close export menu on outside click
+  if (exportBtnRef.value && !exportBtnRef.value.contains(e.target)) {
+    exportMenuVisible.value = false
+  }
 }
 
+let _dblClickHandler = null
 onMounted(() => {
   document.addEventListener('click', onDocClick)
   nextTick(() => {
     const table = tableRef.value?.$el
     if (table) {
-      table.addEventListener('dblclick', (e) => {
-        if (e.target.classList.contains('p-datatable-column-resizer') ||
-            e.target.closest('.p-datatable-column-resizer')) {
-          onResizerDblClick(e)
-        }
-      })
+      _dblClickHandler = (e) => {
+        const isResizer = e.target.classList.contains('p-datatable-column-resizer')
+          || e.target.classList.contains('p-column-resizer')
+          || e.target.closest('.p-datatable-column-resizer')
+          || e.target.closest('.p-column-resizer')
+        if (isResizer) onResizerDblClick(e)
+      }
+      table.addEventListener('dblclick', _dblClickHandler)
     }
   })
 })
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick)
+  const table = tableRef.value?.$el
+  if (table && _dblClickHandler) table.removeEventListener('dblclick', _dblClickHandler)
 })
+
+defineExpose({ clearSelection, selectedRows, filteredData })
 </script>
 
 <template>
@@ -318,10 +411,23 @@ onUnmounted(() => {
       <template v-else>
         <span class="ct-table-name">{{ localTableName }}</span>
       </template>
-      <Button icon="pi pi-pencil" text size="small" severity="secondary"
+      <Button v-if="showRename" icon="pi pi-pencil" text size="small" severity="secondary"
         v-tooltip.bottom="'Переименовать'" @click="startEditTableName" class="ct-toolbar-btn" />
-      <Button icon="pi pi-download" text size="small" severity="secondary"
-        v-tooltip.bottom="'Скачать CSV'" @click="exportCSV" class="ct-toolbar-btn" />
+      <div v-if="!exportEnd" class="ct-export-wrap" ref="exportBtnRef">
+        <Button icon="pi pi-download" text size="small" severity="secondary"
+          v-tooltip.bottom="'Выгрузить'" @click.stop="toggleExportMenu" class="ct-toolbar-btn" />
+        <div v-if="exportMenuVisible" class="ct-export-menu" @click.stop>
+          <button class="ct-export-item" @click="exportExcel">
+            <i class="pi pi-file-excel"></i> Excel (.xls)
+          </button>
+          <button class="ct-export-item" @click="exportCSV">
+            <i class="pi pi-file"></i> CSV
+          </button>
+          <button class="ct-export-item" @click="exportJSON">
+            <i class="pi pi-code"></i> JSON
+          </button>
+        </div>
+      </div>
       <span class="ct-sep"></span>
       <span class="ct-meta">Строк в окне (5–100)</span>
       <input type="number" v-model.number="visibleRows" min="5" max="100" step="5"
@@ -331,6 +437,21 @@ onUnmounted(() => {
       <span class="ct-sep"></span>
       <span class="ct-meta">{{ filteredData.length }} строк × {{ columnCount }} столбцов</span>
       <slot name="toolbar-end"></slot>
+      <div v-if="exportEnd" class="ct-export-wrap" ref="exportBtnRef">
+        <Button icon="pi pi-download" text size="small" severity="secondary"
+          v-tooltip.bottom="'Выгрузить'" @click.stop="toggleExportMenu" class="ct-toolbar-btn" />
+        <div v-if="exportMenuVisible" class="ct-export-menu" @click.stop>
+          <button class="ct-export-item" @click="exportExcel">
+            <i class="pi pi-file-excel"></i> Excel (.xls)
+          </button>
+          <button class="ct-export-item" @click="exportCSV">
+            <i class="pi pi-file"></i> CSV
+          </button>
+          <button class="ct-export-item" @click="exportJSON">
+            <i class="pi pi-code"></i> JSON
+          </button>
+        </div>
+      </div>
       <span v-if="showAdd" class="ct-spacer"></span>
       <Button v-if="showAdd" label="Добавить" icon="pi pi-plus" size="small" @click="emit('add')" />
     </div>
@@ -346,7 +467,7 @@ onUnmounted(() => {
       scrollable
       :scrollHeight="tableScrollHeight"
       resizableColumns
-      columnResizeMode="fit"
+      columnResizeMode="expand"
       reorderableColumns
       :rowClass="(data) => selectedRows.has(getRowId(data)) ? 'ct-row-selected' : ''"
       @rowClick="({ originalEvent, data, index }) => onRowClick(originalEvent, data, index)"
@@ -375,7 +496,7 @@ onUnmounted(() => {
             class="ct-col-filter-header"
             :class="{ 'ct-col-filter-active': hasActiveFilter(col.field) }"
             @click.stop="onHeaderFilter($event, col.field)">{{ col.header }}</span>
-          <span v-else>{{ col.header }}</span>
+          <span v-else @click.stop="emit('header-click', col.field)" style="cursor:pointer">{{ col.header }}</span>
         </template>
         <template #body="slotProps">
           <!-- Use named slot if page provides one, otherwise render field value -->
@@ -395,7 +516,12 @@ onUnmounted(() => {
       :template="'FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink'"
     />
 
-    <!-- Excel-like column filter overlay (pixel-exact from DS) -->
+  </div>
+
+  <!-- Teleport overlays to body — they must escape overflow:clip of .ct-table-card -->
+
+  <!-- Excel-like column filter overlay (pixel-exact from DS) -->
+  <Teleport to="body">
     <div ref="filterOverlay" class="ct-filter-overlay" style="display: none" @click.stop>
       <div class="ct-filter-title">{{ filterFieldLabel }}</div>
       <div class="ct-filter-search">
@@ -418,16 +544,31 @@ onUnmounted(() => {
         <Button label="Сбросить" size="small" severity="secondary" text @click="resetFilter" />
       </div>
     </div>
+  </Teleport>
 
-    <!-- Context menu (glass-card, only "Удалить") -->
+  <!-- Context menu (glass-card, only "Удалить") -->
+  <Teleport to="body">
     <div v-if="ctxMenuVisible" class="ct-ctx-menu"
       :style="{ left: ctxMenuPos.x + 'px', top: ctxMenuPos.y + 'px' }" @click.stop>
+      <button class="ct-ctx-menu-item" @click="emitExport('excel')">
+        <i class="pi pi-file-excel"></i>
+        Экспорт Excel{{ exportCount > 1 ? ` (${exportCount})` : '' }}
+      </button>
+      <button class="ct-ctx-menu-item" @click="emitExport('csv')">
+        <i class="pi pi-file"></i>
+        Экспорт CSV{{ exportCount > 1 ? ` (${exportCount})` : '' }}
+      </button>
+      <button class="ct-ctx-menu-item" @click="emitExport('json')">
+        <i class="pi pi-code"></i>
+        Экспорт JSON{{ exportCount > 1 ? ` (${exportCount})` : '' }}
+      </button>
+      <div class="ct-ctx-menu-separator"></div>
       <button class="ct-ctx-menu-item ct-ctx-menu-danger" @click="deleteSelectedRows">
         <i class="pi pi-trash"></i>
         Удалить{{ selectedRows.size > 1 ? ` (${selectedRows.size})` : '' }}
       </button>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -517,6 +658,49 @@ onUnmounted(() => {
 }
 .ct-spacer {
   flex: 1;
+}
+
+/* ── Export dropdown ── */
+.ct-export-wrap {
+  position: relative;
+}
+.ct-export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  background: rgba(248, 252, 255, 0.97);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(180, 210, 255, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 50, 116, 0.12);
+  padding: 0.3rem;
+  min-width: 140px;
+}
+.ct-export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #003274;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+  text-align: left;
+  white-space: nowrap;
+}
+.ct-export-item:hover {
+  background: rgba(0, 50, 116, 0.06);
+}
+.ct-export-item i {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  color: rgba(0, 50, 116, 0.5);
 }
 
 /* ── DataTable — transparent base ── */
@@ -649,6 +833,10 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
+</style>
+
+<!-- Unscoped styles for Teleport-ed overlays (rendered outside component DOM) -->
+<style>
 /* ── Column filter overlay (Excel-like) ── */
 .ct-filter-overlay {
   position: fixed;
@@ -737,13 +925,18 @@ onUnmounted(() => {
 .ct-ctx-menu-item:hover {
   background: rgba(0, 50, 116, 0.06);
 }
+.ct-ctx-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: rgba(0, 50, 116, 0.1);
+}
 .ct-ctx-menu-item i {
   font-size: 13px;
   width: 16px;
   text-align: center;
 }
 .ct-ctx-menu-danger {
-  color: #E74C3C;
+  color: #b00020;
 }
 .ct-ctx-menu-danger:hover {
   background: rgba(231, 76, 60, 0.08);

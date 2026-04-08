@@ -110,7 +110,7 @@ function formatDate(dt) {
   transition: left 0.3s, width 0.3s;
 }
 
-.gantt-bar.done { background: #2ECC94; }
+.gantt-bar.done { background: #52C9A6; }
 .gantt-bar.active { background: #F39C12; }
 .gantt-bar.pending { background: var(--p-surface-200); }
 
@@ -125,7 +125,7 @@ function formatDate(dt) {
 }
 
 .gantt-icon { font-size: 0.85rem; }
-.gantt-icon.pi-check-circle { color: #2ECC94; }
+.gantt-icon.pi-check-circle { color: #52C9A6; }
 .gantt-icon.pi-bolt { color: #F39C12; }
 .gantt-icon.pi-circle { color: var(--p-surface-300); }
 

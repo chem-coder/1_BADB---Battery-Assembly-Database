@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import api from '@/services/api'
 import { useStatus } from '@/composables/useStatus'
+import PageHeader from '@/components/PageHeader.vue'
 
 const { statusMsg, statusError, showStatus } = useStatus()
 
@@ -54,8 +55,12 @@ const allInstances = ref([]) // for component dropdown
 
 // --- API ---
 async function loadMaterials() {
-  const { data } = await api.get('/api/materials')
-  materials.value = data.sort((a, b) => a.name.localeCompare(b.name))
+  try {
+    const { data } = await api.get('/api/materials')
+    materials.value = data.sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    showStatus('Не удалось загрузить материалы', true)
+  }
 }
 
 async function loadInstances(materialId) {
@@ -342,47 +347,52 @@ onMounted(loadMaterials)
 </script>
 
 <template>
-  <div>
+  <div class="materials-page">
+    <PageHeader title="Материалы" icon="pi pi-warehouse" />
+
     <!-- Create material -->
-    <div class="material-create-form">
+    <div class="create-bar">
       <input
         v-model="newName"
-        class="add-input"
+        class="ds-input create-name"
         placeholder="Название материала"
         autocomplete="off"
         @keydown.enter="createMaterial"
       />
-      <select v-model="newRole" style="margin: 0.25rem 0">
-        <option value="">— выбрать роль —</option>
-        <option value="cathode_active">катодный активный материал</option>
-        <option value="anode_active">анодный активный материал</option>
-        <option value="binder">связующее</option>
-        <option value="conductive_additive">проводящая добавка</option>
-        <option value="solvent">растворитель</option>
-        <option value="other">другое</option>
+      <select v-model="newRole" class="ds-select create-role">
+        <option value="">— роль —</option>
+        <option value="cathode_active">Катодный АМ</option>
+        <option value="anode_active">Анодный АМ</option>
+        <option value="binder">Связующее</option>
+        <option value="conductive_additive">Добавка</option>
+        <option value="solvent">Растворитель</option>
+        <option value="other">Другое</option>
       </select>
-      <button type="button" @click="createMaterial">Добавить</button>
+      <button type="button" class="ds-btn ds-btn--primary" @click="createMaterial">
+        <i class="pi pi-plus"></i> Добавить
+      </button>
     </div>
 
     <div
       v-if="statusMsg"
       class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : 'darkcyan' }"
+      :style="{ color: statusError ? '#b00020' : '#1a8a64' }"
     >
       {{ statusMsg }}
     </div>
 
     <!-- Toolbar -->
     <div class="materials-toolbar">
-      <button type="button" @click="toggleMaterials">
-        Развернуть/свернуть экземпляры
+      <button type="button" class="ds-btn ds-btn--secondary" @click="toggleMaterials">
+        <i class="pi pi-list"></i> Экземпляры
       </button>
       <button
         type="button"
+        class="ds-btn ds-btn--secondary"
         :disabled="!allMaterialsExpanded"
         @click="toggleCompositions"
       >
-        Развернуть/свернуть составы
+        <i class="pi pi-sitemap"></i> Составы
       </button>
     </div>
 
@@ -416,8 +426,8 @@ onMounted(loadMaterials)
             <span class="row-title" style="display: inline-block; width: 10vw">{{ m.name }}</span>
             <span class="row-meta" style="display: inline-block; width: 25vw">{{ roleMap[m.role] || m.role }}</span>
             <div class="actions" @click.stop>
-              <button title="Редактировать" @click="startEdit('material', m)">✏️</button>
-              <button title="Удалить" @click="deleteMaterial(m)">🗑</button>
+              <button class="btn-icon" title="Редактировать" @click="startEdit('material', m)"><i class="pi pi-pencil"></i></button>
+              <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteMaterial(m)"><i class="pi pi-trash"></i></button>
             </div>
           </template>
         </div>
@@ -455,8 +465,8 @@ onMounted(loadMaterials)
                 <template v-else>
                   <span class="row-title" style="display: inline-block; width: 35vw">{{ inst.name }}</span>
                   <div class="actions" @click.stop>
-                    <button title="Редактировать" @click="startEdit('instance', inst)">✏️</button>
-                    <button title="Удалить" @click="deleteInstance(inst)">🗑</button>
+                    <button class="btn-icon" title="Редактировать" @click="startEdit('instance', inst)"><i class="pi pi-pencil"></i></button>
+                    <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteInstance(inst)"><i class="pi pi-trash"></i></button>
                   </div>
                 </template>
               </div>
@@ -497,8 +507,8 @@ onMounted(loadMaterials)
                         <span class="row-title" style="display: inline-block; width: 10vw">{{ comp.component_name }}</span>
                         <span class="row-meta" style="display: inline-block; width: 10vw">{{ (comp.mass_fraction * 100).toFixed(2) }} %</span>
                         <div class="actions" @click.stop>
-                          <button title="Редактировать" @click="startEdit('component', comp)">✏️</button>
-                          <button title="Удалить" @click="deleteComponent(comp, inst.material_instance_id)">🗑</button>
+                          <button class="btn-icon" title="Редактировать" @click="startEdit('component', comp)"><i class="pi pi-pencil"></i></button>
+                          <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteComponent(comp, inst.material_instance_id)"><i class="pi pi-trash"></i></button>
                         </div>
                       </template>
                     </div>
@@ -542,7 +552,7 @@ onMounted(loadMaterials)
                     @click="startCreateComponent(inst.material_instance_id)"
                   >+ Состав</button>
                 </template>
-                <div v-else style="margin-left: 3rem; color: #999">Загрузка...</div>
+                <div v-else style="margin-left: 3rem; color: #6B7280">Загрузка...</div>
               </div>
             </div>
 
@@ -573,7 +583,7 @@ onMounted(loadMaterials)
               @click="startCreateInstance(m.material_id)"
             >+ Экземпляр</button>
           </template>
-          <div v-else style="margin-left: 1.5rem; color: #999">Загрузка...</div>
+          <div v-else style="margin-left: 1.5rem; color: #6B7280">Загрузка...</div>
         </div>
       </li>
     </ul>
@@ -581,6 +591,18 @@ onMounted(loadMaterials)
 </template>
 
 <style scoped>
+.materials-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.materials-page :deep(.page-header) {
+  margin-bottom: 3px !important;
+}
+
 .material-create-form {
   margin-bottom: 1rem;
 }
@@ -613,34 +635,68 @@ onMounted(loadMaterials)
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.3rem 0.25rem;
+  padding: 0.45rem 0.5rem;
   cursor: pointer;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
+  border-radius: 4px;
+  transition: background 0.12s;
 }
+.tree-summary:hover { background: rgba(0, 50, 116, 0.03); }
 
-.tree-summary:hover {
-  background-color: #f6f7f8;
-}
+.row-title { color: #003274; font-weight: 600; font-size: 13px; }
+.row-meta { color: #6B7280; font-size: 13px; }
 
 .tree-arrow {
   display: inline-block;
-  margin-right: 0.5rem;
-  color: #666;
+  margin-right: 0.4rem;
+  color: #6B7280;
   transition: transform 0.15s ease;
   user-select: none;
+  font-size: 12px;
 }
+.tree-arrow.open { transform: rotate(90deg); }
 
-.tree-arrow.open {
-  transform: rotate(90deg);
+.actions { display: flex; gap: 0.15rem; margin-left: auto; }
+
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6B7280;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  transition: background 0.12s, color 0.12s;
 }
+.btn-icon:hover { background: rgba(0, 50, 116, 0.06); color: #003274; }
+.btn-icon--danger:hover { color: #b00020; }
 
-.inline-create {
-  padding: 0.5rem 0;
+.inline-create { padding: 0.5rem 0; }
+.inline-create input,
+.inline-create select,
+.inline-create textarea {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.inline-create input:focus,
+.inline-create select:focus,
+.inline-create textarea:focus {
+  border-color: #003274;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
 }
 
 .add-child-btn {
   margin: 0.25rem 0;
-  font-size: 0.9rem;
+  font-size: 12px;
   cursor: pointer;
+  background: none;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  padding: 0.3rem 0.6rem;
+  color: #003274;
 }
+.add-child-btn:hover { background: rgba(0, 50, 116, 0.04); }
 </style>

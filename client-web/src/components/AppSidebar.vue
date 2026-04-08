@@ -209,7 +209,7 @@ function logout() {
 /* ── Nav scroll ────────────────────────────────────────────────────────── */
 .sidebar-nav {
   flex: 1;
-  overflow-y: auto;
+  overflow-y: scroll;            /* always show — disables macOS overlay mode */
   padding: 0.5rem 6px 0.25rem 0;
 }
 /* Sidebar scrollbar — white, offset from edge */

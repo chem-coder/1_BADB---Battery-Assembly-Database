@@ -1,24 +1,108 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+/**
+ * SeparatorsPage — "Сепараторы" (справочник)
+ * Uses CrudTable + SaveIndicator (from Design System).
+ * Inline create/edit form in Dialog — CrudTable handles the list.
+ */
+import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import { useStatus } from '@/composables/useStatus'
+import PageHeader from '@/components/PageHeader.vue'
+import SaveIndicator from '@/components/SaveIndicator.vue'
+import CrudTable from '@/components/CrudTable.vue'
+import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
+import InputText from 'primevue/inputtext'
+import Textarea from 'primevue/textarea'
 
-const { statusMsg, statusError, showStatus } = useStatus()
+const toast = useToast()
+const crudTable = ref(null)
 
+// ── Data ───────────────────────────────────────────────────────────────
 const separators = ref([])
 const activeUsers = ref([])
 const structures = ref([])
-const newName = ref('')
+const loading = ref(false)
 
-// Form state
+async function loadSeparators() {
+  loading.value = true
+  try {
+    const { data } = await api.get('/api/separators')
+    separators.value = data
+  } catch {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить сепараторы', life: 3000 })
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadUsers() {
+  try {
+    const { data } = await api.get('/api/users')
+    activeUsers.value = data.filter(u => u.active)
+  } catch {}
+}
+
+async function loadStructures() {
+  try {
+    const { data } = await api.get('/api/structures')
+    structures.value = data
+  } catch {}
+}
+
+onMounted(() => { loadSeparators(); loadUsers(); loadStructures() })
+
+// ── Column config ──────────────────────────────────────────────────────
+const columns = [
+  { field: 'name',         header: 'Название',     minWidth: '120px' },
+  { field: 'supplier',     header: 'Поставщик',    minWidth: '90px',  width: '130px' },
+  { field: 'brand',        header: 'Марка',         minWidth: '70px',  width: '110px' },
+  { field: 'thickness_um', header: 'Толщина, мкм',  minWidth: '80px',  width: '120px' },
+  { field: 'porosity',     header: 'Пористость, %', minWidth: '80px',  width: '120px' },
+  { field: 'status',       header: 'Статус',        minWidth: '80px',  width: '115px' },
+]
+
+// ── Save indicator (delete flow) ──────────────────────────────────────
+const pendingDelete = ref([])
+const saveState = ref('idle')
+let saveTimer = null
+
+function onDelete(items) {
+  pendingDelete.value = items
+  saveState.value = 'idle'
+}
+
+async function confirmSave() {
+  try {
+    for (const item of pendingDelete.value) {
+      await api.delete(`/api/separators/${item.sep_id}`)
+    }
+    pendingDelete.value = []
+    saveState.value = 'saved'
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
+    crudTable.value?.clearSelection()
+    await loadSeparators()
+  } catch {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
+  }
+}
+
+function discardChanges() {
+  pendingDelete.value = []
+  saveState.value = 'idle'
+  crudTable.value?.clearSelection()
+}
+
+onUnmounted(() => clearTimeout(saveTimer))
+
+// ── Form (Dialog) ─────────────────────────────────────────────────────
 const formVisible = ref(false)
 const mode = ref(null)
 const currentId = ref(null)
-const titleText = ref('')
-const titleEditing = ref(false)
-const titleInput = ref('')
 
 const form = ref({
+  name: '',
   created_by: '',
   supplier: '',
   brand: '',
@@ -28,7 +112,6 @@ const form = ref({
   air_perm_units: '',
   thickness_um: '',
   porosity: '',
-  file_path: '',
   comments: '',
   status: 'available',
   depleted_at: '',
@@ -36,96 +119,26 @@ const form = ref({
 
 function resetForm() {
   form.value = {
-    created_by: '', supplier: '', brand: '', batch: '', structure_id: '',
+    name: '', created_by: '', supplier: '', brand: '', batch: '', structure_id: '',
     air_perm: '', air_perm_units: '', thickness_um: '', porosity: '',
-    file_path: '', comments: '', status: 'available', depleted_at: '',
+    comments: '', status: 'available', depleted_at: '',
   }
-  titleText.value = ''
-  titleEditing.value = false
-  titleInput.value = ''
   mode.value = null
   currentId.value = null
   formVisible.value = false
 }
 
-// API
-async function loadSeparators() {
-  const { data } = await api.get('/api/separators')
-  separators.value = data
-}
-
-async function loadUsers() {
-  const { data } = await api.get('/api/users')
-  activeUsers.value = data.filter(u => u.active)
-}
-
-async function loadStructures() {
-  const { data } = await api.get('/api/structures')
-  structures.value = data
-}
-
-function validate() {
-  const missing = []
-  if (!form.value.created_by) missing.push('Кто добавил')
-  if (!form.value.structure_id) missing.push('Тип структуры')
-  if (missing.length) {
-    showStatus('Заполните обязательные поля: ' + missing.join(', '), true)
-    return false
-  }
-  return true
-}
-
-async function saveSeparator() {
-  if (!mode.value) return
-  if (!validate()) return
-
-  const payload = { ...form.value, name: titleText.value }
-
-  try {
-    if (mode.value === 'create') {
-      await api.post('/api/separators', payload)
-      showStatus('Сепаратор сохранён')
-    } else {
-      await api.put(`/api/separators/${currentId.value}`, payload)
-      showStatus('Изменения сохранены')
-    }
-    resetForm()
-    loadSeparators()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка сохранения', true)
-  }
-}
-
-async function deleteSeparator(sep) {
-  if (!confirm(`Удалить сепаратор "${sep.name}"?`)) return
-  try {
-    await api.delete(`/api/separators/${sep.sep_id}`)
-    showStatus('Сепаратор удалён')
-    loadSeparators()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка удаления', true)
-  }
-}
-
-// Actions
-function onAddEnter() {
-  if (formVisible.value) return
-  const name = newName.value.trim()
-  if (!name) return
-
+function openCreate() {
+  resetForm()
   mode.value = 'create'
-  currentId.value = null
-  titleText.value = name
   formVisible.value = true
-  newName.value = ''
 }
 
-function startEdit(sep) {
+function openEdit(sep) {
   mode.value = 'edit'
   currentId.value = sep.sep_id
-  titleText.value = sep.name
-
   form.value = {
+    name: sep.name || '',
     created_by: sep.created_by || '',
     supplier: sep.supplier || '',
     brand: sep.brand || '',
@@ -135,53 +148,11 @@ function startEdit(sep) {
     air_perm_units: sep.air_perm_units || '',
     thickness_um: sep.thickness_um ?? '',
     porosity: sep.porosity ?? '',
-    file_path: sep.file_path || '',
     comments: sep.comments || '',
     status: sep.status || 'available',
     depleted_at: sep.depleted_at ? sep.depleted_at.slice(0, 10) : '',
   }
-
   formVisible.value = true
-  loadUsers()
-  loadStructures()
-}
-
-function duplicateSeparator(sep) {
-  mode.value = 'create'
-  currentId.value = null
-  titleText.value = sep.name + ' (копия)'
-
-  form.value = {
-    created_by: '',
-    supplier: sep.supplier || '',
-    brand: sep.brand || '',
-    batch: sep.batch || '',
-    structure_id: sep.structure_id || '',
-    air_perm: sep.air_perm ?? '',
-    air_perm_units: sep.air_perm_units || '',
-    thickness_um: sep.thickness_um ?? '',
-    porosity: sep.porosity ?? '',
-    file_path: '',
-    comments: sep.comments || '',
-    status: sep.status || 'available',
-    depleted_at: '',
-  }
-
-  formVisible.value = true
-  loadUsers()
-  loadStructures()
-}
-
-// Editable title
-function startTitleEdit() {
-  titleInput.value = titleText.value
-  titleEditing.value = true
-}
-
-function finishTitleEdit() {
-  const val = titleInput.value.trim()
-  if (val) titleText.value = val
-  titleEditing.value = false
 }
 
 // Hide depleted_at when status is 'available'
@@ -189,139 +160,219 @@ watch(() => form.value.status, (val) => {
   if (val === 'available') form.value.depleted_at = ''
 })
 
-function statusLabel(status) {
-  const map = { available: 'в наличии', used: 'израсходован', scrap: 'списан' }
-  return map[status] || status
+async function saveSeparator() {
+  if (!mode.value) return
+  if (!form.value.name?.trim()) {
+    toast.add({ severity: 'warn', summary: 'Заполните название', life: 3000 })
+    return
+  }
+
+  const payload = { ...form.value }
+
+  try {
+    if (mode.value === 'create') {
+      await api.post('/api/separators', payload)
+      toast.add({ severity: 'success', summary: 'Сепаратор создан', life: 3000 })
+    } else {
+      await api.put(`/api/separators/${currentId.value}`, payload)
+      toast.add({ severity: 'success', summary: 'Изменения сохранены', life: 3000 })
+    }
+    resetForm()
+    await loadSeparators()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка сохранения', life: 3000 })
+  }
 }
 
-onMounted(() => { loadSeparators(); loadUsers(); loadStructures() })
+// ── Helpers ────────────────────────────────────────────────────────────
+function statusLabel(status) {
+  const map = { available: 'в наличии', used: 'израсходован', scrap: 'списан' }
+  return map[status] || status || '—'
+}
 </script>
 
 <template>
-  <div>
-    <input
-      v-model="newName"
-      class="add-input"
-      :disabled="formVisible"
-      placeholder="+ Добавить сепаратор"
-      autocomplete="off"
-      @keydown.enter="onAddEnter"
-    />
+  <div class="separators-page">
 
-    <!-- Form -->
-    <form v-if="formVisible" autocomplete="on" @submit.prevent="saveSeparator">
-      <fieldset>
-        <legend>Метаданные</legend>
+    <PageHeader title="Сепараторы" icon="pi pi-minus">
+      <template #actions>
+        <SaveIndicator
+          :visible="pendingDelete.length > 0 || saveState === 'saved'"
+          :saved="saveState === 'saved'"
+          @save="confirmSave"
+          @cancel="discardChanges"
+        />
+      </template>
+    </PageHeader>
+
+    <CrudTable
+      ref="crudTable"
+      :columns="columns"
+      :data="separators"
+      :loading="loading"
+      id-field="sep_id"
+      table-name="Сепараторы"
+      show-add
+      row-clickable
+      @add="openCreate"
+      @delete="onDelete"
+      @row-click="(data) => openEdit(data)"
+    >
+      <!-- Custom cell: Название (bold) -->
+      <template #col-name="{ data }">
+        <strong>{{ data.name || '— без названия —' }}</strong>
+      </template>
+
+      <!-- Custom cell: Толщина -->
+      <template #col-thickness_um="{ data }">
+        {{ data.thickness_um != null ? data.thickness_um : '—' }}
+      </template>
+
+      <!-- Custom cell: Пористость -->
+      <template #col-porosity="{ data }">
+        {{ data.porosity != null ? data.porosity : '—' }}
+      </template>
+
+      <!-- Custom cell: Статус -->
+      <template #col-status="{ data }">
+        <span :class="['status-pill', `status-pill--${data.status || 'available'}`]">
+          {{ statusLabel(data.status) }}
+        </span>
+      </template>
+    </CrudTable>
+
+    <!-- ── Create / Edit Dialog ── -->
+    <Dialog
+      v-model:visible="formVisible"
+      :header="mode === 'create' ? 'Новый сепаратор' : 'Редактирование сепаратора'"
+      :style="{ width: '560px' }"
+      modal
+      @hide="resetForm"
+    >
+      <div class="form-grid">
+        <label>Название</label>
+        <InputText v-model="form.name" placeholder="Название сепаратора" class="w-full" />
+
         <label>Кто добавил</label>
-        <select
-          v-model="form.created_by"
-          :class="{ 'required-missing': !form.created_by && mode }"
-          @focus="loadUsers"
-        >
-          <option value="">— выбрать пользователя —</option>
+        <select v-model="form.created_by" class="pv-select">
+          <option value="">— выбрать —</option>
           <option v-for="u in activeUsers" :key="u.user_id" :value="u.user_id">{{ u.name }}</option>
         </select>
-        <RouterLink to="/reference/users" target="_blank" class="ref-link">Управление пользователями</RouterLink>
-      </fieldset>
 
-      <fieldset>
-        <input
-          v-if="titleEditing"
-          v-model="titleInput"
-          @blur="finishTitleEdit"
-          @keydown.enter.prevent="finishTitleEdit"
-        />
-        <h2 v-else style="cursor: pointer" @click="startTitleEdit">{{ titleText }}</h2>
-
-        <label>Производитель / поставщик</label>
-        <input v-model="form.supplier" type="text" placeholder="Celgard" /><br />
+        <label>Поставщик</label>
+        <InputText v-model="form.supplier" placeholder="Celgard" class="w-full" />
 
         <label>Марка</label>
-        <input v-model="form.brand" type="text" placeholder="2320" /><br />
+        <InputText v-model="form.brand" placeholder="2320" class="w-full" />
 
         <label>Партия</label>
-        <input v-model="form.batch" type="text" placeholder="A1" /><br />
-      </fieldset>
+        <InputText v-model="form.batch" placeholder="A1" class="w-full" />
 
-      <fieldset>
-        <legend>Структура</legend>
         <label>Тип структуры</label>
-        <select
-          v-model="form.structure_id"
-          :class="{ 'required-missing': !form.structure_id && mode }"
-          @focus="loadStructures"
-        >
+        <select v-model="form.structure_id" class="pv-select">
           <option value="">— выбрать —</option>
           <option v-for="s in structures" :key="s.sep_str_id" :value="s.sep_str_id">{{ s.name }}</option>
         </select>
-        <RouterLink to="/reference/separator-structures" target="_blank" class="ref-link">Управление структурами</RouterLink>
-      </fieldset>
-
-      <fieldset>
-        <legend>Паспортные характеристики сепаратора</legend>
 
         <label>Воздушная проницаемость</label>
-        <input v-model="form.air_perm" type="number" step="0.1" placeholder="20" /><br />
+        <InputText v-model="form.air_perm" placeholder="20" class="w-full" />
 
-        <label>Единицы измерения воздушной проницаемости</label>
-        <input v-model="form.air_perm_units" type="text" placeholder="s/100 мл или др. единицы" /><br />
+        <label>Ед. измерения</label>
+        <InputText v-model="form.air_perm_units" placeholder="s/100 мл" class="w-full" />
 
         <label>Толщина, мкм</label>
-        <input v-model="form.thickness_um" type="number" step="0.01" min="0" placeholder="например, 20" />
+        <InputText v-model="form.thickness_um" placeholder="20" class="w-full" />
 
         <label>Пористость, %</label>
-        <input v-model="form.porosity" type="number" step="0.1" min="0" max="100" placeholder="например, 40" />
-      </fieldset>
+        <InputText v-model="form.porosity" placeholder="40" class="w-full" />
 
-      <fieldset>
-        <legend>Документация</legend>
-        <label>Файл паспорта</label>
-        <input type="file" /><br />
-
-        <label>Комментарии</label><br />
-        <textarea v-model="form.comments" rows="3" cols="50" placeholder="Единицы измерения, методики (Гурли и т.п.), особые замечания"></textarea>
-      </fieldset>
-
-      <fieldset>
-        <legend>Статус</legend>
         <label>Статус</label>
-        <select v-model="form.status">
+        <select v-model="form.status" class="pv-select">
           <option value="available">в наличии</option>
           <option value="used">израсходован</option>
-          <option value="scrap">забракован / списан</option>
+          <option value="scrap">списан</option>
         </select>
 
-        <div v-if="form.status !== 'available'">
+        <template v-if="form.status !== 'available'">
           <label>Дата списания</label>
-          <input v-model="form.depleted_at" type="date" />
-        </div>
-      </fieldset>
+          <input v-model="form.depleted_at" type="date" class="pv-select" />
+        </template>
 
-      <button type="submit">Сохранить запись</button>
-      <button type="button" @click="resetForm">Очистить форму</button>
-    </form>
+        <label>Комментарии</label>
+        <Textarea v-model="form.comments" rows="3" placeholder="Замечания, методики" class="w-full" />
+      </div>
 
-    <div
-      v-if="statusMsg"
-      class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : 'darkcyan' }"
-    >
-      {{ statusMsg }}
-    </div>
+      <template #footer>
+        <Button label="Отмена" severity="secondary" outlined @click="resetForm" />
+        <Button :label="mode === 'create' ? 'Создать' : 'Сохранить'" @click="saveSeparator" />
+      </template>
+    </Dialog>
 
-    <!-- List -->
-    <ul class="items-list">
-      <li v-for="sep in separators" :key="sep.sep_id" class="item-row">
-        <div class="item-info">
-          <span>{{ sep.name }}</span>
-          <span class="item-status">{{ statusLabel(sep.status) }}</span>
-        </div>
-        <div class="actions">
-          <button title="Редактировать" @click="startEdit(sep)">✏️</button>
-          <button title="Дублировать" @click="duplicateSeparator(sep)">📄</button>
-          <button title="Удалить" @click="deleteSeparator(sep)">🗑</button>
-        </div>
-      </li>
-    </ul>
   </div>
 </template>
+
+<style scoped>
+.separators-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.separators-page :deep(.page-header) {
+  margin-bottom: 3px !important;
+}
+
+/* ── Form styles ── */
+.form-grid {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 10px 16px;
+  align-items: center;
+}
+.form-grid label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #003274;
+}
+.w-full { width: 100%; }
+.pv-select {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+}
+.pv-select:focus {
+  border-color: #003274;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 51, 102, 0.15);
+}
+
+/* ── Page-specific cell styles ── */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.status-pill--available {
+  background: rgba(82, 201, 166, 0.14);
+  color: #1d7a5f;
+  border: 0.5px solid rgba(82, 201, 166, 0.35);
+}
+.status-pill--used {
+  background: rgba(211, 167, 84, 0.12);
+  color: #8a6d2b;
+  border: 0.5px solid rgba(211, 167, 84, 0.3);
+}
+.status-pill--scrap {
+  background: rgba(176, 0, 32, 0.08);
+  color: #b00020;
+  border: 0.5px solid rgba(176, 0, 32, 0.15);
+}
+</style>

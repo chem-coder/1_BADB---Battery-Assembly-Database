@@ -23,8 +23,8 @@ router.post('/login', async (req, res) => {
     const lockoutCheck = await pool.query(
       `SELECT COUNT(*) AS cnt FROM auth_log
        WHERE login = $1 AND event = 'login_failed'
-       AND created_at > now() - interval '${config.rateLimit.lockoutWindowMinutes} minutes'`,
-      [login]
+       AND created_at > now() - make_interval(mins => $2)`,
+      [login, config.rateLimit.lockoutWindowMinutes]
     );
 
     if (parseInt(lockoutCheck.rows[0].cnt, 10) >= config.rateLimit.maxFailedAttempts) {
@@ -43,7 +43,7 @@ router.post('/login', async (req, res) => {
 
     // Find user by login
     const userResult = await pool.query(
-      'SELECT user_id, name, login, password_hash, role, position FROM users WHERE lower(login) = lower($1)',
+      'SELECT user_id, name, login, password_hash, role, position, token_version FROM users WHERE lower(login) = lower($1)',
       [login]
     );
 
@@ -76,9 +76,9 @@ router.post('/login', async (req, res) => {
     );
     const projects = projectsResult.rows.map(r => r.project_id);
 
-    // Create JWT token
+    // Create JWT token (tokenVersion enables revocation on password change)
     const token = jwt.sign(
-      { userId: user.user_id, login: user.login, role: user.role },
+      { userId: user.user_id, login: user.login, role: user.role, tokenVersion: user.token_version },
       config.jwt.secret,
       { expiresIn: config.jwt.expiresIn }
     );
@@ -159,7 +159,11 @@ router.post('/register', auth, requireRole('admin'), async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   try {
     const userResult = await pool.query(
-      'SELECT user_id, name, login, role, position FROM users WHERE user_id = $1',
+      `SELECT u.user_id, u.name, u.login, u.role, u.position, u.department_id,
+              d.name AS department_name, d.head_user_id
+       FROM users u
+       LEFT JOIN departments d ON d.department_id = u.department_id
+       WHERE u.user_id = $1`,
       [req.user.userId]
     );
 
@@ -170,10 +174,15 @@ router.get('/me', auth, async (req, res) => {
     const user = userResult.rows[0];
 
     const projectsResult = await pool.query(
-      'SELECT project_id FROM user_project_access WHERE user_id = $1',
+      `SELECT upa.project_id, upa.access_level
+       FROM user_project_access upa
+       WHERE upa.user_id = $1`,
       [user.user_id]
     );
-    const projects = projectsResult.rows.map(r => r.project_id);
+
+    // Director = user_id 20 (position contains 'Директор')
+    const isDirector = (user.position || '').toLowerCase().includes('директор');
+    const isDepartmentHead = user.head_user_id === user.user_id;
 
     res.json({
       userId: user.user_id,
@@ -181,7 +190,13 @@ router.get('/me', auth, async (req, res) => {
       login: user.login,
       role: user.role,
       position: user.position || null,
-      projects
+      department: user.department_id ? {
+        id: user.department_id,
+        name: user.department_name,
+      } : null,
+      isDepartmentHead,
+      isDirector,
+      projects: projectsResult.rows,
     });
   } catch (err) {
     console.error(err);
@@ -223,8 +238,9 @@ router.put('/change-password', auth, async (req, res) => {
 
     const passwordHash = await bcrypt.hash(new_password, config.bcrypt.rounds);
 
-    await pool.query(
-      'UPDATE users SET password_hash = $1 WHERE user_id = $2',
+    // Bump token_version → invalidates all existing JWTs for this user
+    const updated = await pool.query(
+      'UPDATE users SET password_hash = $1, token_version = token_version + 1 WHERE user_id = $2 RETURNING token_version',
       [passwordHash, user.user_id]
     );
 
@@ -234,7 +250,14 @@ router.put('/change-password', auth, async (req, res) => {
       [user.user_id, req.user.login, ip, userAgent]
     );
 
-    res.json({ message: 'Пароль успешно изменён' });
+    // Issue fresh token so the current session stays alive
+    const newToken = jwt.sign(
+      { userId: user.user_id, login: req.user.login, role: req.user.role, tokenVersion: updated.rows[0].token_version },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn }
+    );
+
+    res.json({ message: 'Пароль успешно изменён', token: newToken });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -257,12 +280,31 @@ router.post('/change-password-public', async (req, res) => {
   const userAgent = req.headers['user-agent'] || '';
 
   try {
+    // Brute-force protection (same as /login)
+    const lockoutCheck = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM auth_log
+       WHERE login = $1 AND event = 'login_failed'
+       AND created_at > now() - make_interval(mins => $2)`,
+      [login, config.rateLimit.lockoutWindowMinutes]
+    );
+    if (parseInt(lockoutCheck.rows[0].cnt, 10) >= config.rateLimit.maxFailedAttempts) {
+      return res.status(429).json({
+        error: 'Too many failed attempts',
+        retryAfter: config.rateLimit.lockoutWindowMinutes * 60
+      });
+    }
+
     const userResult = await pool.query(
       'SELECT user_id, login, password_hash FROM users WHERE lower(login) = lower($1)',
       [login]
     );
 
     if (userResult.rowCount === 0) {
+      await pool.query(
+        `INSERT INTO auth_log (login, event, ip_address, user_agent, details)
+         VALUES ($1, 'login_failed', $2, $3, $4)`,
+        [login, ip, userAgent, JSON.stringify({ reason: 'user_not_found', via: 'change-password-public' })]
+      );
       return res.status(401).json({ error: 'Неверный логин или пароль' });
     }
 
@@ -270,6 +312,11 @@ router.post('/change-password-public', async (req, res) => {
 
     const valid = await bcrypt.compare(current_password, user.password_hash || '');
     if (!valid) {
+      await pool.query(
+        `INSERT INTO auth_log (user_id, login, event, ip_address, user_agent, details)
+         VALUES ($1, $2, 'login_failed', $3, $4, $5)`,
+        [user.user_id, login, ip, userAgent, JSON.stringify({ reason: 'wrong_password', via: 'change-password-public' })]
+      );
       return res.status(401).json({ error: 'Неверный логин или пароль' });
     }
 
@@ -279,8 +326,9 @@ router.post('/change-password-public', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(new_password, config.bcrypt.rounds);
 
-    await pool.query(
-      'UPDATE users SET password_hash = $1 WHERE user_id = $2',
+    // Bump token_version → invalidates all existing JWTs for this user
+    const updated = await pool.query(
+      'UPDATE users SET password_hash = $1, token_version = token_version + 1 WHERE user_id = $2 RETURNING login, role, token_version',
       [passwordHash, user.user_id]
     );
 
@@ -290,7 +338,43 @@ router.post('/change-password-public', async (req, res) => {
       [user.user_id, user.login, ip, userAgent]
     );
 
-    res.json({ message: 'Пароль успешно изменён' });
+    // Issue token so user can proceed without re-login
+    const newToken = jwt.sign(
+      { userId: user.user_id, login: updated.rows[0].login, role: updated.rows[0].role, tokenVersion: updated.rows[0].token_version },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn }
+    );
+
+    res.json({ message: 'Пароль успешно изменён', token: newToken });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/auth/log — login journal (admin/lead only)
+router.get('/log', auth, requireRole('admin', 'lead'), async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const offset = Number(req.query.offset) || 0;
+
+  try {
+    const result = await pool.query(`
+      SELECT al.id, al.user_id, al.login, al.event, al.ip_address,
+             al.user_agent, al.details, al.created_at,
+             u.name AS user_name, d.name AS department_name
+      FROM auth_log al
+      LEFT JOIN users u ON u.user_id = al.user_id
+      LEFT JOIN departments d ON d.department_id = u.department_id
+      ORDER BY al.created_at DESC
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
+
+    const countResult = await pool.query('SELECT COUNT(*) AS total FROM auth_log');
+
+    res.json({
+      rows: result.rows,
+      total: parseInt(countResult.rows[0].total, 10),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

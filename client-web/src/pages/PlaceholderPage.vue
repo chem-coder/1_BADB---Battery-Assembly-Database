@@ -19,7 +19,7 @@
 
 .placeholder-page h2 {
   margin: 1rem 0 0.5rem;
-  color: #003366;
+  color: #003274;
 }
 
 .placeholder-page p {

@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import api from '@/services/api'
 import { useStatus } from '@/composables/useStatus'
+import PageHeader from '@/components/PageHeader.vue'
 
 const { statusMsg, statusError, showStatus } = useStatus()
 
@@ -52,8 +53,12 @@ function resetForm() {
 
 // API
 async function loadRecipes() {
-  const { data } = await api.get('/api/recipes')
-  recipes.value = data
+  try {
+    const { data } = await api.get('/api/recipes')
+    recipes.value = data
+  } catch {
+    console.error('Не удалось загрузить рецептуры')
+  }
 }
 
 async function loadUsers() {
@@ -280,15 +285,20 @@ function roleLabel(role) {
 }
 
 // Invalidate material cache on window refocus
-if (typeof window !== 'undefined') {
-  window.addEventListener('focus', () => { cachedMaterials = null })
-}
-
-onMounted(() => { loadRecipes(); loadUsers() })
+function onWindowFocus() { cachedMaterials = null }
+onMounted(() => {
+  window.addEventListener('focus', onWindowFocus)
+  loadRecipes(); loadUsers()
+})
+onUnmounted(() => {
+  window.removeEventListener('focus', onWindowFocus)
+})
 </script>
 
 <template>
-  <div>
+  <div class="recipes-page">
+    <PageHeader title="Рецептуры" icon="pi pi-file-edit" />
+
     <input
       v-model="newName"
       class="add-input"
@@ -384,7 +394,7 @@ onMounted(() => { loadRecipes(); loadUsers() })
                   <input v-model="line.line_notes" type="text" placeholder="Комментарий" />
                 </td>
                 <td>
-                  <button type="button" @click="removeLine(idx)">🗑</button>
+                  <button type="button" class="btn-icon btn-icon--danger" @click="removeLine(idx)"><i class="pi pi-trash"></i></button>
                 </td>
               </tr>
             </tbody>
@@ -401,7 +411,7 @@ onMounted(() => { loadRecipes(); loadUsers() })
     <div
       v-if="statusMsg"
       class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : 'darkcyan' }"
+      :style="{ color: statusError ? '#b00020' : '#1a8a64' }"
     >
       {{ statusMsg }}
     </div>
@@ -418,9 +428,9 @@ onMounted(() => { loadRecipes(); loadUsers() })
           <span style="display: inline-block; width: 20vw">{{ r.variant_label || '' }}</span>
         </div>
         <div class="actions">
-          <button title="Редактировать" @click="startEdit(r)">✏️</button>
-          <button title="Дублировать" @click="duplicateRecipeUI(r)">📄</button>
-          <button title="Удалить" @click="deleteRecipe(r)">🗑</button>
+          <button class="btn-icon" title="Редактировать" @click="startEdit(r)"><i class="pi pi-pencil"></i></button>
+          <button class="btn-icon" title="Дублировать" @click="duplicateRecipeUI(r)"><i class="pi pi-copy"></i></button>
+          <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteRecipe(r)"><i class="pi pi-trash"></i></button>
         </div>
       </li>
     </ul>
@@ -428,34 +438,179 @@ onMounted(() => { loadRecipes(); loadUsers() })
 </template>
 
 <style scoped>
-.recipe-table {
-  border-collapse: collapse;
-  table-layout: fixed;
-  min-width: 900px;
+.recipes-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
+.recipes-page :deep(.page-header) { margin-bottom: 3px !important; }
 
-.recipe-table th,
-.recipe-table td {
-  padding: 0.25rem 0.4rem;
-  vertical-align: middle;
-  white-space: nowrap;
-  text-align: left;
+/* ── Add input ── */
+.add-input {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  font-size: 13px;
+  max-width: 360px;
 }
+.add-input:focus {
+  border-color: #003274;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
+}
+.add-input:disabled { opacity: 0.5; }
 
-.recipe-table thead th {
-  border-bottom: 1px solid #ccc;
+/* ── Form ── */
+form {
+  background: #fff;
+  border: 1px solid rgba(0, 50, 116, 0.1);
+  border-radius: 10px;
+  padding: 1.25rem;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+fieldset {
+  border: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+legend {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(0, 50, 116, 0.5);
+  margin-bottom: 0.5rem;
+}
+label {
+  font-size: 13px;
   font-weight: 600;
+  color: #4B5563;
+  margin-top: 0.25rem;
 }
+select, input[type="text"], input[type="number"], textarea {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  font-size: 13px;
+  max-width: 360px;
+}
+select:focus, input:focus, textarea:focus {
+  border-color: #003274;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
+}
+textarea { max-width: 500px; }
+h2 { font-size: 18px; font-weight: 700; color: #003274; margin: 0.25rem 0; }
+.required-missing { border-color: #D3A754 !important; }
+.ref-link { font-size: 12px; color: #6B7280; margin-top: 0.25rem; }
 
-.recipe-table input,
-.recipe-table select {
+/* ── Form buttons ── */
+button[type="submit"] {
+  padding: 0.5rem 1.2rem;
+  background: #003274;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 0.5rem;
+}
+button[type="submit"]:hover { background: #002050; }
+button[type="button"] {
+  padding: 0.4rem 0.8rem;
+  background: transparent;
+  color: #003274;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+button[type="button"]:hover { background: rgba(0, 50, 116, 0.04); }
+
+/* ── Recipe lines table ── */
+.recipe-table {
   width: 100%;
-  box-sizing: border-box;
+  border-collapse: collapse;
+  min-width: 800px;
 }
-
+.recipe-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4B5563;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid #D1D7DE;
+}
+.recipe-table td {
+  padding: 0.3rem 0.4rem;
+  vertical-align: middle;
+}
+.recipe-table select,
+.recipe-table input {
+  width: 100%;
+  max-width: none;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid #D1D7DE;
+  border-radius: 6px;
+  font-size: 13px;
+}
 .recipe-table th:nth-child(1),
 .recipe-table td:nth-child(1) { width: 180px; }
-
 .recipe-table th:nth-child(2),
 .recipe-table td:nth-child(2) { width: 260px; }
+
+/* ── Status ── */
+.status-feedback { font-size: 13px; padding: 0.4rem 0; }
+
+/* ── Items list ── */
+.items-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
+  border-radius: 4px;
+  transition: background 0.12s;
+}
+.item-row:hover { background: rgba(0, 50, 116, 0.03); }
+.item-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 13px;
+  color: #003274;
+}
+.actions {
+  display: flex;
+  gap: 0.15rem;
+}
+
+/* ── Icon buttons ── */
+.btn-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6B7280;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  transition: background 0.12s, color 0.12s;
+}
+.btn-icon:hover { background: rgba(0, 50, 116, 0.06); color: #003274; }
+.btn-icon--danger:hover { color: #b00020; }
 </style>

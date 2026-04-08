@@ -94,18 +94,68 @@ function finishEditTableName() {
   isEditingTableName.value = false
   if (!tableName.value.trim()) tableName.value = 'Таблица'
 }
-function exportTableCSV() {
-  const headers = ['№','Название','Тип','Статус','Параметр 1','Параметр 2','Параметр 3','Параметр 4','Параметр 5']
-  const rows = filteredTableData.value.map((r, i) =>
-    [i + 1, r.name, r.type, r.status, r.param1, r.param2, r.param3, r.param4, r.param5].join(';')
-  )
-  const csv = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+// ── Export (Excel / CSV / JSON) ───────────────────────────────────────
+const dsExportMenuVisible = ref(false)
+const dsExportBtnRef = ref(null)
+
+function toggleDsExportMenu() {
+  dsExportMenuVisible.value = !dsExportMenuVisible.value
+}
+
+const dsHeaders = ['№','Название','Тип','Статус','Параметр 1','Параметр 2','Параметр 3','Параметр 4','Параметр 5']
+const dsFields = ['name','type','status','param1','param2','param3','param4','param5']
+
+function dsDlBlob(blob, name) {
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
-  a.download = (tableName.value || 'table') + '.csv'
+  a.download = name
   a.click()
   URL.revokeObjectURL(a.href)
+}
+
+function exportTableCSV() {
+  const rows = filteredTableData.value.map((r, i) =>
+    [i + 1, ...dsFields.map(f => String(r[f] ?? '').replace(/;/g, ','))].join(';')
+  )
+  dsDlBlob(
+    new Blob(['\uFEFF' + dsHeaders.join(';') + '\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' }),
+    (tableName.value || 'table') + '.csv'
+  )
+  dsExportMenuVisible.value = false
+}
+
+function exportTableJSON() {
+  const data = filteredTableData.value.map(r => {
+    const row = {}
+    dsFields.forEach(f => { row[f] = r[f] ?? null })
+    return row
+  })
+  dsDlBlob(
+    new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' }),
+    (tableName.value || 'table') + '.json'
+  )
+  dsExportMenuVisible.value = false
+}
+
+function exportTableExcel() {
+  const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const headerRow = dsHeaders.map(h => `<th>${esc(h)}</th>`).join('')
+  const bodyRows = filteredTableData.value.map((r, i) => {
+    const cells = [i + 1, ...dsFields.map(f => r[f] ?? '')]
+    return '<tr>' + cells.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>'
+  }).join('\n')
+  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:x="urn:schemas-microsoft-com:office:excel"
+xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"/>
+<style>th{background:#e8edf5;font-weight:bold;border:1px solid #ccc;padding:4px 8px}
+td{border:1px solid #ddd;padding:4px 8px}</style></head>
+<body><table>${'<tr>' + headerRow + '</tr>'}\n${bodyRows}</table></body></html>`
+  dsDlBlob(
+    new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8' }),
+    (tableName.value || 'table') + '.xls'
+  )
+  dsExportMenuVisible.value = false
 }
 
 function clampVisibleRows() {
@@ -309,6 +359,9 @@ function onDocClick(e) {
     filterOverlay.value.style.display = 'none'
   }
   ctxMenuVisible.value = false
+  if (dsExportBtnRef.value && !dsExportBtnRef.value.contains(e.target)) {
+    dsExportMenuVisible.value = false
+  }
 }
 
 const tableRef = ref(null)
@@ -339,24 +392,27 @@ function onResizerDblClick(e) {
   if (th) autoFitColumn(th)
 }
 
+let _dblClickHandler = null
 onMounted(() => {
   document.addEventListener('click', onDocClick)
-  // Attach dblclick to column resizers
   nextTick(() => {
     const table = tableRef.value?.$el
     if (table) {
-      table.addEventListener('dblclick', (e) => {
+      _dblClickHandler = (e) => {
         if (e.target.classList.contains('p-datatable-column-resizer') ||
             e.target.closest('.p-datatable-column-resizer')) {
           onResizerDblClick(e)
         }
-      })
+      }
+      table.addEventListener('dblclick', _dblClickHandler)
     }
   })
 })
 onUnmounted(() => {
   document.removeEventListener('click', onDocClick)
   clearTimeout(saveTimer)
+  const table = tableRef.value?.$el
+  if (table && _dblClickHandler) table.removeEventListener('dblclick', _dblClickHandler)
 })
 </script>
 
@@ -625,8 +681,21 @@ onUnmounted(() => {
         </template>
         <Button icon="pi pi-pencil" text size="small" severity="secondary"
           v-tooltip.bottom="'Переименовать'" @click="startEditTableName" class="ds-toolbar-btn" />
-        <Button icon="pi pi-download" text size="small" severity="secondary"
-          v-tooltip.bottom="'Скачать CSV'" @click="exportTableCSV" class="ds-toolbar-btn" />
+        <div class="ds-export-wrap" ref="dsExportBtnRef">
+          <Button icon="pi pi-download" text size="small" severity="secondary"
+            v-tooltip.bottom="'Выгрузить'" @click.stop="toggleDsExportMenu" class="ds-toolbar-btn" />
+          <div v-if="dsExportMenuVisible" class="ds-export-menu" @click.stop>
+            <button class="ds-export-item" @click="exportTableExcel">
+              <i class="pi pi-file-excel"></i> Excel (.xls)
+            </button>
+            <button class="ds-export-item" @click="exportTableCSV">
+              <i class="pi pi-file"></i> CSV
+            </button>
+            <button class="ds-export-item" @click="exportTableJSON">
+              <i class="pi pi-code"></i> JSON
+            </button>
+          </div>
+        </div>
         <span class="ds-table-rows-sep"></span>
         <span class="ds-table-rows-label">Строк в окне (5–100)</span>
         <input type="number" v-model.number="tableVisibleRows" min="5" max="100" step="5"
@@ -646,7 +715,7 @@ onUnmounted(() => {
         scrollable
         :scrollHeight="tableScrollHeight"
         resizableColumns
-        columnResizeMode="fit"
+        columnResizeMode="expand"
         reorderableColumns
         :rowClass="(data) => selectedRows.has(data.id) ? 'ds-row-selected' : ''"
         @rowClick="({ originalEvent, data, index }) => onRowClick(originalEvent, data, index)"
@@ -928,6 +997,49 @@ onUnmounted(() => {
   width: 2rem;
   height: 2rem;
   padding: 0 !important;
+}
+
+/* ── Export dropdown ── */
+.ds-export-wrap {
+  position: relative;
+}
+.ds-export-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  background: rgba(248, 252, 255, 0.97);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(180, 210, 255, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 50, 116, 0.12);
+  padding: 0.3rem;
+  min-width: 140px;
+}
+.ds-export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #003274;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+  text-align: left;
+  white-space: nowrap;
+}
+.ds-export-item:hover {
+  background: rgba(0, 50, 116, 0.06);
+}
+.ds-export-item i {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  color: rgba(0, 50, 116, 0.5);
 }
 
 /* ── Table toolbar extras ── */
@@ -1274,14 +1386,11 @@ onUnmounted(() => {
 .select-ac-wrap :deep(.p-autocomplete-input) {
   padding-right: 2rem;
 }
-/* Selected value gets subtle background highlight */
-.select-ac-wrap :deep(.p-autocomplete-input:not(:placeholder-shown)) {
-  background: rgba(0, 50, 116, 0.04) !important;
-}
+/* No special background for selected value — keep clean white */
 /* Clear button */
 .select-clear-btn {
   position: absolute;
-  right: 36px;
+  right: 40px;
   top: 50%;
   transform: translateY(-50%);
   background: none;

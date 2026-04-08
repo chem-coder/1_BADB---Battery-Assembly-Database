@@ -54,7 +54,7 @@ const crumbs = computed(() => {
 }
 
 .breadcrumb-link {
-  color: #003366;
+  color: #003274;
   text-decoration: none;
   transition: color 0.15s;
 }

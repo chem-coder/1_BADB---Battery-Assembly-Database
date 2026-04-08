@@ -25,8 +25,8 @@ export const workflowSections = [
     nameField: 'name',
     icon: 'pi pi-bars',
     listPage: () => import('@/pages/TapesPage.vue'),
-    formPage: () => import('@/pages/TapeFormPage.vue'),
-    formTitles: { new: 'Новая лента', edit: 'Лента' },
+    formPage: null,  // Constructor is now inline on TapesPage
+    formTitles: null,
   },
   {
     key: 'electrodes',
