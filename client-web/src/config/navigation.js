@@ -57,6 +57,20 @@ export const workflowSections = [
     formTitles: null,
   },
   {
+    key: 'cycling',
+    label: 'Циклирование',
+    shortLabel: 'Циклирование',
+    path: '/cycling',
+    apiPath: '/api/cycling/sessions',
+    idField: 'session_id',
+    nameField: 'session_id',
+    nameFormat: (row) => `Сессия #${row.session_id}`,
+    icon: 'pi pi-sync',
+    listPage: () => import('@/pages/CyclingPage.vue'),
+    formPage: null,
+    formTitles: null,
+  },
+  {
     key: 'modules',
     label: 'Модули',                     // Дали: "Модули | Сборка модулей - coming soon"
     shortLabel: 'Модули',
