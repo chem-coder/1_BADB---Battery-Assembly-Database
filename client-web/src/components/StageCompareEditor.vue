@@ -10,6 +10,7 @@
  */
 import { ref, reactive, computed, watch, nextTick } from 'vue'
 import AutoComplete from 'primevue/autocomplete'
+import EntityMeta from '@/components/EntityMeta.vue'
 
 const props = defineProps({
   stageCode: { type: String, required: true },
@@ -384,6 +385,20 @@ function onColDragEnd(e) {
           </td>
         </tr>
       </tbody>
+      <tfoot>
+        <tr class="ce-meta-row">
+          <td class="ce-td-label"></td>
+          <td v-for="tid in tabOrder" :key="tid" class="ce-td ce-td-meta">
+            <EntityMeta
+              v-if="tapeStates[String(tid)]?.meta"
+              :createdByName="tapeStates[String(tid)].meta.created_by_name"
+              :createdAt="tapeStates[String(tid)].meta.created_at"
+              :updatedByName="tapeStates[String(tid)].meta.updated_by_name"
+              :updatedAt="tapeStates[String(tid)].meta.updated_at"
+            />
+          </td>
+        </tr>
+      </tfoot>
     </table>
 
     <!-- Context menu: apply to all tapes left -->
@@ -777,6 +792,17 @@ function onColDragEnd(e) {
 .ce-select-clear:hover {
   color: #666;
   background: rgba(0, 0, 0, 0.06);
+}
+
+/* ── Entity meta footer ── */
+.ce-meta-row .ce-td-meta {
+  padding: 0;
+  border-left: none;
+  vertical-align: top;
+}
+.ce-meta-row .ce-td-meta :deep(.entity-meta) {
+  border-top: none;
+  padding: 6px 8px;
 }
 </style>
 

@@ -18,6 +18,7 @@ import { useTapeState } from '@/composables/useTapeState'
 import { TAPE_STAGES } from '@/config/tapeStages'
 import StageNavigator from '@/components/StageNavigator.vue'
 import StageCompareEditor from '@/components/StageCompareEditor.vue'
+import FieldChangelog from '@/components/FieldChangelog.vue'
 import Button from 'primevue/button'
 
 const props = defineProps({
@@ -31,6 +32,7 @@ const props = defineProps({
   idField: { type: String, default: 'tape_id' },
   title: { type: String, default: 'КОНСТРУКТОР ЛЕНТ' },
   emptyHint: { type: String, default: 'Отметьте ленты в таблице для работы в конструкторе' },
+  entityType: { type: String, default: 'tape' },
 })
 
 const emit = defineEmits(['dirty', 'remove-tape'])
@@ -198,6 +200,9 @@ onUnmounted(() => {
 // Expose for parent
 defineExpose({ saveAll, discardAll, tapeStates, anyDirty, undo, redo, canUndo, canRedo })
 
+// ── Changelog panel ──
+const showChangelog = ref(false)
+
 // ── Tab switching ──
 function selectTape(tid) {
   activeTapeId.value = Number(tid)
@@ -240,6 +245,16 @@ function onReorder(newOrder) {
               title="Повторить (Ctrl+Y)"
               class="ct-ur-btn"
             />
+            <Button
+              icon="pi pi-history"
+              size="small"
+              severity="secondary"
+              text
+              rounded
+              :class="['ct-ur-btn', { 'ct-ur-btn--active': showChangelog }]"
+              @click="showChangelog = !showChangelog"
+              title="История изменений"
+            />
           </div>
         </div>
         <StageNavigator
@@ -271,6 +286,15 @@ function onReorder(newOrder) {
           />
         </div>
       </div>
+    </div>
+
+    <!-- Changelog panel -->
+    <div v-if="showChangelog && activeTapeId" class="constructor-changelog">
+      <div class="changelog-header">
+        <span class="changelog-title">ИСТОРИЯ ИЗМЕНЕНИЙ — {{ tapeNames[String(activeTapeId)] || `#${activeTapeId}` }}</span>
+        <button class="changelog-close" @click="showChangelog = false"><i class="pi pi-times"></i></button>
+      </div>
+      <FieldChangelog :entityType="entityType" :entityId="activeTapeId" />
     </div>
 
     <!-- Loading overlay -->
@@ -348,6 +372,10 @@ function onReorder(newOrder) {
 .ct-ur-btn:disabled {
   opacity: 0.2 !important;
 }
+.ct-ur-btn--active {
+  color: #003274 !important;
+  background: rgba(0, 50, 116, 0.08) !important;
+}
 
 /* ── Right panel: table editor ── */
 .constructor-right {
@@ -377,6 +405,47 @@ function onReorder(newOrder) {
   color: rgba(0, 50, 116, 0.6);
   z-index: 10;
 }
+
+/* ── Changelog panel ── */
+.constructor-changelog {
+  border-top: 1px solid rgba(0, 50, 116, 0.10);
+  background: rgba(0, 50, 116, 0.02);
+}
+
+.changelog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
+}
+
+.changelog-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(0, 50, 116, 0.50);
+}
+
+.changelog-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  color: rgba(0, 50, 116, 0.3);
+  transition: all 0.2s;
+}
+.changelog-close:hover {
+  background: rgba(200, 80, 70, 0.12);
+  color: rgba(200, 80, 70, 0.7);
+}
+.changelog-close .pi { font-size: 11px; }
 
 /* ── Empty ── */
 .constructor-empty {

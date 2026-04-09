@@ -1213,12 +1213,18 @@ router.get('/:id', auth, async (req, res) => {
         t.notes,
         t.calc_mode,
         t.target_mass_g,
+        t.updated_by,
+        t.updated_at,
         r.role,
         r.name AS recipe_name,
-        p.name AS project_name
+        p.name AS project_name,
+        u_created.name AS created_by_name,
+        u_updated.name AS updated_by_name
       FROM tapes t
       LEFT JOIN tape_recipes r ON r.tape_recipe_id = t.tape_recipe_id
       LEFT JOIN projects p ON p.project_id = t.project_id
+      LEFT JOIN users u_created ON u_created.user_id = t.created_by
+      LEFT JOIN users u_updated ON u_updated.user_id = t.updated_by
       WHERE t.tape_id = $1
       `,
       [id]

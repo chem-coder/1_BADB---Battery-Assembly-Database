@@ -310,6 +310,7 @@ onUnmounted(() => clearTimeout(saveTimer))
       :stageConfigs="ELECTRODE_STAGES"
       :stateFactory="electrodeStateFactory"
       idField="cut_batch_id"
+      entityType="electrode_cut_batch"
       title="КОНСТРУКТОР ЭЛЕКТРОДОВ"
       emptyHint="Отметьте партии в таблице для работы в конструкторе"
     />

@@ -183,9 +183,13 @@ router.get('/electrode-cut-batches/:id', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT *
-      FROM electrode_cut_batches
-      WHERE cut_batch_id = $1
+      SELECT b.*,
+        u_created.name AS created_by_name,
+        u_updated.name AS updated_by_name
+      FROM electrode_cut_batches b
+      LEFT JOIN users u_created ON u_created.user_id = b.created_by
+      LEFT JOIN users u_updated ON u_updated.user_id = b.updated_by
+      WHERE b.cut_batch_id = $1
       `,
       [cutBatchId]
     );

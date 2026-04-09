@@ -57,6 +57,14 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
     createdAt: null,
   })
 
+  // ── Entity metadata (created/updated) ──
+  const meta = reactive({
+    created_by_name: null,
+    created_at: null,
+    updated_by_name: null,
+    updated_at: null,
+  })
+
   const currentTapeId = ref(tapeId)
   const saving = ref(false)
   const loading = ref(false)
@@ -489,6 +497,12 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
       general.createdAt = t.created_at || null
       general.tapeRecipeId = t.tape_recipe_id || ''
 
+      // Entity metadata
+      meta.created_by_name = t.created_by_name || null
+      meta.created_at = t.created_at || null
+      meta.updated_by_name = t.updated_by_name || null
+      meta.updated_at = t.updated_at || null
+
       // restore actuals + instance selections
       if (t.tape_recipe_id) {
         try {
@@ -657,6 +671,7 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
     // State
     general,
     steps,
+    meta,
     currentTapeId,
     saving,
     loading,

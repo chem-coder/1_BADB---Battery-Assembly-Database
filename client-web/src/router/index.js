@@ -81,6 +81,12 @@ const routes = [
       { path: 'tapes/new', redirect: '/tapes' },
       { path: 'tapes/:id', redirect: '/tapes' },
 
+      // /assembly/:id → AssemblyPage with constructor auto-open (reads route.params.id)
+      { path: 'assembly/new', redirect: '/assembly' },
+      { path: 'assembly/:id',
+        component: () => import('@/pages/AssemblyPage.vue'),
+        meta: { title: 'Аккумулятор', crumbs: [{ label: 'Аккумуляторы', to: '/assembly' }] } },
+
       ...referenceRoutes,
       ...adminRoutes,
 

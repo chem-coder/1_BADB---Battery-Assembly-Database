@@ -253,6 +253,7 @@ onUnmounted(() => clearTimeout(saveTimer))
       :stateFactory="batteryStateFactory"
       :refs="refData"
       idField="battery_id"
+      entityType="battery"
       title="КОНСТРУКТОР АККУМУЛЯТОРОВ"
       emptyHint="Отметьте аккумуляторы в таблице для работы в конструкторе"
     />

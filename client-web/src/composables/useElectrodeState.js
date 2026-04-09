@@ -11,6 +11,14 @@ export function useElectrodeState({ batchId }) {
   const saving = ref(false)
   const isRestoring = ref(false)
 
+  // ── Entity metadata (created/updated) ──
+  const meta = reactive({
+    created_by_name: null,
+    created_at: null,
+    updated_by_name: null,
+    updated_at: null,
+  })
+
   // ── Reactive state ──
   const general = reactive({
     name: '',
@@ -178,6 +186,12 @@ export function useElectrodeState({ batchId }) {
       general.width_mm = batch.width_mm ?? ''
       general.comments = batch.comments || ''
 
+      // Entity metadata
+      meta.created_by_name = batch.created_by_name || null
+      meta.created_at = batch.created_at || null
+      meta.updated_by_name = batch.updated_by_name || null
+      meta.updated_at = batch.updated_at || null
+
       try {
         const { data: drying } = await api.get(`/api/electrodes/electrode-cut-batches/${currentBatchId.value}/drying`)
         if (drying) {
@@ -214,6 +228,7 @@ export function useElectrodeState({ batchId }) {
     currentBatchId,
     general,
     steps,
+    meta,
     dirtySteps,
     loading,
     stageStatus,

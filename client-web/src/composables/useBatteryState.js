@@ -11,6 +11,14 @@ export function useBatteryState({ batteryId }) {
   const saving = ref(false)
   const isRestoring = ref(false)
 
+  // ── Entity metadata (created/updated) ──
+  const meta = reactive({
+    created_by_name: null,
+    created_at: null,
+    updated_by_name: null,
+    updated_at: null,
+  })
+
   // ── Reactive state per stage ──
   const general = reactive({
     name: '',
@@ -114,14 +122,20 @@ export function useBatteryState({ batteryId }) {
     if (!undoStack.value.length) return
     redoStack.value.push(_takeSnapshot())
     _applySnapshot(undoStack.value.pop())
-    for (const k of Object.keys(dirtySteps)) setDirty(k)
+    for (const k of Object.keys(dirtySteps)) {
+      setDirty(k)
+      _scheduleAutoSave(k)
+    }
   }
 
   function redo() {
     if (!redoStack.value.length) return
     undoStack.value.push(_takeSnapshot())
     _applySnapshot(redoStack.value.pop())
-    for (const k of Object.keys(dirtySteps)) setDirty(k)
+    for (const k of Object.keys(dirtySteps)) {
+      setDirty(k)
+      _scheduleAutoSave(k)
+    }
   }
 
   const canUndo = computed(() => undoStack.value.length > 0)
@@ -253,6 +267,12 @@ export function useBatteryState({ batteryId }) {
       general.project_id = b.project_id ?? ''
       general.battery_notes = b.notes || ''
 
+      // Entity metadata
+      meta.created_by_name = b.created_by_name || null
+      meta.created_at = b.created_at || null
+      meta.updated_by_name = b.updated_by_name || null
+      meta.updated_at = b.updated_at || null
+
       // Load config (try coin first, then pouch, then cyl)
       try {
         const { data: coin } = await api.get(`/api/batteries/battery_coin_config/${id}`)
@@ -335,6 +355,7 @@ export function useBatteryState({ batteryId }) {
     currentBatchId,
     general,
     steps,
+    meta,
     dirtySteps,
     loading,
     stageStatus,

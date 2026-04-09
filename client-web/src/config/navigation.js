@@ -53,8 +53,8 @@ export const workflowSections = [
     nameFormat: (row) => `${row.form_factor || 'Аккум.'} #${row.battery_id}${row.project_name ? ` — ${row.project_name}` : ''}`,
     icon: 'pi pi-box',
     listPage: () => import('@/pages/AssemblyPage.vue'),
-    formPage: () => import('@/pages/AssemblyFormPage.vue'),
-    formTitles: { new: 'Новый аккумулятор', edit: 'Аккумулятор' },
+    formPage: null,  // Constructor is now inline on AssemblyPage
+    formTitles: null,
   },
   {
     key: 'modules',
