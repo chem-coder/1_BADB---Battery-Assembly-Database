@@ -9,12 +9,13 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import DashboardPipeline from '@/components/DashboardPipeline.vue'
 import DashboardGraph from '@/components/DashboardGraph.vue'
+const DashboardAnalytics = () => import('@/components/DashboardAnalytics.vue')
 import { workflowSections, referenceSections } from '@/config/navigation'
 
 const router = useRouter()
 
 // ── Tab state ─────────────────────────────────────────────────────────
-const activeTab = ref('overview') // 'overview' | 'pipeline' | 'graph'
+const activeTab = ref('overview') // 'overview' | 'pipeline' | 'graph' | 'analytics'
 
 // ── Dashboard data ────────────────────────────────────────────────────
 const kpiData = ref(null)
@@ -22,6 +23,8 @@ const filterOptions = ref({ projects: [], operators: [] })
 const activity = ref([])
 const production = ref([])
 const graphData = ref({ nodes: [], edges: [] })
+const funnelData = ref([])
+const materialsUsage = ref([])
 const allTapes = ref([])
 const allBatches = ref([])
 const allElectrodeBatches = ref([])
@@ -55,12 +58,14 @@ async function loadDashboard() {
     const projectParam = selectedProject.value ? `&project_id=${selectedProject.value}` : ''
     const operatorParam = selectedOperator.value ? `&operator_id=${selectedOperator.value}` : ''
 
-    const [kpi, filters, act, prod, graph, tapesRes, batchesRes, batteriesRes] = await Promise.allSettled([
+    const [kpi, filters, act, prod, graph, funnel, matUsage, tapesRes, batchesRes, batteriesRes] = await Promise.allSettled([
       api.get(`/api/dashboard/kpi?period=${period}${projectParam}${operatorParam}`),
       api.get('/api/dashboard/filter-options'),
       api.get('/api/dashboard/activity?limit=15'),
       api.get(`/api/dashboard/production?weeks=12`),
       api.get(`/api/dashboard/graph?limit=200${projectParam}${operatorParam}`),
+      api.get(`/api/dashboard/funnel?period=${period}`),
+      api.get('/api/dashboard/materials-usage'),
       api.get('/api/tapes'),
       api.get('/api/electrodes/electrode-cut-batches'),
       api.get('/api/batteries'),
@@ -71,6 +76,8 @@ async function loadDashboard() {
     if (act.status === 'fulfilled') activity.value = act.value.data
     if (prod.status === 'fulfilled') production.value = prod.value.data
     if (graph.status === 'fulfilled') graphData.value = graph.value.data
+    if (funnel.status === 'fulfilled') funnelData.value = funnel.value.data
+    if (matUsage.status === 'fulfilled') materialsUsage.value = matUsage.value.data
     if (tapesRes.status === 'fulfilled') allTapes.value = tapesRes.value.data
     if (batchesRes.status === 'fulfilled') allElectrodeBatches.value = batchesRes.value.data
     if (batteriesRes.status === 'fulfilled') allBatches.value = batteriesRes.value.data
@@ -214,6 +221,9 @@ const filteredBatteries = computed(() => applyFilters(allBatches.value))
       <button :class="['tab-btn', activeTab === 'graph' ? 'active' : '']" @click="activeTab = 'graph'">
         <i class="pi pi-sitemap"></i> Граф
       </button>
+      <button :class="['tab-btn', activeTab === 'analytics' ? 'active' : '']" @click="activeTab = 'analytics'">
+        <i class="pi pi-chart-line"></i> Аналитика
+      </button>
     </div>
 
     <!-- ── Filter bar ── -->
@@ -316,6 +326,11 @@ const filteredBatteries = computed(() => applyFilters(allBatches.value))
       <div class="glass-card graph-section">
         <DashboardGraph :graphData="graphData" />
       </div>
+    </template>
+
+    <!-- ════════ ANALYTICS TAB ════════ -->
+    <template v-if="activeTab === 'analytics'">
+      <DashboardAnalytics :production="production" :funnel="funnelData" :materialsUsage="materialsUsage" />
     </template>
 
   </div>

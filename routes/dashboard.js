@@ -319,6 +319,51 @@ router.get('/graph', auth, async (req, res) => {
   }
 })
 
+// ── GET /api/dashboard/funnel ─────────────────────────────────────────
+// Returns conversion funnel: recipes → tapes → electrode batches → batteries
+router.get('/funnel', auth, async (req, res) => {
+  try {
+    const dateFilter = periodToDateFilter(req.query.period)
+
+    const [recipes, tapes, batches, batteries] = await Promise.all([
+      pool.query(`SELECT count(*) AS total FROM tape_recipes`),
+      pool.query(`SELECT count(*) AS total FROM tapes ${dateFilter ? 'WHERE created_at >= $1' : ''}`, dateFilter ? [dateFilter] : []),
+      pool.query(`SELECT count(*) AS total FROM electrode_cut_batches ${dateFilter ? 'WHERE created_at >= $1' : ''}`, dateFilter ? [dateFilter] : []),
+      pool.query(`SELECT count(*) AS total FROM batteries ${dateFilter ? 'WHERE created_at >= $1' : ''}`, dateFilter ? [dateFilter] : []),
+    ])
+
+    res.json([
+      { stage: 'Рецептуры', count: Number(recipes.rows[0].total) },
+      { stage: 'Ленты', count: Number(tapes.rows[0].total) },
+      { stage: 'Электроды', count: Number(batches.rows[0].total) },
+      { stage: 'Аккумуляторы', count: Number(batteries.rows[0].total) },
+    ])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Ошибка загрузки воронки' })
+  }
+})
+
+// ── GET /api/dashboard/materials-usage ────────────────────────────────
+// Returns material usage counts grouped by role
+router.get('/materials-usage', auth, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT m.material_id, m.name, m.role,
+             count(rl.tape_recipe_id) AS usage_count
+      FROM materials m
+      LEFT JOIN tape_recipe_lines rl ON rl.material_id = m.material_id
+      GROUP BY m.material_id, m.name, m.role
+      ORDER BY m.role, usage_count DESC
+    `)
+
+    res.json(result.rows)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Ошибка загрузки материалов' })
+  }
+})
+
 // ── Helper ────────────────────────────────────────────────────────────
 function periodToDateFilter(period) {
   if (!period || period === 'all') return null
