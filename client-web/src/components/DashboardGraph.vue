@@ -46,7 +46,7 @@ const visibleTypes = ref({
   tape: true,
   electrode_batch: true,
   separator: true,
-  sep_structure: false,
+  sep_structure: true,
   electrolyte: true,
   battery: true,
 })
