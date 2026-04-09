@@ -107,16 +107,87 @@ const DETAIL_LABELS = {
 }
 
 // ── Layout ──
+// Strict type-per-layer: each row = one entity type, equal vertical spacing
+const LAYER_ORDER = ['project', 'material', 'recipe', 'tape', 'electrode_batch', 'separator', 'electrolyte', 'battery']
+
 function getLayoutConfig() {
+  if (!cy) return { name: 'preset' }
+
+  const gap = spacing.value          // vertical gap between layers
+  const nodeGap = 55                 // horizontal gap between nodes in same layer
+  const orphanGap = 35               // tighter gap for orphans
+  const padding = 60
+
+  // Separate connected vs orphan
+  const connectedIds = new Set()
+  cy.edges().forEach(e => {
+    connectedIds.add(e.source().id())
+    connectedIds.add(e.target().id())
+  })
+
+  // Group visible non-parent nodes by type
+  const layers = {}
+  const orphans = {}
+  for (const t of LAYER_ORDER) { layers[t] = []; orphans[t] = [] }
+
+  cy.nodes().forEach(node => {
+    if (node.isParent()) return
+    if (node.style('display') === 'none') return
+    const type = node.data('type')
+    if (!layers[type]) return
+    if (connectedIds.has(node.id())) {
+      layers[type].push(node)
+    } else {
+      orphans[type].push(node)
+    }
+  })
+
+  const positions = {}
+  let currentY = padding
+
+  // Find max connected width to know where orphans start
+  let maxConnectedWidth = 0
+  for (const type of LAYER_ORDER) {
+    const w = layers[type].length * nodeGap
+    if (w > maxConnectedWidth) maxConnectedWidth = w
+  }
+  const orphanStartX = padding + maxConnectedWidth + 80
+
+  for (const type of LAYER_ORDER) {
+    const connected = layers[type]
+    const orph = orphans[type]
+    if (connected.length === 0 && orph.length === 0) continue
+
+    // Connected nodes: centered horizontally
+    if (connected.length > 0) {
+      const totalW = (connected.length - 1) * nodeGap
+      const startX = padding + (maxConnectedWidth - totalW) / 2
+      connected.forEach((node, i) => {
+        positions[node.id()] = { x: startX + i * nodeGap, y: currentY }
+      })
+    }
+
+    // Orphans: right side, compact
+    if (orph.length > 0) {
+      const orphCols = Math.ceil(Math.sqrt(orph.length))
+      orph.forEach((node, i) => {
+        const col = i % orphCols
+        const row = Math.floor(i / orphCols)
+        positions[node.id()] = {
+          x: orphanStartX + col * orphanGap,
+          y: currentY + row * orphanGap - ((Math.ceil(orph.length / orphCols) - 1) * orphanGap) / 2,
+        }
+      })
+    }
+
+    currentY += gap
+  }
+
   return {
-    name: 'dagre',
-    rankDir: 'TB',
-    nodeSep: 40,
-    rankSep: spacing.value,
-    edgeSep: 10,
+    name: 'preset',
+    positions: (node) => positions[node.id()] || { x: orphanStartX, y: currentY },
     animate: true,
     animationDuration: 400,
-    padding: 30,
   }
 }
 
