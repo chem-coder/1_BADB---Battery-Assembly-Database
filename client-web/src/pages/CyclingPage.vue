@@ -28,8 +28,14 @@ const batteries = ref([])
 const loading = ref(true)
 const selectedSession = ref(null)
 const summaryData = ref([])
-const cycleData = ref([])
-const selectedCycle = ref(null)
+// Multi-cycle overlay state:
+// - selectedCycles: cycles the user has activated (chips + chart click)
+// - cycleDataMap:   cycleNumber → datapoints[] (lazy-loaded, cached per session)
+// - loadingCycles:  cycles currently being fetched (for chip spinner)
+const selectedCycles = ref([])
+const cycleDataMap = ref({})
+const loadingCycles = ref([])
+const MAX_SELECTED_CYCLES = 6
 
 // ── Upload dialog ──
 const showUpload = ref(false)
@@ -80,8 +86,10 @@ onMounted(loadData)
 // ── Session selection → load charts ──
 async function onSessionClick(row) {
   selectedSession.value = row
-  selectedCycle.value = null
-  cycleData.value = []
+  // Clear per-session cycle overlay state
+  selectedCycles.value = []
+  cycleDataMap.value = {}
+  loadingCycles.value = []
   try {
     const { data } = await api.get(`/api/cycling/sessions/${row.session_id}/summary`)
     summaryData.value = data
@@ -90,14 +98,64 @@ async function onSessionClick(row) {
   }
 }
 
-async function loadCycleDetail(cycleNum) {
+// Toggle a cycle in the overlay:
+// - if already selected → remove (but keep data cached for quick re-enable)
+// - if not selected → add; lazy-fetch datapoints if not cached
+// - cap at MAX_SELECTED_CYCLES to avoid chart clutter / memory blowup
+// - guards against session-switch races: captures session_id at entry and
+//   bails out if the user switched sessions before the fetch resolved.
+async function toggleCycle(cycleNum) {
   if (!selectedSession.value) return
-  selectedCycle.value = cycleNum
+
+  const idx = selectedCycles.value.indexOf(cycleNum)
+  if (idx >= 0) {
+    selectedCycles.value = selectedCycles.value.filter(c => c !== cycleNum)
+    return
+  }
+
+  if (selectedCycles.value.length >= MAX_SELECTED_CYCLES) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Лимит циклов',
+      detail: `Можно сравнивать до ${MAX_SELECTED_CYCLES} циклов одновременно`,
+      life: 3000,
+    })
+    return
+  }
+
+  // Capture session at entry — used to detect session switch mid-flight.
+  const capturedSessionId = selectedSession.value.session_id
+
+  // Add to selection immediately (chip turns active)
+  selectedCycles.value = [...selectedCycles.value, cycleNum]
+
+  // If already cached, done
+  if (cycleDataMap.value[cycleNum]) return
+
+  // Fetch datapoints
+  loadingCycles.value = [...loadingCycles.value, cycleNum]
   try {
-    const { data } = await api.get(`/api/cycling/sessions/${selectedSession.value.session_id}/cycles/${cycleNum}`)
-    cycleData.value = data
+    const { data } = await api.get(`/api/cycling/sessions/${capturedSessionId}/cycles/${cycleNum}`)
+    // Bail out if the user switched sessions while the fetch was in flight —
+    // otherwise we'd stomp the new session's cycleDataMap with old data.
+    if (selectedSession.value?.session_id !== capturedSessionId) return
+    cycleDataMap.value = { ...cycleDataMap.value, [cycleNum]: data }
   } catch {
-    cycleData.value = []
+    // Only mutate state if we're still on the same session.
+    if (selectedSession.value?.session_id === capturedSessionId) {
+      selectedCycles.value = selectedCycles.value.filter(c => c !== cycleNum)
+      toast.add({
+        severity: 'error',
+        summary: 'Ошибка',
+        detail: `Не удалось загрузить цикл ${cycleNum}`,
+        life: 3000,
+      })
+    }
+  } finally {
+    // Same session guard — loadingCycles was reset on session switch.
+    if (selectedSession.value?.session_id === capturedSessionId) {
+      loadingCycles.value = loadingCycles.value.filter(c => c !== cycleNum)
+    }
   }
 }
 
@@ -160,6 +218,9 @@ async function deleteSession(items) {
   if (selectedSession.value && deletedIds.includes(selectedSession.value.session_id)) {
     selectedSession.value = null
     summaryData.value = []
+    selectedCycles.value = []
+    cycleDataMap.value = {}
+    loadingCycles.value = []
   }
 }
 
@@ -232,10 +293,12 @@ const batteryOptions = computed(() =>
       <CyclingCharts
         v-if="summaryData.length"
         :summary="summaryData"
-        :cycleData="cycleData"
-        :selectedCycle="selectedCycle"
+        :cycleDataMap="cycleDataMap"
+        :selectedCycles="selectedCycles"
+        :loadingCycles="loadingCycles"
         :totalCycles="selectedSession.total_cycles || summaryData.length"
-        @select-cycle="loadCycleDetail"
+        :sessionId="selectedSession.session_id"
+        @toggle-cycle="toggleCycle"
       />
       <div v-else-if="selectedSession.status === 'processing'" class="charts-loading">
         <i class="pi pi-spin pi-spinner"></i> Данные обрабатываются...
