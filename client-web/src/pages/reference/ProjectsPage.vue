@@ -4,7 +4,7 @@
  * Uses CrudTable + SaveIndicator (from Design System).
  * Create/edit form in Dialog — CrudTable handles the list.
  */
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
 import PageHeader from '@/components/PageHeader.vue'
@@ -15,6 +15,9 @@ import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
 import Select from 'primevue/select'
+import MultiSelect from 'primevue/multiselect'
+import DatePicker from 'primevue/datepicker'
+import SelectButton from 'primevue/selectbutton'
 
 const toast = useToast()
 const crudTable = ref(null)
@@ -123,6 +126,11 @@ function resetForm() {
   mode.value = null
   currentId.value = null
   formVisible.value = false
+  // Clear grant form state so next open starts clean
+  resetGrantForm()
+  copyFromProjectId.value = null
+  copyOverwrite.value = false
+  presets.value = []
 }
 
 function openCreate() {
@@ -145,8 +153,12 @@ function openEdit(proj) {
     confidentiality_level: proj.confidentiality_level || 'public',
     department_id: proj.department_id || null,
   }
+  resetGrantForm()
+  copyFromProjectId.value = null
+  copyOverwrite.value = false
   formVisible.value = true
   loadAccess(proj.project_id)
+  loadPresets()
 }
 
 async function saveProject() {
@@ -196,8 +208,58 @@ function confLabel(level) {
 // ── Access management ──
 const accessList = ref([])
 const accessLoading = ref(false)
-const grantUserId = ref('')
+
+// Grant form state
+const grantTargetType = ref('user')         // 'user' | 'department'
+const grantSelectedUsers = ref([])          // number[]
+const grantSelectedDepts = ref([])          // number[]
 const grantLevel = ref('view')
+const grantExpiresDate = ref(null)          // Date | null
+const grantExpiresPreset = ref(null)        // null | 7 | 30 | 90
+
+// Copy access state
+const copyFromProjectId = ref(null)
+const copyOverwrite = ref(false)
+const copyBusy = ref(false)
+
+// Presets
+const presets = ref([])
+
+// Computed: users grouped by department for MultiSelect
+const groupedUsers = computed(() => {
+  const byDept = new Map()
+  for (const u of activeUsers.value) {
+    const key = u.department_id ?? 0
+    const label = u.department_name || 'Без отдела'
+    if (!byDept.has(key)) byDept.set(key, { label, items: [] })
+    byDept.get(key).items.push({
+      user_id: u.user_id,
+      name: u.name,
+      position: u.position || '',
+      department_name: u.department_name || '',
+    })
+  }
+  return Array.from(byDept.values())
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map(g => ({
+      ...g,
+      items: g.items.sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+})
+
+// Computed: projects list for "copy from" (exclude current)
+const copyableProjects = computed(() =>
+  projects.value.filter(p => p.project_id !== currentId.value)
+)
+
+function resetGrantForm() {
+  grantTargetType.value = 'user'
+  grantSelectedUsers.value = []
+  grantSelectedDepts.value = []
+  grantLevel.value = 'view'
+  grantExpiresDate.value = null
+  grantExpiresPreset.value = null
+}
 
 async function loadAccess(projectId) {
   accessLoading.value = true
@@ -211,31 +273,130 @@ async function loadAccess(projectId) {
   }
 }
 
-async function grantAccess() {
-  if (!grantUserId.value || !currentId.value) return
+async function loadPresets() {
+  if (!currentId.value) {
+    presets.value = []
+    return
+  }
   try {
-    await api.post(`/api/projects/${currentId.value}/access`, {
-      user_id: Number(grantUserId.value),
-      access_level: grantLevel.value,
-    })
-    grantUserId.value = ''
-    grantLevel.value = 'view'
-    await loadAccess(currentId.value)
-    toast.add({ severity: 'success', summary: 'Доступ выдан', life: 2000 })
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Не удалось выдать доступ', life: 3000 })
+    const { data } = await api.get(`/api/projects/${currentId.value}/access/presets`)
+    presets.value = data.presets || []
+  } catch {
+    presets.value = []
   }
 }
 
-async function revokeAccess(userId) {
+async function grantAccess() {
   if (!currentId.value) return
-  if (!confirm('Отозвать доступ к проекту?')) return
+
+  const body = { access_level: grantLevel.value }
+
+  if (grantTargetType.value === 'user') {
+    if (!grantSelectedUsers.value.length) {
+      toast.add({ severity: 'warn', summary: 'Выберите пользователей', life: 2500 })
+      return
+    }
+    body.user_ids = grantSelectedUsers.value
+  } else {
+    if (!grantSelectedDepts.value.length) {
+      toast.add({ severity: 'warn', summary: 'Выберите отделы', life: 2500 })
+      return
+    }
+    body.department_ids = grantSelectedDepts.value
+  }
+
+  if (grantExpiresDate.value) {
+    body.expires_at = grantExpiresDate.value.toISOString()
+  } else if (grantExpiresPreset.value) {
+    body.expires_in_days = grantExpiresPreset.value
+  }
+
   try {
-    await api.delete(`/api/projects/${currentId.value}/access/${userId}`)
+    const { data } = await api.post(`/api/projects/${currentId.value}/access`, body)
+    resetGrantForm()
+    await loadAccess(currentId.value)
+    toast.add({
+      severity: 'success',
+      summary: 'Доступ выдан',
+      detail: `Пользователей: ${data.granted_users}, отделов: ${data.granted_departments}`,
+      life: 2500,
+    })
+  } catch (err) {
+    toast.add({
+      severity: 'error',
+      summary: 'Ошибка',
+      detail: err.response?.data?.error || 'Не удалось выдать доступ',
+      life: 3000,
+    })
+  }
+}
+
+async function revokeAccess(entry) {
+  if (!currentId.value) return
+  const label = entry.grantee_type === 'department'
+    ? `Отозвать доступ у отдела "${entry.grantee_name}"?`
+    : `Отозвать доступ у "${entry.grantee_name}"?`
+  if (!confirm(label)) return
+
+  const url = entry.grantee_type === 'department'
+    ? `/api/projects/${currentId.value}/access/department/${entry.grantee_id}`
+    : `/api/projects/${currentId.value}/access/user/${entry.grantee_id}`
+
+  try {
+    await api.delete(url)
     await loadAccess(currentId.value)
     toast.add({ severity: 'success', summary: 'Доступ отозван', life: 2000 })
   } catch {
     toast.add({ severity: 'error', summary: 'Ошибка', life: 3000 })
+  }
+}
+
+function applyPreset(preset) {
+  if (!preset.user_ids.length) {
+    toast.add({
+      severity: 'info',
+      summary: 'Пусто',
+      detail: `${preset.label}: нет пользователей`,
+      life: 2500,
+    })
+    return
+  }
+  grantTargetType.value = 'user'
+  grantSelectedUsers.value = [...preset.user_ids]
+  toast.add({
+    severity: 'info',
+    summary: `Выбрано: ${preset.user_ids.length}`,
+    detail: preset.label,
+    life: 2000,
+  })
+}
+
+async function copyAccessFromProject() {
+  if (!copyFromProjectId.value || !currentId.value) return
+  copyBusy.value = true
+  try {
+    const { data } = await api.post(`/api/projects/${currentId.value}/access/copy`, {
+      source_project_id: copyFromProjectId.value,
+      overwrite: copyOverwrite.value,
+    })
+    await loadAccess(currentId.value)
+    copyFromProjectId.value = null
+    copyOverwrite.value = false
+    toast.add({
+      severity: 'success',
+      summary: 'Доступ скопирован',
+      detail: `Пользователей: ${data.copied_users}, отделов: ${data.copied_departments}`,
+      life: 3000,
+    })
+  } catch (err) {
+    toast.add({
+      severity: 'error',
+      summary: 'Ошибка',
+      detail: err.response?.data?.error || 'Не удалось скопировать',
+      life: 3000,
+    })
+  } finally {
+    copyBusy.value = false
   }
 }
 </script>
@@ -391,7 +552,7 @@ async function revokeAccess(userId) {
       <!-- Access management (edit mode only) -->
       <div v-if="mode === 'edit'" class="access-section">
         <div class="access-header">
-          <span class="section-label">Явно допущенные пользователи</span>
+          <span class="section-label">Явно допущенные пользователи и отделы</span>
         </div>
         <div v-if="form.confidentiality_level !== 'confidential'" class="access-hint">
           <i class="pi pi-info-circle"></i>
@@ -400,28 +561,170 @@ async function revokeAccess(userId) {
             : 'Проект виден всему отделу — явный список добавляет доступ вне отдела.' }}
         </div>
 
-        <!-- Grant form -->
-        <div class="grant-row">
-          <Select v-model="grantUserId" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— сотрудник —" class="grant-user" />
-          <Select
-            v-model="grantLevel"
-            :options="[{ label: 'Просмотр', value: 'view' }, { label: 'Редактирование', value: 'edit' }, { label: 'Администратор', value: 'admin' }]"
-            optionLabel="label"
-            optionValue="value"
-            class="grant-level"
-          />
-          <Button icon="pi pi-plus" size="small" @click="grantAccess" :disabled="!grantUserId" />
+        <!-- ─── Quick actions (presets + copy from project) ─── -->
+        <div class="access-quick">
+          <div class="access-quick-label">Быстрые действия</div>
+          <div class="access-quick-buttons">
+            <Button
+              v-for="p in presets"
+              :key="p.key"
+              size="small"
+              outlined
+              :label="`${p.label} (${p.count})`"
+              :disabled="p.count === 0"
+              :title="p.description"
+              @click="applyPreset(p)"
+            />
+          </div>
+          <div class="access-copy-row">
+            <Select
+              v-model="copyFromProjectId"
+              :options="copyableProjects"
+              optionLabel="name"
+              optionValue="project_id"
+              placeholder="Скопировать доступ из проекта…"
+              class="access-copy-select"
+              filter
+              showClear
+            />
+            <label class="access-copy-overwrite">
+              <input type="checkbox" v-model="copyOverwrite" />
+              Перезаписать
+            </label>
+            <Button
+              icon="pi pi-copy"
+              label="Применить"
+              size="small"
+              :disabled="!copyFromProjectId || copyBusy"
+              @click="copyAccessFromProject"
+            />
+          </div>
         </div>
 
-        <!-- Access list -->
+        <!-- ─── Grant form ─── -->
+        <div class="grant-box">
+          <SelectButton
+            v-model="grantTargetType"
+            :options="[
+              { label: 'Пользователь', value: 'user' },
+              { label: 'Отдел',        value: 'department' },
+            ]"
+            optionLabel="label"
+            optionValue="value"
+            :allowEmpty="false"
+            class="grant-target-toggle"
+          />
+
+          <MultiSelect
+            v-if="grantTargetType === 'user'"
+            v-model="grantSelectedUsers"
+            :options="groupedUsers"
+            optionLabel="name"
+            optionValue="user_id"
+            optionGroupLabel="label"
+            optionGroupChildren="items"
+            filter
+            :filterFields="['name', 'position', 'department_name']"
+            placeholder="— выбрать сотрудников —"
+            :maxSelectedLabels="2"
+            selectedItemsLabel="Выбрано: {0}"
+            :showToggleAll="true"
+            class="grant-multiselect"
+          >
+            <template #option="slotProps">
+              <div class="user-option">
+                <span class="user-option-name">{{ slotProps.option.name }}</span>
+                <span v-if="slotProps.option.position" class="user-option-pos">{{ slotProps.option.position }}</span>
+              </div>
+            </template>
+          </MultiSelect>
+
+          <MultiSelect
+            v-else
+            v-model="grantSelectedDepts"
+            :options="departments"
+            optionLabel="name"
+            optionValue="department_id"
+            filter
+            placeholder="— выбрать отделы —"
+            :maxSelectedLabels="2"
+            selectedItemsLabel="Отделов: {0}"
+            class="grant-multiselect"
+          />
+
+          <div class="grant-row">
+            <Select
+              v-model="grantLevel"
+              :options="[
+                { label: 'Просмотр',       value: 'view' },
+                { label: 'Редактирование', value: 'edit' },
+                { label: 'Администратор',  value: 'admin' },
+              ]"
+              optionLabel="label"
+              optionValue="value"
+              class="grant-level"
+            />
+
+            <div class="grant-expires">
+              <span class="grant-expires-label">Истекает:</span>
+              <div class="grant-expires-presets">
+                <button
+                  type="button"
+                  v-for="d in [7, 30, 90]"
+                  :key="d"
+                  :class="['expires-chip', grantExpiresPreset === d && !grantExpiresDate ? 'active' : '']"
+                  @click="grantExpiresPreset = (grantExpiresPreset === d ? null : d); grantExpiresDate = null"
+                >{{ d }} дн.</button>
+                <button
+                  type="button"
+                  :class="['expires-chip', !grantExpiresPreset && !grantExpiresDate ? 'active' : '']"
+                  @click="grantExpiresPreset = null; grantExpiresDate = null"
+                >Бессрочно</button>
+              </div>
+              <DatePicker
+                v-model="grantExpiresDate"
+                placeholder="или дата…"
+                dateFormat="dd.mm.yy"
+                :firstDayOfWeek="1"
+                :minDate="new Date()"
+                showButtonBar
+                class="grant-expires-date"
+                @update:modelValue="grantExpiresPreset = null"
+              />
+            </div>
+
+            <Button
+              label="Выдать"
+              icon="pi pi-plus"
+              size="small"
+              :disabled="grantTargetType === 'user' ? !grantSelectedUsers.length : !grantSelectedDepts.length"
+              @click="grantAccess"
+            />
+          </div>
+        </div>
+
+        <!-- ─── Access list ─── -->
         <div class="access-list">
-          <div v-for="a in accessList" :key="a.user_id" class="access-row">
-            <span class="access-name">{{ a.name }}</span>
-            <span class="access-dept">{{ a.department_name || '' }}</span>
+          <div
+            v-for="a in accessList"
+            :key="`${a.grantee_type}-${a.grantee_id}`"
+            :class="['access-row', a.is_expired ? 'access-row--expired' : '']"
+          >
+            <i
+              :class="a.grantee_type === 'department' ? 'pi pi-users' : 'pi pi-user'"
+              class="access-icon"
+              :title="a.grantee_type === 'department' ? 'Отдел' : 'Пользователь'"
+            ></i>
+            <span class="access-name">{{ a.grantee_name }}</span>
+            <span class="access-dept">{{ a.grantee_type === 'user' ? (a.department_name || '') : '' }}</span>
+            <span v-if="a.expires_at" class="access-expires" :title="new Date(a.expires_at).toLocaleString('ru-RU')">
+              <i class="pi pi-clock"></i>
+              {{ a.is_expired ? 'истёк' : `до ${formatDate(a.expires_at)}` }}
+            </span>
             <span :class="['access-level', `access-level--${a.access_level}`]">
               {{ a.access_level === 'view' ? 'Просмотр' : a.access_level === 'edit' ? 'Ред.' : 'Админ' }}
             </span>
-            <Button icon="pi pi-times" severity="danger" text size="small" @click="revokeAccess(a.user_id)" title="Отозвать доступ" />
+            <Button icon="pi pi-times" severity="danger" text size="small" @click="revokeAccess(a)" title="Отозвать доступ" />
           </div>
           <div v-if="!accessList.length && !accessLoading" class="access-empty">Нет явных допусков</div>
         </div>
@@ -637,5 +940,139 @@ async function revokeAccess(userId) {
 .vis-pill--confidential {
   background: rgba(176, 0, 32, 0.1);
   color: #b00020;
+}
+
+/* ── Quick actions (presets + copy) ── */
+.access-quick {
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  background: rgba(211, 167, 84, 0.08);
+  border: 1px solid rgba(211, 167, 84, 0.2);
+  border-radius: 8px;
+}
+.access-quick-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(0, 50, 116, 0.55);
+  margin-bottom: 0.5rem;
+}
+.access-quick-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+.access-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.access-copy-select { flex: 1; min-width: 200px; }
+.access-copy-overwrite {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #6B7280;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ── Grant box ── */
+.grant-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  background: rgba(0, 50, 116, 0.03);
+  border: 1px solid rgba(0, 50, 116, 0.08);
+  border-radius: 8px;
+}
+.grant-target-toggle { align-self: flex-start; }
+.grant-multiselect { width: 100%; }
+.grant-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+.grant-level { width: 170px; }
+
+.user-option {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.user-option-name { font-size: 13px; font-weight: 500; color: #003274; }
+.user-option-pos { font-size: 11px; color: #6B7280; }
+
+/* ── Expiry row ── */
+.grant-expires {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 280px;
+}
+.grant-expires-label {
+  font-size: 11px;
+  color: #6B7280;
+  font-weight: 500;
+}
+.grant-expires-presets { display: flex; gap: 3px; }
+.expires-chip {
+  padding: 3px 10px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  background: white;
+  border-radius: 12px;
+  font-size: 11px;
+  color: #003274;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.expires-chip:hover { border-color: rgba(0, 50, 116, 0.35); }
+.expires-chip.active {
+  background: #003274;
+  color: white;
+  border-color: #003274;
+}
+.grant-expires-date :deep(.p-datepicker-input) {
+  width: 130px !important;
+  font-size: 12px;
+}
+
+/* ── Access list ── */
+.access-icon {
+  color: rgba(0, 50, 116, 0.45);
+  font-size: 14px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.access-expires {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #8a6d2b;
+  background: rgba(211, 167, 84, 0.12);
+  border: 0.5px solid rgba(211, 167, 84, 0.3);
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.access-expires .pi { font-size: 9px; }
+.access-row--expired { opacity: 0.55; }
+.access-row--expired .access-name { text-decoration: line-through; }
+.access-row--expired .access-expires {
+  color: #b00020;
+  background: rgba(176, 0, 32, 0.08);
+  border-color: rgba(176, 0, 32, 0.25);
 }
 </style>
