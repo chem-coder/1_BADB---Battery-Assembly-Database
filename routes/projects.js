@@ -14,11 +14,137 @@ router.get('/test', async (req, res) => {
 
 const VALID_CONFIDENTIALITY = ['public', 'department', 'confidential'];
 
+// ── Authorization helpers ─────────────────────────────────────────────
+// Determines who can MODIFY a project (edit, delete, manage access).
+// Returns: { exists: boolean, level: 'admin'|'director'|'owner'|'project-admin'|null }
+async function checkModifyPermission(db, projectId, user) {
+  // First verify the project exists (needed even for admins so we return 404 not 500)
+  const projCheck = await db.query('SELECT created_by FROM projects WHERE project_id = $1', [projectId]);
+  if (projCheck.rowCount === 0) {
+    return { exists: false, level: null };
+  }
+  const projCreatedBy = projCheck.rows[0].created_by;
+
+  // Admins can always modify (but only existing projects)
+  if (user.role === 'admin') return { exists: true, level: 'admin' };
+
+  // Fetch user context + explicit access level
+  const r = await db.query(`
+    SELECT u.position AS user_position,
+           (SELECT access_level FROM user_project_access
+            WHERE project_id = $1 AND user_id = $2) AS explicit_level
+    FROM users u WHERE u.user_id = $2
+  `, [projectId, user.userId]);
+
+  if (r.rowCount === 0) return { exists: true, level: null };
+
+  const row = r.rows[0];
+  // Director (position contains 'директор') can modify anything
+  if ((row.user_position || '').toLowerCase().includes('директор')) return { exists: true, level: 'director' };
+  // Project creator can modify their own project
+  if (projCreatedBy === user.userId) return { exists: true, level: 'owner' };
+  // User with 'admin' access_level on this project can modify
+  if (row.explicit_level === 'admin') return { exists: true, level: 'project-admin' };
+
+  return { exists: true, level: null };
+}
+
+// Determines if a user can VIEW a project (see its details, access list).
+// Uses the same filter logic as GET /api/projects but for a single project.
+// Returns: { exists: boolean, allowed: boolean }
+async function checkViewPermission(db, projectId, user) {
+  // Verify project exists first
+  const projCheck = await db.query('SELECT 1 FROM projects WHERE project_id = $1', [projectId]);
+  if (projCheck.rowCount === 0) return { exists: false, allowed: false };
+
+  // Admins can always view existing projects
+  if (user.role === 'admin') return { exists: true, allowed: true };
+
+  const r = await db.query(`
+    SELECT
+      p.confidentiality_level,
+      p.department_id AS project_dept,
+      p.created_by,
+      u.department_id AS user_dept,
+      u.position,
+      (SELECT 1 FROM user_project_access upa
+       WHERE upa.project_id = p.project_id AND upa.user_id = $2
+         AND (upa.expires_at IS NULL OR upa.expires_at > now())
+       LIMIT 1) AS has_user_grant,
+      (SELECT 1 FROM project_department_access pda
+       WHERE pda.project_id = p.project_id AND pda.department_id = u.department_id
+         AND (pda.expires_at IS NULL OR pda.expires_at > now())
+       LIMIT 1) AS has_dept_grant,
+      (SELECT 1 FROM users creator
+       JOIN departments d ON d.department_id = creator.department_id
+       WHERE creator.user_id = p.created_by
+         AND d.head_user_id = $2) AS is_head_of_creators_dept
+    FROM projects p, users u
+    WHERE p.project_id = $1 AND u.user_id = $2
+  `, [projectId, user.userId]);
+
+  if (r.rowCount === 0) return { exists: true, allowed: false };
+  const row = r.rows[0];
+
+  // Director
+  if ((row.position || '').toLowerCase().includes('директор')) return { exists: true, allowed: true };
+  // Public project
+  if (row.confidentiality_level === 'public') return { exists: true, allowed: true };
+  // Department project matching user's dept
+  if (row.confidentiality_level === 'department' && row.project_dept === row.user_dept) {
+    return { exists: true, allowed: true };
+  }
+  // Explicit user grant (not expired)
+  if (row.has_user_grant) return { exists: true, allowed: true };
+  // Department grant (not expired)
+  if (row.has_dept_grant) return { exists: true, allowed: true };
+  // Department head seeing projects by department members
+  if (row.is_head_of_creators_dept) return { exists: true, allowed: true };
+
+  return { exists: true, allowed: false };
+}
+
+// Middleware: require modify permission on :id project
+function requireModify(req, res, next) {
+  const projectId = Number(req.params.id);
+  if (!Number.isInteger(projectId)) {
+    return res.status(400).json({ error: 'Некорректный ID проекта' });
+  }
+  checkModifyPermission(pool, projectId, req.user)
+    .then(({ exists, level }) => {
+      if (!exists) return res.status(404).json({ error: 'Проект не найден' });
+      if (!level) return res.status(403).json({ error: 'Недостаточно прав для изменения проекта' });
+      req.projectPermission = level;
+      next();
+    })
+    .catch(err => {
+      console.error(err);
+      res.status(500).json({ error: 'Ошибка сервера' });
+    });
+}
+
+// Middleware: require view permission on :id project
+function requireView(req, res, next) {
+  const projectId = Number(req.params.id);
+  if (!Number.isInteger(projectId)) {
+    return res.status(400).json({ error: 'Некорректный ID проекта' });
+  }
+  checkViewPermission(pool, projectId, req.user)
+    .then(({ exists, allowed }) => {
+      if (!exists) return res.status(404).json({ error: 'Проект не найден' });
+      if (!allowed) return res.status(403).json({ error: 'Нет доступа к проекту' });
+      next();
+    })
+    .catch(err => {
+      console.error(err);
+      res.status(500).json({ error: 'Ошибка сервера' });
+    });
+}
+
 // CREATE
 router.post('/', auth, async (req, res) => {
   const {
     name,
-    created_by,
     lead_id,
     start_date,
     due_date,
@@ -28,7 +154,9 @@ router.post('/', auth, async (req, res) => {
     department_id
   } = req.body;
 
-  const createdBy = Number(created_by);
+  // SECURITY: created_by is always the current authenticated user.
+  // Ignore any created_by in req.body to prevent impersonation.
+  const createdBy = req.user.userId;
   const leadId = lead_id ? Number(lead_id) : null;
   const deptId = department_id ? Number(department_id) : null;
   const confLevel = confidentiality_level || 'public';
@@ -187,8 +315,9 @@ router.get('/', auth, async (req, res) => {
 });
 
 // UPDATE
-router.put('/:id', auth, async (req, res) => {
-  const { id } = req.params;
+router.put('/:id', auth, requireModify, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Некорректный ID' });
   const {
     name,
     lead_id,
@@ -291,8 +420,9 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // DELETE
-router.delete('/:id', auth, async (req, res) => {
-  const { id } = req.params;
+router.delete('/:id', auth, requireModify, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Некорректный ID' });
 
   try {
     const result = await pool.query(
@@ -316,7 +446,7 @@ router.delete('/:id', auth, async (req, res) => {
 // -------- PROJECT ACCESS MANAGEMENT --------
 
 // GET /api/projects/:id/access — list users with access to project
-router.get('/:id/access', auth, async (req, res) => {
+router.get('/:id/access', auth, requireView, async (req, res) => {
   const projectId = Number(req.params.id);
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Некорректный ID' });
 
@@ -385,7 +515,8 @@ async function logAccessChanges(db, projectId, userId, action, payload) {
 // POST /api/projects/:id/access — grant access (users and/or departments)
 // Accepts: { user_id, user_ids[], department_id, department_ids[], access_level, expires_at, expires_in_days }
 // Legacy { user_id } payload still works (single element).
-router.post('/:id/access', auth, async (req, res) => {
+// Requires modify permission (admin | director | owner | project-admin).
+router.post('/:id/access', auth, requireModify, async (req, res) => {
   const projectId = Number(req.params.id);
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Некорректный ID' });
 
@@ -471,13 +602,23 @@ router.post('/:id/access', auth, async (req, res) => {
 });
 
 // POST /api/projects/:id/access/copy — copy all active grants from another project
-router.post('/:id/access/copy', auth, async (req, res) => {
+// Requires modify permission on target + view permission on source.
+router.post('/:id/access/copy', auth, requireModify, async (req, res) => {
   const targetId = Number(req.params.id);
   const sourceId = Number(req.body?.source_project_id);
   const overwrite = req.body?.overwrite === true;
 
   if (!Number.isInteger(targetId) || !Number.isInteger(sourceId) || targetId === sourceId) {
     return res.status(400).json({ error: 'Некорректные идентификаторы' });
+  }
+
+  // Must also be able to VIEW the source project
+  const sourceCheck = await checkViewPermission(pool, sourceId, req.user);
+  if (!sourceCheck.exists) {
+    return res.status(404).json({ error: 'Исходный проект не найден' });
+  }
+  if (!sourceCheck.allowed) {
+    return res.status(403).json({ error: 'Нет доступа к исходному проекту' });
   }
 
   const client = await pool.connect();
@@ -541,7 +682,8 @@ router.post('/:id/access/copy', auth, async (req, res) => {
 });
 
 // GET /api/projects/:id/access/presets — computed presets for quick grant
-router.get('/:id/access/presets', auth, async (req, res) => {
+// Requires modify permission (only people who can manage access see presets).
+router.get('/:id/access/presets', auth, requireModify, async (req, res) => {
   const projectId = Number(req.params.id);
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Некорректный ID' });
 
@@ -617,7 +759,7 @@ router.get('/:id/access/presets', auth, async (req, res) => {
 });
 
 // DELETE /api/projects/:id/access/user/:userId — revoke user access
-router.delete('/:id/access/user/:userId', auth, async (req, res) => {
+router.delete('/:id/access/user/:userId', auth, requireModify, async (req, res) => {
   const projectId = Number(req.params.id);
   const userId = Number(req.params.userId);
 
@@ -642,7 +784,7 @@ router.delete('/:id/access/user/:userId', auth, async (req, res) => {
 });
 
 // DELETE /api/projects/:id/access/department/:deptId — revoke department access
-router.delete('/:id/access/department/:deptId', auth, async (req, res) => {
+router.delete('/:id/access/department/:deptId', auth, requireModify, async (req, res) => {
   const projectId = Number(req.params.id);
   const deptId = Number(req.params.deptId);
 
@@ -671,7 +813,7 @@ router.delete('/:id/access/department/:deptId', auth, async (req, res) => {
 // routes match first. Non-numeric :userId values are rejected explicitly so that
 // paths like /access/user/5 (which already matched above) don't trip the legacy
 // shim if ever reordered by mistake.
-router.delete('/:id/access/:userId', auth, async (req, res) => {
+router.delete('/:id/access/:userId', auth, requireModify, async (req, res) => {
   const projectId = Number(req.params.id);
   const userId = Number(req.params.userId);
 

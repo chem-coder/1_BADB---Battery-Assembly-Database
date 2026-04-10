@@ -4,7 +4,7 @@
  * Uses CrudTable + SaveIndicator (from Design System).
  * Create/edit form in Dialog — CrudTable handles the list.
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
 import PageHeader from '@/components/PageHeader.vue'
@@ -224,6 +224,19 @@ const copyBusy = ref(false)
 
 // Presets
 const presets = ref([])
+
+// Clear opposite selection when toggling User/Department
+watch(grantTargetType, (newType) => {
+  if (newType === 'user') grantSelectedDepts.value = []
+  else grantSelectedUsers.value = []
+})
+
+// Min date for expiry picker (stable reference, not new Date() per render)
+const todayMinDate = computed(() => {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d
+})
 
 // Computed: users grouped by department for MultiSelect
 const groupedUsers = computed(() => {
@@ -686,7 +699,7 @@ async function copyAccessFromProject() {
                 placeholder="или дата…"
                 dateFormat="dd.mm.yy"
                 :firstDayOfWeek="1"
-                :minDate="new Date()"
+                :minDate="todayMinDate"
                 showButtonBar
                 class="grant-expires-date"
                 @update:modelValue="grantExpiresPreset = null"
