@@ -133,6 +133,10 @@ router.get('/', auth, async (req, res) => {
     }
 
     // Everyone else: public + own department + explicit access
+    // Department heads additionally see ALL projects created by members of their department
+    // (prevents subordinates from hiding confidential projects from their lead)
+    const isDeptHead = me.is_department_head === true;
+
     const result = await pool.query(`
       SELECT DISTINCT p.project_id, p.name, p.created_by, p.lead_id,
              u.name AS lead_name, p.start_date, p.due_date,
@@ -154,8 +158,17 @@ router.get('/', auth, async (req, res) => {
           SELECT 1 FROM user_project_access upa
           WHERE upa.project_id = p.project_id AND upa.user_id = $2
         )
+        OR (
+          $3::boolean = true
+          AND $1::integer IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM users creator
+            WHERE creator.user_id = p.created_by
+            AND creator.department_id = $1
+          )
+        )
       ORDER BY p.name
-    `, [me.department_id, req.user.userId]);
+    `, [me.department_id, req.user.userId, isDeptHead]);
 
     res.json(result.rows);
   } catch (err) {

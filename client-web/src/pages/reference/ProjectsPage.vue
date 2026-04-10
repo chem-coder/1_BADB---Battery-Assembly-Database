@@ -381,6 +381,10 @@ async function revokeAccess(userId) {
             class="w-full"
             style="margin-top: 0.5rem"
           />
+          <div v-if="form.confidentiality_level === 'confidential'" class="vis-note">
+            <i class="pi pi-info-circle"></i>
+            Руководитель отдела, директор и админ видят проект всегда
+          </div>
         </div>
       </form>
 
@@ -591,6 +595,20 @@ async function revokeAccess(userId) {
   background: rgba(0, 50, 116, 0.06);
 }
 .vis-btn.active .pi { color: #003274; }
+
+.vis-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 0.5rem;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: rgba(0, 50, 116, 0.55);
+  background: rgba(211, 167, 84, 0.10);
+  border: 1px solid rgba(211, 167, 84, 0.25);
+  border-radius: 6px;
+}
+.vis-note .pi { font-size: 11px; color: rgba(211, 167, 84, 0.8); }
 
 /* ── Visibility pill (table) ── */
 .vis-pill {
