@@ -22,6 +22,17 @@
         user-select: none;
         width: 32px;
       }
+
+      .electrode-inline-status {
+        display: inline-block;
+        margin-left: 8px;
+        font-size: 0.95em;
+        color: #2f6f44;
+      }
+
+      .electrode-inline-status.is-error {
+        color: #a33;
+      }
     </style>
     
   </head>
@@ -41,6 +52,7 @@
       
       <!-- tape selection block -->
       <fieldset id="choose-tape">
+        <legend>Параметры партии <span id="dirty-electrode-filters" class="dirty_marker">Не сохранено</span></legend>
         <label for="electrode-role">Тип электрода: </label>
         <select id="electrode-role" required>
           <option value="">— выбрать —</option>
@@ -82,22 +94,40 @@
             
             <!-- geometry block -->
             <fieldset id="geometry-block">
-              <legend>Геометрия электродов:</legend>
-              <p>Форма электродов:</p>
-              <label>
+              <legend>Геометрия электродов <span id="dirty-electrode-batch" class="dirty_marker">Не сохранено</span></legend>
+              <label for="electrodes-target_form_factor">Семейство элемента</label>
+              <select id="electrodes-target_form_factor" name="electrodes-target_form_factor">
+                <option value="">— выбрать —</option>
+                <option value="coin">Монеточный</option>
+                <option value="pouch">Пакетный</option>
+                <option value="cylindrical">Цилиндрический</option>
+              </select><br>
+
+              <label for="electrodes-target_config_code">Конфигурация</label>
+              <select id="electrodes-target_config_code" name="electrodes-target_config_code" disabled>
+                <option value="">— выбрать семейство —</option>
+              </select><br>
+
+              <div id="electrodes-target_config_other_block" hidden>
+                <label for="electrodes-target_config_other">Другая конфигурация</label>
+                <input
+                  id="electrodes-target_config_other"
+                  type="text"
+                  name="electrodes-target_config_other"
+                  placeholder="Введите другую конфигурацию"
+                ><br>
+              </div>
+
+              <div hidden aria-hidden="true">
                 <input type="radio"
                 name="electrodes-shape"
                 value="circle"
                 data-params-target="electrodes-geom-circle">
-                Круг (монета)
-              </label><br>
-              <label>
                 <input type="radio"
                 name="electrodes-shape"
                 value="rectangle"
                 data-params-target="electrodes-geom-rect">
-                Прямоугольник (пауч, цилиндр)
-              </label><br><br>
+              </div>
               
               <!-- Для круглых электродов -->
               <div id="electrodes-geom-circle" hidden>
@@ -120,7 +150,7 @@
             
             <!-- foil mass block -->
             <fieldset id="mass-block">
-              <legend>Масса фольги</legend>
+              <legend>Масса фольги и черновик электродов <span id="dirty-electrode-drafts" class="dirty_marker">Не сохранено</span></legend>
               
               <label for="foil-mass">Средняя масса фольги одного электрода, г: </label>
               <input
@@ -177,7 +207,7 @@
             
             <!-- drying the batch -->
             <fieldset id="electrodes-drying">
-              <legend>Сушка готовой партии электродов</legend>
+              <legend>Сушка готовой партии электродов <span id="dirty-electrode-drying" class="dirty_marker">Не сохранено</span></legend>
               
               <label for="electrodes-drying-start-date">Дата начала: </label>
               <input
@@ -267,18 +297,13 @@
         </div>
         
         <h3 id="batch-title"></h3>
-        <ul id="cut-batches-list"></ul>
+        <ul id="current-cut-batches-list"></ul>
       </div>
 
-      <fieldset>
-        <legend>Список всех вырезанных партий электродов</legend>
-        <ul id="all-cut-batches-list" class="users-list"></ul>
-      </fieldset>
-      
     </form>
   </div>
 
-  <ul id="cutBatchesList" class="users-list"></ul>
+      <ul id="all-cut-batches-list" class="users-list"></ul>
 
   <div class="autosave-message" aria-live="polite"></div>
     </div>

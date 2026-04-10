@@ -136,6 +136,23 @@ const tapePageState = window.tapePageState = {
 
 const state = tapePageState;
 
+function cloneTapeDebugValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function getTapeDebugSnapshot() {
+  return {
+    form: cloneTapeDebugValue(state.form),
+    selection: cloneTapeDebugValue(state.selection),
+    recipe: cloneTapeDebugValue(state.recipe),
+    reference: cloneTapeDebugValue(state.reference),
+    tapes: cloneTapeDebugValue(state.tapes),
+    workflow: cloneTapeDebugValue(state.workflow),
+    derived: cloneTapeDebugValue(state.derived),
+    ui: cloneTapeDebugValue(state.ui)
+  };
+}
+
 function showForm() {
   form.hidden = false;
   addInput.disabled = true;
@@ -220,6 +237,7 @@ function renderTapeForm() {
   renderFormVisibility();
   renderSectionState();
   renderPanelState();
+  renderTapeWorkflowProgressionState();
 }
 
 function setMode(nextMode, { render = true } = {}) {
@@ -377,6 +395,76 @@ function refreshDirtyFromSnapshots() {
   });
 
   refreshParentDirtyStates();
+  renderTapeWorkflowProgressionState();
+}
+
+function hasSavedStep(stepCode) {
+  return state.ui.savedSnapshots[stepCode] !== null;
+}
+
+function setFieldsetDisabled(fieldsetId, shouldDisable, lockMessage = '') {
+  const fieldset = document.getElementById(fieldsetId);
+  if (!fieldset) return;
+
+  fieldset.disabled = Boolean(shouldDisable);
+
+  if (shouldDisable && lockMessage) {
+    fieldset.title = lockMessage;
+    fieldset.dataset.lockMessage = lockMessage;
+  } else {
+    fieldset.removeAttribute('title');
+    delete fieldset.dataset.lockMessage;
+  }
+}
+
+function renderTapeWorkflowProgressionState() {
+  const hasTape = Boolean(state.selection.currentTapeId);
+  const recipeSaved = hasSavedStep('recipe_materials');
+  const dryingAmSaved = hasSavedStep('drying_am');
+  const weighingSaved = hasSavedStep('weighing');
+  const mixingSaved = hasSavedStep('mixing');
+  const coatingSaved = hasSavedStep('coating');
+  const dryingTapeSaved = hasSavedStep('drying_tape');
+  const calenderingSaved = hasSavedStep('calendering');
+
+  setSectionsVisibility({
+    '0-general-info': true,
+    '0-tape-recipe-materials': hasTape,
+    '0-drying_materials': recipeSaved,
+    '1-slurry': dryingAmSaved,
+    '2-tape': mixingSaved,
+    'calculations-expanded': hasTape
+  }, { render: true });
+
+  setFieldsetDisabled(
+    '1-mixing',
+    !weighingSaved,
+    'Сначала сохраните этап I.1. Замес пасты.'
+  );
+
+  setFieldsetDisabled(
+    '2-coating',
+    !mixingSaved,
+    'Сначала сохраните этап I.2. Перемешивание пасты.'
+  );
+
+  setFieldsetDisabled(
+    '2a-drying_tape',
+    !coatingSaved,
+    'Сначала сохраните этап II.1. Нанесение.'
+  );
+
+  setFieldsetDisabled(
+    '2-calendering',
+    !dryingTapeSaved,
+    'Сначала сохраните этап II.2. Сушка ленты в шкафу.'
+  );
+
+  setFieldsetDisabled(
+    '2b-drying_pressed_tape',
+    !calenderingSaved,
+    'Сначала сохраните этап II.3. Каландрирование.'
+  );
 }
 
 function setRecipeLines(lines) {
@@ -1928,16 +2016,18 @@ function renderTapesList() {
     info.className = 'user-info';
     
     const nameSpan = document.createElement('strong');
-    nameSpan.textContent = t.name || '— без названия —';
+    nameSpan.textContent = `#${t.tape_id} | ${t.name || '— без названия —'}`;
 
     const statusSpan = document.createElement('small');
     statusSpan.style.color = '#666';
     statusSpan.textContent = ` — Статус: ${t.workflow_status_label || 'Выбор экземпляров'}`;
     
     const dateSpan = document.createElement('small');
+    const displayDate = t.updated_at || t.created_at;
     dateSpan.style.color = '#666';
-    dateSpan.textContent =
-    ' — ' + new Date(t.created_at).toLocaleDateString();
+    dateSpan.textContent = displayDate
+      ? ' — ' + new Date(displayDate).toLocaleDateString()
+      : '';
     
     info.appendChild(nameSpan);
     info.appendChild(statusSpan);
@@ -2342,6 +2432,36 @@ function setStepDirty(stepCode, isDirty) {
 
 function anyDirty() {
   return Object.values(dirtySteps).some(Boolean);
+}
+
+function getTapeDirtySnapshot() {
+  return Object.keys(dirtySteps).reduce((acc, stepCode) => {
+    acc[stepCode] = {
+      isDirty: Boolean(dirtySteps[stepCode]),
+      saved: state.ui.savedSnapshots[stepCode] ?? null,
+      current: stepCode in state.ui.savedSnapshots
+        ? getCurrentSnapshot(stepCode)
+        : null
+    };
+    return acc;
+  }, {});
+}
+
+function installTapeDebugInspector() {
+  window.__tapeDebug = {
+    getState: getTapeDebugSnapshot,
+    getDirtyState: getTapeDirtySnapshot,
+    logState() {
+      console.log('tapeState', getTapeDebugSnapshot());
+    },
+    logDirtyState() {
+      console.log('tapeDirtyState', getTapeDirtySnapshot());
+    },
+    render: renderTapeForm,
+    renderWorkflow: renderWorkflowState,
+    refreshDirtyState: refreshDirtyFromSnapshots,
+    markAllSavedSnapshotsCurrent
+  };
 }
 
 function clearAllDirtySteps() {
@@ -2843,19 +2963,6 @@ saveBtn.addEventListener('click', () => trackPendingSave((async () => {
       await loadTapes();
       // keep the form open: switch to edit mode so step buttons keep working
       setCurrentTape(created, { mode: 'edit' });
-
-      setSectionsVisibility({
-        '0-tape-recipe-materials': true,
-        '0-drying_materials': true,
-        '1-slurry': true,
-        '2-tape': true
-      });
-      setSectionsOpen({
-        '0-tape-recipe-materials': true,
-        '0-drying_materials': true,
-        '1-slurry': false,
-        '2-tape': false
-      });
       
       markAllSavedSnapshotsCurrent();
       refreshDirtyFromSnapshots();
@@ -3307,6 +3414,7 @@ renderWorkflowState();
 renderPanelState();
 markAllSavedSnapshotsCurrent();
 refreshDirtyFromSnapshots();
+installTapeDebugInspector();
 loadTapes();
 loadUsers();
 loadProjects();

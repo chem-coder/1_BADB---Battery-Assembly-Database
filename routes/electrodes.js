@@ -1,6 +1,116 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const ALLOWED_TARGET_FORM_FACTORS = new Set(['coin', 'pouch', 'cylindrical']);
+const ALLOWED_TARGET_CONFIG_CODES = new Set([
+  '2016',
+  '2025',
+  '2032',
+  '103x83',
+  '86x56',
+  '18650',
+  '21700',
+  'other'
+]);
+
+const TARGET_CONFIG_CODES_BY_FORM_FACTOR = {
+  coin: new Set(['2016', '2025', '2032', 'other']),
+  pouch: new Set(['103x83', '86x56', 'other']),
+  cylindrical: new Set(['18650', '21700', 'other'])
+};
+
+function normalizeCutBatchGeometry({
+  target_form_factor,
+  target_config_code,
+  target_config_other,
+  shape,
+  diameter_mm,
+  length_mm,
+  width_mm
+}) {
+  const normalizedTargetFormFactor = target_form_factor || null;
+  const normalizedTargetConfigCode = target_config_code || null;
+  const normalizedTargetConfigOther = target_config_other?.trim() || null;
+  const normalizedShape =
+    normalizedTargetFormFactor === 'coin' ? 'circle'
+    : normalizedTargetFormFactor === 'pouch' || normalizedTargetFormFactor === 'cylindrical' ? 'rectangle'
+    : (shape || null);
+  const normalizedDiameter = diameter_mm != null && diameter_mm !== '' ? Number(diameter_mm) : null;
+  const normalizedLength = length_mm != null && length_mm !== '' ? Number(length_mm) : null;
+  const normalizedWidth = width_mm != null && width_mm !== '' ? Number(width_mm) : null;
+  if (normalizedShape && !['circle', 'rectangle'].includes(normalizedShape)) {
+    return { error: 'Некорректная форма электрода' };
+  }
+
+  if (!normalizedTargetFormFactor || !ALLOWED_TARGET_FORM_FACTORS.has(normalizedTargetFormFactor)) {
+    return { error: 'Необходимо выбрать семейство элемента' };
+  }
+
+  if (!normalizedTargetConfigCode || !ALLOWED_TARGET_CONFIG_CODES.has(normalizedTargetConfigCode)) {
+    return { error: 'Необходимо выбрать конфигурацию элемента' };
+  }
+
+  if (!TARGET_CONFIG_CODES_BY_FORM_FACTOR[normalizedTargetFormFactor].has(normalizedTargetConfigCode)) {
+    return { error: 'Конфигурация не соответствует выбранному семейству элемента' };
+  }
+
+  if (
+    normalizedTargetConfigCode === 'other' &&
+    !normalizedTargetConfigOther
+  ) {
+    return { error: 'Для конфигурации other необходимо заполнить пояснение' };
+  }
+
+  if (normalizedDiameter != null && (!Number.isFinite(normalizedDiameter) || normalizedDiameter <= 0)) {
+    return { error: 'Диаметр должен быть положительным числом' };
+  }
+
+  if (normalizedLength != null && (!Number.isFinite(normalizedLength) || normalizedLength <= 0)) {
+    return { error: 'Длина должна быть положительным числом' };
+  }
+
+  if (normalizedWidth != null && (!Number.isFinite(normalizedWidth) || normalizedWidth <= 0)) {
+    return { error: 'Ширина должна быть положительным числом' };
+  }
+
+  if (normalizedShape === 'circle') {
+    if (normalizedDiameter == null) {
+      return { error: 'Для круглого электрода необходимо указать диаметр' };
+    }
+
+    if (normalizedLength != null || normalizedWidth != null) {
+      return { error: 'Для круглого электрода нельзя указывать длину и ширину' };
+    }
+
+    if (normalizedTargetFormFactor !== 'coin') {
+      return { error: 'Круглый электрод может относиться только к монеточному элементу' };
+    }
+  }
+
+  if (normalizedShape === 'rectangle') {
+    if (normalizedLength == null || normalizedWidth == null) {
+      return { error: 'Для прямоугольного электрода необходимо указать длину и ширину' };
+    }
+
+    if (normalizedDiameter != null) {
+      return { error: 'Для прямоугольного электрода нельзя указывать диаметр' };
+    }
+
+    if (!['pouch', 'cylindrical'].includes(normalizedTargetFormFactor)) {
+      return { error: 'Прямоугольный электрод может относиться только к pouch или cylindrical' };
+    }
+  }
+
+  return {
+    target_form_factor: normalizedTargetFormFactor,
+    target_config_code: normalizedTargetConfigCode,
+    target_config_other: normalizedTargetConfigOther,
+    shape: normalizedShape,
+    diameter_mm: normalizedDiameter,
+    length_mm: normalizedLength,
+    width_mm: normalizedWidth
+  };
+}
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -56,9 +166,12 @@ router.get('/electrode-cut-batches', async (req, res) => {
 // -------- ELECTRODE CUT BATCHES --------
 // CREATE cut batch
 router.post('/electrode-cut-batches', async (req, res) => {
-    const {
+  const {
     tape_id,
     created_by,
+    target_form_factor,
+    target_config_code,
+    target_config_other,
     shape,
     diameter_mm,
     length_mm,
@@ -73,28 +186,48 @@ router.post('/electrode-cut-batches', async (req, res) => {
     return res.status(400).json({ error: 'Некорректные данные' });
   }
 
+  const geometry = normalizeCutBatchGeometry({
+    target_form_factor,
+    target_config_code,
+    target_config_other,
+    shape,
+    diameter_mm,
+    length_mm,
+    width_mm
+  });
+
+  if (geometry.error) {
+    return res.status(400).json({ error: geometry.error });
+  }
+
   try {
     const result = await pool.query(
       `
       INSERT INTO electrode_cut_batches (
         tape_id,
         created_by,
+        target_form_factor,
+        target_config_code,
+        target_config_other,
         shape,
         diameter_mm,
         length_mm,
         width_mm,
         comments
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       RETURNING *
       `,
       [
         tapeId,
         createdBy,
-        shape || null,
-        diameter_mm || null,
-        length_mm || null,
-        width_mm || null,
+        geometry.target_form_factor,
+        geometry.target_config_code,
+        geometry.target_config_other,
+        geometry.shape,
+        geometry.diameter_mm,
+        geometry.length_mm,
+        geometry.width_mm,
         comments || null
       ]
     );
@@ -110,6 +243,9 @@ router.put('/electrode-cut-batches/:id', async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   const {
+    target_form_factor,
+    target_config_code,
+    target_config_other,
     shape,
     diameter_mm,
     length_mm,
@@ -121,28 +257,65 @@ router.put('/electrode-cut-batches/:id', async (req, res) => {
     return res.status(400).json({ error: 'Некорректный ID партии' });
   }
 
-  if (shape && !['circle','rectangle'].includes(shape)) {
-    return res.status(400).json({ error: 'Некорректная форма электрода' });
-  }
-
   try {
+    const currentRes = await pool.query(
+      `
+      SELECT
+        target_form_factor,
+        target_config_code,
+        target_config_other,
+        shape,
+        diameter_mm,
+        length_mm,
+        width_mm
+      FROM electrode_cut_batches
+      WHERE cut_batch_id = $1
+      `,
+      [cutBatchId]
+    );
+
+    if (currentRes.rowCount === 0) {
+      return res.status(404).json({ error: 'Партия не найдена' });
+    }
+
+    const current = currentRes.rows[0];
+    const geometry = normalizeCutBatchGeometry({
+      target_form_factor: target_form_factor !== undefined ? target_form_factor : current.target_form_factor,
+      target_config_code: target_config_code !== undefined ? target_config_code : current.target_config_code,
+      target_config_other: target_config_other !== undefined ? target_config_other : current.target_config_other,
+      shape: shape !== undefined ? shape : current.shape,
+      diameter_mm: diameter_mm !== undefined ? diameter_mm : current.diameter_mm,
+      length_mm: length_mm !== undefined ? length_mm : current.length_mm,
+      width_mm: width_mm !== undefined ? width_mm : current.width_mm
+    });
+
+    if (geometry.error) {
+      return res.status(400).json({ error: geometry.error });
+    }
+
     const result = await pool.query(
       `
       UPDATE electrode_cut_batches
       SET
-        shape = $1,
-        diameter_mm = $2,
-        length_mm = $3,
-        width_mm = $4,
-        comments = $5
-      WHERE cut_batch_id = $6
+        target_form_factor = $1,
+        target_config_code = $2,
+        target_config_other = $3,
+        shape = $4,
+        diameter_mm = $5,
+        length_mm = $6,
+        width_mm = $7,
+        comments = $8
+      WHERE cut_batch_id = $9
       RETURNING *
       `,
       [
-        shape || null,
-        diameter_mm || null,
-        length_mm || null,
-        width_mm || null,
+        geometry.target_form_factor,
+        geometry.target_config_code,
+        geometry.target_config_other,
+        geometry.shape,
+        geometry.diameter_mm,
+        geometry.length_mm,
+        geometry.width_mm,
         comments || null,
         cutBatchId
       ]

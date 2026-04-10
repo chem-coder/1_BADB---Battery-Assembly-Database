@@ -359,6 +359,7 @@ router.get('/', async (req, res) => {
       t.tape_recipe_id,
       t.created_by,
       t.created_at,
+      t.updated_at,
       t.status,
       t.notes,
       t.calc_mode,
