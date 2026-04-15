@@ -42,6 +42,9 @@ export function useBatteryState({ batteryId }) {
       pouch_case_size_code: '',
       pouch_case_size_other: '',
       pouch_notes: '',
+      // Cylindrical-cell fields (battery_cyl_config)
+      cyl_size_code: '',
+      cyl_notes: '',
     },
     electrodes: {
       cathode_tape_id: '',
@@ -207,7 +210,10 @@ export function useBatteryState({ batteryId }) {
         })
       } else if (code === 'config') {
         const c = steps.config
-        // Route by form factor: coin → battery_coin_config, pouch → battery_pouch_config
+        // Route by form factor:
+        //   coin        → PATCH /battery_coin_config/:id
+        //   pouch       → POST  /battery_pouch_config    (upsert)
+        //   cylindrical → POST  /battery_cyl_config      (upsert)
         if (general.form_factor === 'pouch') {
           // Pouch config uses POST (upsert semantics in Dalia's backend).
           await api.post(`/api/batteries/battery_pouch_config`, {
@@ -217,6 +223,13 @@ export function useBatteryState({ batteryId }) {
               ? (c.pouch_case_size_other || null)
               : null,
             pouch_notes: c.pouch_notes || null,
+          })
+        } else if (general.form_factor === 'cylindrical') {
+          // Cylindrical config uses POST (upsert semantics in Dalia's backend).
+          await api.post(`/api/batteries/battery_cyl_config`, {
+            battery_id: id,
+            cyl_size_code: c.cyl_size_code || null,
+            cyl_notes: c.cyl_notes || null,
           })
         } else {
           // Coin (default) config
@@ -307,8 +320,16 @@ export function useBatteryState({ batteryId }) {
             steps.config.pouch_notes = pouch.pouch_notes || ''
           }
         } catch {}
+      } else if (general.form_factor === 'cylindrical') {
+        try {
+          const { data: cyl } = await api.get(`/api/batteries/battery_cyl_config/${id}`)
+          if (cyl) {
+            steps.config.cyl_size_code = cyl.cyl_size_code || ''
+            steps.config.cyl_notes = cyl.cyl_notes || ''
+          }
+        } catch {}
       } else {
-        // Coin (default) — also fall through for cylindrical until Dalia adds it
+        // Coin (default)
         try {
           const { data: coin } = await api.get(`/api/batteries/battery_coin_config/${id}`)
           if (coin) {
@@ -375,6 +396,9 @@ export function useBatteryState({ batteryId }) {
     if (code === 'config') {
       if (general.form_factor === 'pouch') {
         return steps.config.pouch_case_size_code ? 'done' : 'pending'
+      }
+      if (general.form_factor === 'cylindrical') {
+        return steps.config.cyl_size_code ? 'done' : 'pending'
       }
       return steps.config.coin_cell_mode || steps.config.coin_size_code ? 'done' : 'pending'
     }

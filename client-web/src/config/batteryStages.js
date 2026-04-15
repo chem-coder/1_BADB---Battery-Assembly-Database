@@ -17,6 +17,16 @@ export const COIN_SIZE_OPTIONS = [
   { value: '2032', label: '2032' },
 ]
 
+// Cylindrical case size codes (backend field is free-text cyl_size_code with
+// no separate "other" field — unlike electrode cut batches or pouch. If users
+// need a non-standard size, they use the cyl_notes textarea.)
+export const CYL_SIZE_OPTIONS = [
+  { value: '18650', label: '18650' },
+  { value: '21700', label: '21700' },
+  { value: '26650', label: '26650' },
+  { value: '32700', label: '32700' },
+]
+
 export const BATTERY_STAGES = [
   {
     code: 'general',
@@ -59,6 +69,9 @@ export const BATTERY_STAGES = [
       { key: 'pouch_case_size_code', label: 'Корпус (пауч)', type: 'select', options: POUCH_CASE_SIZE_OPTIONS },
       { key: 'pouch_case_size_other', label: 'Другой корпус', type: 'text' },
       { key: 'pouch_notes', label: 'Заметки (пауч)', type: 'textarea' },
+      // ── Cylindrical-cell fields (battery_cyl_config) ──
+      { key: 'cyl_size_code', label: 'Размер (цил.)', type: 'select', options: CYL_SIZE_OPTIONS },
+      { key: 'cyl_notes', label: 'Заметки (цил.)', type: 'textarea' },
     ],
   },
   {
