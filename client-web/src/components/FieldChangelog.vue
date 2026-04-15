@@ -5,6 +5,7 @@
  */
 import { ref, watch } from 'vue'
 import api from '@/services/api'
+import { fieldLabel } from '@/utils/fieldLabels'
 
 const props = defineProps({
   entityType: { type: String, required: true },
@@ -70,7 +71,7 @@ function truncate(val, max = 40) {
       <tbody>
         <tr v-for="c in changes" :key="c.id">
           <td class="fc-date">{{ formatDt(c.changed_at) }}</td>
-          <td class="fc-field">{{ c.field_name }}</td>
+          <td class="fc-field" :title="c.field_name">{{ fieldLabel(entityType, c.field_name) }}</td>
           <td class="fc-old" :title="c.old_value">{{ truncate(c.old_value) }}</td>
           <td class="fc-new" :title="c.new_value">{{ truncate(c.new_value) }}</td>
           <td class="fc-who">{{ c.changed_by_name || '—' }}</td>
