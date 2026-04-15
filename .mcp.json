@@ -1,8 +1,3 @@
 {
-  "mcpServers": {
-    "mempalace": {
-      "command": "arch",
-      "args": ["-arm64", "/usr/local/bin/python3", "-m", "mempalace.mcp_server"]
-    }
-  }
+  "mcpServers": {}
 }
