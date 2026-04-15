@@ -7,6 +7,26 @@ const { auth } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
 
 const ALLOWED_COIN_LAYOUTS = new Set(['SE', 'ES', 'ESE']);
+const ALLOWED_POUCH_CASE_SIZE_CODES = new Set(['103x83', '86x56', 'other']);
+
+function validatePouchCaseSizeInput(pouchCaseSizeCode, pouchCaseSizeOther) {
+  if (pouchCaseSizeCode == null || pouchCaseSizeCode === '') {
+    return null;
+  }
+
+  if (!ALLOWED_POUCH_CASE_SIZE_CODES.has(pouchCaseSizeCode)) {
+    return 'Допустимые размеры pouch case: 103x83, 86x56, other';
+  }
+
+  if (
+    pouchCaseSizeCode === 'other' &&
+    (!pouchCaseSizeOther || !String(pouchCaseSizeOther).trim())
+  ) {
+    return 'Для pouch_case_size_code = other необходимо заполнить pouch_case_size_other';
+  }
+
+  return null;
+}
 
 async function ensureBatteryAssembledStatus(batteryId) {
   await pool.query(
@@ -14,9 +34,32 @@ async function ensureBatteryAssembledStatus(batteryId) {
     WITH readiness AS (
       SELECT
         (
-          EXISTS (SELECT 1 FROM battery_coin_config c WHERE c.battery_id = $1)
-          OR EXISTS (SELECT 1 FROM battery_pouch_config p WHERE p.battery_id = $1)
-          OR EXISTS (SELECT 1 FROM battery_cyl_config cy WHERE cy.battery_id = $1)
+          EXISTS (
+            SELECT 1
+            FROM batteries b
+            JOIN battery_coin_config c ON c.battery_id = b.battery_id
+            WHERE b.battery_id = $1
+              AND b.form_factor = 'coin'
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM batteries b
+            JOIN battery_pouch_config p ON p.battery_id = b.battery_id
+            WHERE b.battery_id = $1
+              AND b.form_factor = 'pouch'
+              AND p.pouch_case_size_code IS NOT NULL
+              AND (
+                p.pouch_case_size_code <> 'other'
+                OR NULLIF(BTRIM(p.pouch_case_size_other), '') IS NOT NULL
+              )
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM batteries b
+            JOIN battery_cyl_config cy ON cy.battery_id = b.battery_id
+            WHERE b.battery_id = $1
+              AND b.form_factor = 'cylindrical'
+          )
         ) AS has_config,
         EXISTS (
           SELECT 1 FROM battery_electrode_sources es WHERE es.battery_id = $1
@@ -120,6 +163,17 @@ router.get('/', auth, async (req, res) => {
         p.name AS project_name,
         b.form_factor,
         b.status,
+        cc.coin_size_code,
+        cathode_materials.active_material_names AS cathode_active_materials,
+        cathode_batch.shape AS cathode_batch_shape,
+        cathode_batch.diameter_mm AS cathode_batch_diameter_mm,
+        cathode_batch.length_mm AS cathode_batch_length_mm,
+        cathode_batch.width_mm AS cathode_batch_width_mm,
+        anode_materials.active_material_names AS anode_active_materials,
+        anode_batch.shape AS anode_batch_shape,
+        anode_batch.diameter_mm AS anode_batch_diameter_mm,
+        anode_batch.length_mm AS anode_batch_length_mm,
+        anode_batch.width_mm AS anode_batch_width_mm,
         b.created_by,
         u_created.name AS created_by_name,
         b.battery_notes AS notes,
@@ -134,6 +188,40 @@ router.get('/', auth, async (req, res) => {
         ON u_created.user_id = b.created_by
       LEFT JOIN users u_updated
         ON u_updated.user_id = b.updated_by
+      LEFT JOIN battery_coin_config cc
+        ON cc.battery_id = b.battery_id
+      LEFT JOIN battery_electrode_sources cathode_src
+        ON cathode_src.battery_id = b.battery_id
+       AND cathode_src.role = 'cathode'
+      LEFT JOIN tapes cathode_tape
+        ON cathode_tape.tape_id = cathode_src.tape_id
+      LEFT JOIN LATERAL (
+        SELECT STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS active_material_names
+        FROM tape_recipe_lines trl
+        JOIN materials m
+          ON m.material_id = trl.material_id
+        WHERE trl.tape_recipe_id = cathode_tape.tape_recipe_id
+          AND trl.recipe_role = 'cathode_active'
+      ) cathode_materials
+        ON TRUE
+      LEFT JOIN electrode_cut_batches cathode_batch
+        ON cathode_batch.cut_batch_id = cathode_src.cut_batch_id
+      LEFT JOIN battery_electrode_sources anode_src
+        ON anode_src.battery_id = b.battery_id
+       AND anode_src.role = 'anode'
+      LEFT JOIN tapes anode_tape
+        ON anode_tape.tape_id = anode_src.tape_id
+      LEFT JOIN LATERAL (
+        SELECT STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS active_material_names
+        FROM tape_recipe_lines trl
+        JOIN materials m
+          ON m.material_id = trl.material_id
+        WHERE trl.tape_recipe_id = anode_tape.tape_recipe_id
+          AND trl.recipe_role = 'anode_active'
+      ) anode_materials
+        ON TRUE
+      LEFT JOIN electrode_cut_batches anode_batch
+        ON anode_batch.cut_batch_id = anode_src.cut_batch_id
       ORDER BY b.battery_id DESC
       `
     );
@@ -146,6 +234,108 @@ router.get('/', auth, async (req, res) => {
     res.status(500).json({ error: 'Ошибка загрузки аккумуляторов' });
 
   }
+});
+
+router.get('/:id/electrode-cut-batches', async (req, res) => {
+
+  const batteryId = Number(req.params.id);
+  const tapeId = Number(req.query.tape_id);
+  const selectedBatchIdRaw = req.query.selected_batch_id;
+  const selectedBatchId =
+    selectedBatchIdRaw == null || selectedBatchIdRaw === ''
+      ? null
+      : Number(selectedBatchIdRaw);
+
+  if (!Number.isInteger(batteryId) || !Number.isInteger(tapeId)) {
+    return res.status(400).json({ error: 'Некорректные battery_id или tape_id' });
+  }
+
+  if (selectedBatchId !== null && !Number.isInteger(selectedBatchId)) {
+    return res.status(400).json({ error: 'Некорректный selected_batch_id' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      WITH battery_context AS (
+        SELECT
+          b.battery_id,
+          b.form_factor,
+          CASE
+            WHEN b.form_factor = 'coin' THEN cc.coin_size_code
+            WHEN b.form_factor = 'pouch' THEN pc.pouch_case_size_code
+            WHEN b.form_factor = 'cylindrical' THEN cy.cyl_size_code
+            ELSE NULL
+          END AS target_config_code,
+          CASE
+            WHEN b.form_factor = 'coin' THEN 'circle'
+            WHEN b.form_factor IN ('pouch', 'cylindrical') THEN 'rectangle'
+            ELSE NULL
+          END AS expected_shape
+        FROM batteries b
+        LEFT JOIN battery_coin_config cc
+          ON cc.battery_id = b.battery_id
+        LEFT JOIN battery_pouch_config pc
+          ON pc.battery_id = b.battery_id
+        LEFT JOIN battery_cyl_config cy
+          ON cy.battery_id = b.battery_id
+        WHERE b.battery_id = $1
+      )
+      SELECT
+        b.*,
+        u.name AS created_by_name,
+        (
+          ctx.expected_shape IS NOT NULL
+          AND ctx.target_config_code IS NOT NULL
+          AND b.shape = ctx.expected_shape
+          AND b.target_form_factor = ctx.form_factor
+          AND b.target_config_code = ctx.target_config_code
+        ) AS is_compatibility_match,
+        d.start_time AS drying_start,
+        d.end_time AS drying_end,
+        COALESCE(ec.electrode_count, 0) AS electrode_count
+      FROM electrode_cut_batches b
+      CROSS JOIN battery_context ctx
+      LEFT JOIN users u
+        ON u.user_id = b.created_by
+      LEFT JOIN electrode_drying d
+        ON d.cut_batch_id = b.cut_batch_id
+      LEFT JOIN (
+        SELECT
+          cut_batch_id,
+          COUNT(*) AS electrode_count
+        FROM electrodes
+        GROUP BY cut_batch_id
+      ) ec
+        ON ec.cut_batch_id = b.cut_batch_id
+      WHERE b.tape_id = $2
+        AND (
+          (
+            ctx.expected_shape IS NOT NULL
+            AND ctx.target_config_code IS NOT NULL
+            AND b.shape = ctx.expected_shape
+            AND b.target_form_factor = ctx.form_factor
+            AND b.target_config_code = ctx.target_config_code
+          )
+          OR (
+            $3::integer IS NOT NULL
+            AND b.cut_batch_id = $3
+          )
+        )
+      ORDER BY
+        CASE WHEN $3::integer IS NOT NULL AND b.cut_batch_id = $3 THEN 0 ELSE 1 END,
+        b.created_at DESC,
+        b.cut_batch_id DESC
+      `,
+      [batteryId, tapeId, selectedBatchId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка загрузки совместимых партий электродов' });
+  }
+
 });
 
 // Read battery header
@@ -166,15 +356,62 @@ router.get('/:id', auth, async (req, res) => {
         b.project_id,
         p.name AS project_name,
         b.form_factor,
+        b.status,
+        cc.coin_size_code,
+        cathode_materials.active_material_names AS cathode_active_materials,
+        cathode_batch.shape AS cathode_batch_shape,
+        cathode_batch.diameter_mm AS cathode_batch_diameter_mm,
+        cathode_batch.length_mm AS cathode_batch_length_mm,
+        cathode_batch.width_mm AS cathode_batch_width_mm,
+        anode_materials.active_material_names AS anode_active_materials,
+        anode_batch.shape AS anode_batch_shape,
+        anode_batch.diameter_mm AS anode_batch_diameter_mm,
+        anode_batch.length_mm AS anode_batch_length_mm,
+        anode_batch.width_mm AS anode_batch_width_mm,
         b.created_by,
         u.name AS created_by_name,
         b.battery_notes AS notes,
-        b.created_at
+        b.created_at,
+        b.updated_at
       FROM batteries b
       LEFT JOIN projects p
         ON p.project_id = b.project_id
       LEFT JOIN users u
         ON u.user_id = b.created_by
+      LEFT JOIN battery_coin_config cc
+        ON cc.battery_id = b.battery_id
+      LEFT JOIN battery_electrode_sources cathode_src
+        ON cathode_src.battery_id = b.battery_id
+       AND cathode_src.role = 'cathode'
+      LEFT JOIN tapes cathode_tape
+        ON cathode_tape.tape_id = cathode_src.tape_id
+      LEFT JOIN LATERAL (
+        SELECT STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS active_material_names
+        FROM tape_recipe_lines trl
+        JOIN materials m
+          ON m.material_id = trl.material_id
+        WHERE trl.tape_recipe_id = cathode_tape.tape_recipe_id
+          AND trl.recipe_role = 'cathode_active'
+      ) cathode_materials
+        ON TRUE
+      LEFT JOIN electrode_cut_batches cathode_batch
+        ON cathode_batch.cut_batch_id = cathode_src.cut_batch_id
+      LEFT JOIN battery_electrode_sources anode_src
+        ON anode_src.battery_id = b.battery_id
+       AND anode_src.role = 'anode'
+      LEFT JOIN tapes anode_tape
+        ON anode_tape.tape_id = anode_src.tape_id
+      LEFT JOIN LATERAL (
+        SELECT STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS active_material_names
+        FROM tape_recipe_lines trl
+        JOIN materials m
+          ON m.material_id = trl.material_id
+        WHERE trl.tape_recipe_id = anode_tape.tape_recipe_id
+          AND trl.recipe_role = 'anode_active'
+      ) anode_materials
+        ON TRUE
+      LEFT JOIN electrode_cut_batches anode_batch
+        ON anode_batch.cut_batch_id = anode_src.cut_batch_id
       WHERE b.battery_id = $1
       `,
       [batteryId]
@@ -547,6 +784,8 @@ router.post('/battery_pouch_config', auth, async (req, res) => {
 
   const {
     battery_id,
+    pouch_case_size_code,
+    pouch_case_size_other,
     pouch_notes
   } = req.body;
 
@@ -556,22 +795,37 @@ router.post('/battery_pouch_config', auth, async (req, res) => {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
+  const pouchCaseValidationError = validatePouchCaseSizeInput(
+    pouch_case_size_code,
+    pouch_case_size_other
+  );
+
+  if (pouchCaseValidationError) {
+    return res.status(400).json({ error: pouchCaseValidationError });
+  }
+
   try {
 
     const result = await pool.query(
       `
       INSERT INTO battery_pouch_config (
         battery_id,
+        pouch_case_size_code,
+        pouch_case_size_other,
         pouch_notes
       )
-      VALUES ($1, $2)
+      VALUES ($1, $2, $3, $4)
       ON CONFLICT (battery_id)
       DO UPDATE SET
+        pouch_case_size_code = EXCLUDED.pouch_case_size_code,
+        pouch_case_size_other = EXCLUDED.pouch_case_size_other,
         pouch_notes = EXCLUDED.pouch_notes
       RETURNING *
       `,
       [
         batteryId,
+        pouch_case_size_code || null,
+        pouch_case_size_other?.trim() || null,
         pouch_notes || null
       ]
     );
@@ -602,6 +856,8 @@ router.get('/battery_pouch_config/:battery_id', auth, async (req, res) => {
       `
       SELECT
         battery_id,
+        pouch_case_size_code,
+        pouch_case_size_other,
         pouch_notes
       FROM battery_pouch_config
       WHERE battery_id = $1
@@ -630,11 +886,22 @@ router.patch('/battery_pouch_config/:battery_id', auth, async (req, res) => {
   const batteryId = Number(req.params.battery_id);
 
   const {
+    pouch_case_size_code,
+    pouch_case_size_other,
     pouch_notes
   } = req.body;
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
+  }
+
+  const pouchCaseValidationError = validatePouchCaseSizeInput(
+    pouch_case_size_code,
+    pouch_case_size_other
+  );
+
+  if (pouchCaseValidationError) {
+    return res.status(400).json({ error: pouchCaseValidationError });
   }
 
   try {
@@ -644,13 +911,19 @@ router.patch('/battery_pouch_config/:battery_id', auth, async (req, res) => {
       `
       UPDATE battery_pouch_config
       SET
-        pouch_notes = $1
-      WHERE battery_id = $2
+        pouch_case_size_code = $1,
+        pouch_case_size_other = $2,
+        pouch_notes = $3
+      WHERE battery_id = $4
       RETURNING
         battery_id,
+        pouch_case_size_code,
+        pouch_case_size_other,
         pouch_notes
       `,
       [
+        pouch_case_size_code || null,
+        pouch_case_size_other?.trim() || null,
         pouch_notes || null,
         batteryId
       ]
