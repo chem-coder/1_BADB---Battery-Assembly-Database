@@ -834,74 +834,92 @@ function exportChartPNG(chartRef, name) {
   border-color: #003274;
 }
 
-/* Editable Select for "каждый N-й" — styled to match filter-btn exactly.
-   PrimeVue defaults are too tall/padded; we override to get a 24px-height
-   pill that sits inline with the surrounding buttons. */
+/* Editable Select for "каждый N-й" — forced to match filter-btn height
+   exactly. PrimeVue's default .p-select has its own line-height, padding
+   and min-height that win over our earlier overrides; we pin everything
+   with !important to get a uniform 24px pill. */
 .filter-select {
   min-width: 160px;
   max-width: 200px;
+  display: inline-flex;
+  align-items: center;
 }
+/* Root container */
 .filter-select :deep(.p-select) {
-  height: 24px;
-  min-height: 24px;
-  border: 1px solid rgba(0, 50, 116, 0.15);
-  border-radius: 6px;
-  background: white;
-  box-shadow: none;
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 24px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 1px solid rgba(0, 50, 116, 0.15) !important;
+  border-radius: 6px !important;
+  background: white !important;
+  box-shadow: none !important;
   font-family: inherit;
   font-size: 12px;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.15s;
 }
 .filter-select :deep(.p-select:hover) {
-  border-color: rgba(0, 50, 116, 0.4);
+  border-color: rgba(0, 50, 116, 0.4) !important;
 }
-.filter-select :deep(.p-select.p-focus) {
-  border-color: #003274;
-  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
+.filter-select :deep(.p-select.p-focus),
+.filter-select :deep(.p-select:focus-within) {
+  border-color: #003274 !important;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12) !important;
+  outline: none !important;
 }
 
-/* Label cell (readonly mode or editable display) */
+/* Label cell — readonly mode */
 .filter-select :deep(.p-select-label) {
-  padding: 0 8px;
-  font-size: 12px;
+  padding: 0 0 0 8px !important;
+  margin: 0 !important;
+  height: 22px !important;
+  min-height: 0 !important;
+  line-height: 22px !important;
+  font-size: 12px !important;
   font-weight: 500;
   color: #003274;
-  line-height: 22px;       /* = height - 2px border */
-  height: 22px;
   display: flex;
   align-items: center;
 }
 .filter-select :deep(.p-select-label.p-placeholder) {
   color: rgba(0, 50, 116, 0.45);
   font-weight: 400;
-  font-style: normal;
 }
 
-/* Input inside editable mode — PrimeVue renders a real <input> */
+/* Editable input — PrimeVue renders an <input> directly under .p-select */
+.filter-select :deep(.p-select > input),
 .filter-select :deep(input.p-select-label),
-.filter-select :deep(.p-select input) {
-  height: 22px;
-  line-height: 22px;
-  padding: 0 8px;
-  border: none;
-  background: transparent;
-  outline: none;
-  font-size: 12px;
+.filter-select :deep(.p-inputtext) {
+  height: 22px !important;
+  min-height: 0 !important;
+  padding: 0 0 0 8px !important;
+  margin: 0 !important;
+  line-height: 22px !important;
+  border: none !important;
+  background: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+  font-size: 12px !important;
   font-weight: 500;
   color: #003274;
   font-family: inherit;
 }
 
-/* Dropdown chevron */
+/* Dropdown chevron on the right */
 .filter-select :deep(.p-select-dropdown) {
-  width: 22px;
-  padding: 0;
+  width: 22px !important;
+  padding: 0 !important;
   color: rgba(0, 50, 116, 0.55);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .filter-select :deep(.p-select-dropdown svg),
 .filter-select :deep(.p-select-dropdown-icon) {
-  width: 10px;
-  height: 10px;
+  width: 10px !important;
+  height: 10px !important;
 }
 
 /* Range popover — inline bubble */
