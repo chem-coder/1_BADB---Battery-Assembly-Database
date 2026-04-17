@@ -439,7 +439,6 @@ const batteryOptions = computed(() =>
               <span v-if="uploadStats.done > 0" class="file-picker-done">· {{ uploadStats.done }} готово</span>
               <span v-if="uploadStats.err > 0"  class="file-picker-err">· {{ uploadStats.err }} с ошибкой</span>
             </span>
-            <span v-else class="file-picker-hint">Можно выбрать несколько файлов сразу (Ctrl/⌘ + клик)</span>
           </div>
         </div>
 
@@ -640,7 +639,6 @@ const batteryOptions = computed(() =>
 }
 .file-picker-done { color: #27AE60; margin-left: 4px; }
 .file-picker-err  { color: #E74C3C; margin-left: 4px; }
-.file-picker-hint { font-size: 12px; color: #9CA3AF; font-style: italic; }
 
 .file-list {
   display: flex;
