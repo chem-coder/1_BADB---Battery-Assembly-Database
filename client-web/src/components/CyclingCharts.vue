@@ -862,21 +862,25 @@ function exportChartPNG(chartRef, name) {
       </span>
     </div>
 
-    <!-- Cycle selector (individual chips) -->
+    <!-- Cycle selector (representative chips when many cycles) -->
     <div class="cycle-selector">
       <span class="cycle-label">Циклы:</span>
-      <button
-        v-for="c in cycleButtons"
-        :key="c"
-        :class="['cycle-btn', selectedSet.has(c) ? 'active' : '', loadingSet.has(c) ? 'loading' : '']"
-        @click="handleToggle(c)"
-      >
-        <i v-if="loadingSet.has(c)" class="pi pi-spin pi-spinner" style="font-size:9px;margin-right:3px"></i>
-        {{ c }}
-      </button>
-      <span v-if="selectedCycles.length" class="cycle-hint">
-        · клик по точке графика тоже добавляет цикл
-      </span>
+      <template v-for="(c, idx) in cycleButtons" :key="c">
+        <!-- "…" between non-consecutive chip numbers so the user sees the
+             selection is a sparse subset, not a complete range -->
+        <span
+          v-if="idx > 0 && c - cycleButtons[idx - 1] > 1"
+          class="cycle-gap"
+          aria-hidden="true"
+        >…</span>
+        <button
+          :class="['cycle-btn', selectedSet.has(c) ? 'active' : '', loadingSet.has(c) ? 'loading' : '']"
+          @click="handleToggle(c)"
+        >
+          <i v-if="loadingSet.has(c)" class="pi pi-spin pi-spinner" style="font-size:9px;margin-right:3px"></i>
+          {{ c }}
+        </button>
+      </template>
     </div>
 
     <!-- Voltage profile (overlay of selected cycles) -->
@@ -1118,6 +1122,12 @@ function exportChartPNG(chartRef, name) {
   font-size: 10px;
   color: rgba(0, 50, 116, 0.4);
   margin-left: 6px;
+}
+.cycle-gap {
+  color: rgba(0, 50, 116, 0.35);
+  font-size: 11px;
+  padding: 0 1px;
+  user-select: none;
 }
 
 /* ── Per-session summary tables (mimics colleague's Excel layout) ── */
