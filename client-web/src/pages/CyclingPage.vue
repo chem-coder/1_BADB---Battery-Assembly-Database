@@ -833,6 +833,14 @@ const batteryOptions = computed(() =>
 .battery-link:hover { text-decoration: underline; }
 
 /* ── Active toggle (colored dot in table column) ── */
+/* Wrapper centers the button horizontally inside the td (PrimeVue defaults
+   td text-align: left, so the 32px button hugs the left edge otherwise). */
+.active-cell {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
 .active-toggle {
   display: inline-flex;
   align-items: center;
