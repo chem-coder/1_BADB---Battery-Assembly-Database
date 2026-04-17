@@ -34,7 +34,14 @@ const summaryData = ref([])
 const selectedCycles = ref([])
 const cycleDataMap = ref({})
 const loadingCycles = ref([])
-const MAX_SELECTED_CYCLES = 6
+// Lifted from 6 → 20 for the new quick-filter buttons ("Каждый 5й" on a
+// 20-cycle session would otherwise clip to 6). Voltage profile overlay
+// stays readable up to ~20 lines; above that, users should decimate.
+const MAX_SELECTED_CYCLES = 20
+// Concurrent fetches when loading many cycles at once. 4 is a reasonable
+// compromise: fast enough to feel responsive, gentle enough not to flood
+// the server with 20 simultaneous requests on a big "Все" click.
+const FETCH_CONCURRENCY = 4
 
 // ── Upload dialog ──
 // Multi-file upload model:
@@ -168,6 +175,50 @@ async function onSessionClick(row) {
   } catch {
     summaryData.value = []
   }
+}
+
+// Replace the whole selection (triggered by the "Все / Каждый N / Диапазон"
+// quick filters). Fetches missing cycles in parallel with a small concurrency
+// cap, so clicking "Все" on a 20-cycle session doesn't fire 20 simultaneous
+// API calls.
+async function replaceCycles(newList) {
+  if (!selectedSession.value) return
+  const clamped = (newList || []).slice(0, MAX_SELECTED_CYCLES)
+
+  // Capture session to detect switch mid-flight (same guard used in toggleCycle).
+  const capturedSessionId = selectedSession.value.session_id
+
+  // Swap the selection immediately — UI chips/charts react before fetches finish.
+  selectedCycles.value = clamped
+
+  const missing = clamped.filter(c => !cycleDataMap.value[c])
+  if (!missing.length) return
+
+  // Mark all missing as loading (dedup against in-flight fetches from a prior click)
+  loadingCycles.value = [...new Set([...loadingCycles.value, ...missing])]
+
+  const queue = [...missing]
+  const workers = Array.from(
+    { length: Math.min(FETCH_CONCURRENCY, queue.length) },
+    async () => {
+      while (queue.length) {
+        const c = queue.shift()
+        try {
+          const { data } = await api.get(`/api/cycling/sessions/${capturedSessionId}/cycles/${c}`)
+          if (selectedSession.value?.session_id !== capturedSessionId) return
+          cycleDataMap.value = { ...cycleDataMap.value, [c]: data }
+        } catch {
+          // Per-cycle failure is silent — row stays without data. User can
+          // retry by clicking the chip manually (toggleCycle path).
+        } finally {
+          if (selectedSession.value?.session_id === capturedSessionId) {
+            loadingCycles.value = loadingCycles.value.filter(x => x !== c)
+          }
+        }
+      }
+    }
+  )
+  await Promise.all(workers)
 }
 
 // Toggle a cycle in the overlay:
@@ -400,7 +451,9 @@ const batteryOptions = computed(() =>
         :loadingCycles="loadingCycles"
         :totalCycles="selectedSession.total_cycles || summaryData.length"
         :sessionId="selectedSession.session_id"
+        :maxSelected="MAX_SELECTED_CYCLES"
         @toggle-cycle="toggleCycle"
+        @replace-cycles="replaceCycles"
       />
       <div v-else-if="selectedSession.status === 'processing'" class="charts-loading">
         <i class="pi pi-spin pi-spinner"></i> Данные обрабатываются...

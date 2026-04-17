@@ -32,9 +32,14 @@ const props = defineProps({
   loadingCycles: { type: Array, default: () => [] },
   totalCycles: { type: Number, default: 0 },
   sessionId: { type: Number, default: 0 },
+  // Cap on simultaneous selection — shown in quick-filter buttons so the
+  // user sees why "Все" might truncate to this many.
+  maxSelected: { type: Number, default: 20 },
 })
 
-const emit = defineEmits(['toggle-cycle'])
+// toggle-cycle — add/remove one cycle (existing behavior, used by chip + chart click)
+// replace-cycles — swap the whole selection (used by quick filters)
+const emit = defineEmits(['toggle-cycle', 'replace-cycles'])
 
 // Chart refs for PNG export
 const capacityChartRef = ref(null)
@@ -333,6 +338,71 @@ const dqdvOptions = {
   },
 }
 
+// ── Quick filters (replace whole selection) ────────────────────────────
+// All helpers clamp to maxSelected — the lazy-fetch loop in CyclingPage
+// doesn't scale past ~20 cycles without noticeable lag, and the voltage
+// overlay becomes unreadable past that anyway.
+const allCycleNumbers = computed(() => props.summary.map(s => s.cycle_number))
+
+// UI state for the custom-range popover
+const rangeOpen = ref(false)
+const rangeFrom = ref(null)
+const rangeTo = ref(null)
+
+function clampToMax(list) {
+  if (list.length <= props.maxSelected) return list
+  // Prefer evenly-spaced decimation over "first N"
+  const step = Math.ceil(list.length / props.maxSelected)
+  const out = []
+  for (let i = 0; i < list.length; i += step) out.push(list[i])
+  // Ensure last cycle is always included (most interesting for fade)
+  if (out[out.length - 1] !== list[list.length - 1]) out.push(list[list.length - 1])
+  return out.slice(0, props.maxSelected)
+}
+
+function selectAll() {
+  emit('replace-cycles', clampToMax(allCycleNumbers.value))
+}
+
+function selectEveryNth(n) {
+  if (n < 1) return
+  const all = allCycleNumbers.value
+  if (!all.length) return
+  // Include the first cycle (formation) always, then 1+N, 1+2N, ...
+  const picked = []
+  for (let i = 0; i < all.length; i += n) picked.push(all[i])
+  // Also include the last cycle so the end of life is visible
+  if (picked[picked.length - 1] !== all[all.length - 1]) picked.push(all[all.length - 1])
+  emit('replace-cycles', clampToMax(picked))
+}
+
+function applyRange() {
+  const all = allCycleNumbers.value
+  if (!all.length) return
+  const min = Math.min(...all)
+  const max = Math.max(...all)
+  const from = Math.max(min, Number(rangeFrom.value) || min)
+  const to   = Math.min(max, Number(rangeTo.value) || max)
+  if (from > to) return
+  const picked = all.filter(c => c >= from && c <= to)
+  emit('replace-cycles', clampToMax(picked))
+  rangeOpen.value = false
+}
+
+function clearSelection() {
+  emit('replace-cycles', [])
+}
+
+// Dynamic labels: "Каждый 5й (3)" — preview how many the filter would pick
+function countEveryNth(n) {
+  const all = allCycleNumbers.value
+  if (!all.length || n < 1) return 0
+  const picked = []
+  for (let i = 0; i < all.length; i += n) picked.push(all[i])
+  if (picked[picked.length - 1] !== all[all.length - 1]) picked.push(all[all.length - 1])
+  return Math.min(picked.length, props.maxSelected)
+}
+
 // ── Quick cycle buttons ──
 const cycleButtons = computed(() => {
   const numbers = props.summary.map(s => s.cycle_number)
@@ -397,7 +467,52 @@ function exportChartPNG(chartRef, name) {
       </div>
     </div>
 
-    <!-- Cycle selector -->
+    <!-- Quick filters (replace whole selection) -->
+    <div v-if="summary.length" class="cycle-filters">
+      <span class="cycle-label">Фильтры:</span>
+      <button class="filter-btn" @click="selectAll">
+        Все ({{ Math.min(allCycleNumbers.length, maxSelected) }})
+      </button>
+      <button
+        v-for="n in [2, 5, 10]"
+        :key="n"
+        class="filter-btn"
+        :disabled="allCycleNumbers.length <= n"
+        :title="`1, ${1 + n}, ${1 + 2 * n}, ...`"
+        @click="selectEveryNth(n)"
+      >
+        Каждый {{ n }}й ({{ countEveryNth(n) }})
+      </button>
+      <!-- Custom range popover -->
+      <div class="filter-range" :class="{ 'is-open': rangeOpen }">
+        <button class="filter-btn" @click="rangeOpen = !rangeOpen">
+          Диапазон…
+        </button>
+        <div v-if="rangeOpen" class="range-popover">
+          <span>от</span>
+          <input v-model.number="rangeFrom" type="number" class="range-input"
+                 :min="allCycleNumbers[0]" :max="allCycleNumbers[allCycleNumbers.length - 1]"
+                 :placeholder="allCycleNumbers[0]" />
+          <span>до</span>
+          <input v-model.number="rangeTo" type="number" class="range-input"
+                 :min="allCycleNumbers[0]" :max="allCycleNumbers[allCycleNumbers.length - 1]"
+                 :placeholder="allCycleNumbers[allCycleNumbers.length - 1]" />
+          <button class="filter-btn filter-btn--apply" @click="applyRange">Применить</button>
+        </div>
+      </div>
+      <button
+        class="filter-btn filter-btn--clear"
+        :disabled="!selectedCycles.length"
+        @click="clearSelection"
+      >
+        Очистить
+      </button>
+      <span class="cycle-hint">
+        {{ selectedCycles.length }} из {{ allCycleNumbers.length }} · лимит {{ maxSelected }}
+      </span>
+    </div>
+
+    <!-- Cycle selector (individual chips) -->
     <div class="cycle-selector">
       <span class="cycle-label">Циклы:</span>
       <button
@@ -488,6 +603,84 @@ function exportChartPNG(chartRef, name) {
   background: #003274;
   color: white;
 }
+
+/* ── Cycle filters (quick-select) ── */
+.cycle-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  padding: 0.5rem 0.75rem;
+  background: rgba(211, 167, 84, 0.06);
+  border: 1px solid rgba(211, 167, 84, 0.2);
+  border-radius: 8px;
+}
+.filter-btn {
+  padding: 3px 10px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 6px;
+  background: white;
+  font-size: 12px;
+  font-weight: 500;
+  color: #003274;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.filter-btn:hover:not(:disabled) {
+  background: #003274;
+  color: white;
+  border-color: #003274;
+}
+.filter-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.filter-btn--clear {
+  margin-left: auto;
+  background: transparent;
+  color: #E74C3C;
+  border-color: rgba(231, 76, 60, 0.25);
+}
+.filter-btn--clear:hover:not(:disabled) {
+  background: #E74C3C;
+  color: white;
+  border-color: #E74C3C;
+}
+.filter-btn--apply {
+  background: #003274;
+  color: white;
+  border-color: #003274;
+}
+
+/* Range popover — inline bubble */
+.filter-range { position: relative; }
+.range-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: white;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+  font-size: 12px;
+  color: #4B5563;
+}
+.range-input {
+  width: 60px;
+  padding: 3px 6px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  text-align: center;
+}
+.range-input:focus { outline: none; border-color: #003274; }
 
 /* ── Cycle selector ── */
 .cycle-selector {
