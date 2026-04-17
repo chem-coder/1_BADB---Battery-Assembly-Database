@@ -122,6 +122,27 @@ function cycleAlpha(cycleIdx, totalCycles) {
   return 0.35 + (cycleIdx / (totalCycles - 1)) * 0.65
 }
 
+// Client-side decimation. Long cycles (2000+ raw points × N overlayed
+// cycles × M sessions) choke Chart.js; beyond ~500 points per line a
+// curve is visually indistinguishable from its decimated version anyway.
+// We keep every Nth point with the first and last always included so
+// start/end voltage limits don't drift.
+const RENDER_POINT_CAP = 500
+function decimate(points) {
+  if (!points || points.length <= RENDER_POINT_CAP) return points
+  const step = Math.ceil(points.length / RENDER_POINT_CAP)
+  const out = []
+  for (let i = 0; i < points.length; i += step) out.push(points[i])
+  // Always include the last point (capacity endpoint, cutoff voltage)
+  if (out[out.length - 1] !== points[points.length - 1]) out.push(points[points.length - 1])
+  return out
+}
+
+// Shared Chart.js animation config — 150ms is short enough to feel
+// instant but smooth enough to avoid jarring jumps when data changes.
+// Default (1000ms) made multi-session toggles feel sluggish.
+const FAST_ANIM = { duration: 150, easing: 'easeOutQuad' }
+
 // Legend dedup: by default Chart.js generates one legend entry per
 // dataset — which means per session × {discharge, charge} = 2 entries.
 // Past ~5 sessions the legend hogs the chart. We collapse into one entry
@@ -187,6 +208,7 @@ const capacityChartData = computed(() => {
 const capacityOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
+  animation: FAST_ANIM,
   onClick: (evt, elements, chart) => {
     // Click → toggle the cycle from the first clicked point. Works across
     // all session datasets — we read the point's .x (cycle_number) from
@@ -253,6 +275,7 @@ const efficiencyChartData = computed(() => {
 const efficiencyOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
+  animation: FAST_ANIM,
   plugins: {
     legend: {
       display: props.sessions.length > 1,
@@ -307,8 +330,12 @@ const voltageChartData = computed(() => {
       const points = s.cycleDataMap?.[cycleNum] || []
       if (!points.length) return
 
-      const charge = points.filter(d => d.step_type === 'charge' || d.step_type === 'cccv')
-      const discharge = points.filter(d => d.step_type === 'discharge')
+      // Decimate for rendering only — raw points stay in cycleDataMap for
+      // dQ/dV (which needs every point for peak resolution). Voltage
+      // profile curves at 500 points are visually indistinguishable from
+      // 2000+ and render 4× faster at 10-session overlays.
+      const charge = decimate(points.filter(d => d.step_type === 'charge' || d.step_type === 'cccv'))
+      const discharge = decimate(points.filter(d => d.step_type === 'discharge'))
       // Thickness grows from 1.0 (first cycle) to ~2.2 (last cycle)
       const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.2 : 0.6)
 
@@ -354,6 +381,7 @@ const voltageChartData = computed(() => {
 const voltageOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
+  animation: FAST_ANIM,
   plugins: {
     legend: {
       position: 'bottom',
@@ -481,6 +509,7 @@ const dqdvChartData = computed(() => {
 const dqdvOptions = {
   responsive: true,
   maintainAspectRatio: false,
+  animation: FAST_ANIM,
   plugins: {
     legend: {
       position: 'bottom',
