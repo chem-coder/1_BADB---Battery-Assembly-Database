@@ -9,6 +9,8 @@ node_modules/
 Thumbs.db
 dist/
 build/
+__pycache__/
+*.pyc
 .claude/
 .local/
 sql_backups/auto/

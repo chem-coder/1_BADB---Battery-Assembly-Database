@@ -9,6 +9,7 @@ Output: JSON to stdout with { datapoints, summary, meta }
 
 Supported formats:
     generic  — CSV with columns: cycle, step, step_type, time_s, voltage_v, current_a, capacity_ah, energy_wh, temperature_c
+    elitech  — ELITECH P-20X8 TXT export (EN headers "Cycle/Step" OR RU headers "Цикл/Шаг", UTF-8 or cp1251)
     neware   — Neware BTS export CSV
     arbin    — Arbin MITS Pro export CSV
     biologic — EC-Lab .mpt/.txt export
@@ -17,6 +18,7 @@ Supported formats:
 import argparse
 import csv
 import json
+import re
 import sys
 import os
 from datetime import datetime
@@ -102,6 +104,248 @@ def parse_generic_csv(filepath):
     return datapoints
 
 
+def _read_text_autoencoding(filepath):
+    """Read a text file, auto-detecting encoding.
+
+    ELITECH exports UTF-8 (English locale) or cp1251 (Russian locale). We try
+    UTF-8 first with strict decoding — if that fails on a non-ASCII byte, we
+    fall back to cp1251. BOM is handled by 'utf-8-sig'.
+    """
+    with open(filepath, 'rb') as f:
+        raw = f.read()
+    # Try utf-8-sig (handles BOM)
+    try:
+        return raw.decode('utf-8-sig'), 'utf-8'
+    except UnicodeDecodeError:
+        pass
+    # Fall back to Windows-1251 (Russian). This never raises — cp1251 maps
+    # every byte, so if UTF-8 was wrong, we trust cp1251.
+    return raw.decode('cp1251'), 'cp1251'
+
+
+# Regexes for ELITECH block headers. EN (three separate lines) vs RU (one line).
+_RE_EN_CYCLE = re.compile(r'^\s*Cycle\s+(\d+)\s*$', re.IGNORECASE)
+_RE_EN_STEP = re.compile(r'^\s*Step\s+(\d+)\s*$', re.IGNORECASE)
+_RE_RU_CYCLE_STEP = re.compile(r'^\s*Цикл\s+(\d+)\s*,\s*Шаг\s+(\d+)\s*$')
+
+# Data-table header lines (mark start of numeric rows inside a block).
+_RE_EN_DATA_HDR = re.compile(r'^\s*Time\s*\(', re.IGNORECASE)
+_RE_RU_DATA_HDR = re.compile(r'^\s*Время\s*,')
+
+# "Тип работы" (work mode) — drives step_type when present. RU-only; EN files
+# don't embed the mode, so we fall back to current-sign heuristics.
+_RE_RU_WORK_MODE = re.compile(r'^\s*Тип\s+работы\s*:\s*(.+?)\s*$')
+
+# Metadata lines (RU only; EN files don't have a metadata header block).
+_RE_RU_META = {
+    'sample_name': re.compile(r'^\s*Название\s+блока\s+данных\s*:\s*(.+?)\s*$'),
+    'date':        re.compile(r'^\s*Дата\s+регистрации\s+данных\s*:\s*(.+?)\s*$'),
+    'time':        re.compile(r'^\s*Время\s+регистрации\s+данных\s*:\s*(.+?)\s*$'),
+    'user_comment':re.compile(r'^\s*Комментарий\s+пользователя\s*:\s*(.+?)\s*$'),
+    'instrument':  re.compile(r'^\s*Прибор\s*:\s*(.+?)\s*$'),
+    'channel':     re.compile(r'^\s*Номер\s+канала\s*:\s*(.+?)\s*$'),
+}
+
+# Data row: 3 whitespace-separated numbers (time, voltage, current). We allow
+# trailing whitespace but reject lines that contain any alphabetic character —
+# that protects us from eating the next block's header by mistake.
+_RE_DATA_ROW = re.compile(r'^\s*(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+'
+                          r'(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+'
+                          r'(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*$')
+
+
+def _classify_step_type(work_mode, current_a):
+    """Return 'charge' / 'discharge' / 'rest' / 'cccv' / None.
+
+    work_mode is the RU "Тип работы" string (e.g. "Гальваностат", "Вольтметр"),
+    or None for EN files. current_a is a representative current value (e.g.
+    the mean within the step).
+    """
+    if work_mode:
+        wm = work_mode.lower()
+        # "Вольтметр" = OCV / rest step (no current applied, just measurement)
+        if 'вольтметр' in wm or 'ocv' in wm:
+            return 'rest'
+        # "Гальваностат" = constant current. Sign of current gives direction.
+        if 'гальваностат' in wm or 'galvanostat' in wm:
+            if current_a is None:
+                return None
+            if current_a > 1e-6:
+                return 'charge'
+            if current_a < -1e-6:
+                return 'discharge'
+            return 'rest'
+        # "Потенциостат" = constant voltage (CV-type). Often used at end of CC
+        # charge (CCCV protocol), so we tag it 'cccv' when current flows and
+        # 'rest' when it doesn't.
+        if 'потенциостат' in wm or 'potentiostat' in wm:
+            if current_a is None or abs(current_a) < 1e-6:
+                return 'rest'
+            return 'cccv'
+    # Fallback: current sign only (EN files, or unknown mode).
+    if current_a is None or abs(current_a) < 1e-6:
+        return 'rest'
+    return 'charge' if current_a > 0 else 'discharge'
+
+
+def parse_elitech_txt(filepath):
+    """Parse an ELITECH P-20X8 TXT export (EN or RU locale).
+
+    Returns (datapoints, meta_dict). The outer pipeline then computes
+    per-cycle summary + integrates capacity from current*dt.
+    """
+    text, encoding = _read_text_autoencoding(filepath)
+    lines = text.splitlines()
+
+    meta = {'encoding': encoding, 'source_format': 'elitech'}
+
+    # State machine: we walk the file line by line.
+    #   cycle_number   — current cycle (from "Cycle N" / "Цикл N, Шаг M")
+    #   step_number    — current step inside cycle
+    #   work_mode      — last seen "Тип работы" (RU only)
+    #   in_data        — True while we're consuming rows under a data-table header
+    cycle_number = 0
+    step_number = 0
+    work_mode = None
+    in_data = False
+
+    # We append raw datapoints WITHOUT step_type; step_type is filled in per-step
+    # after the block ends, so we can use the mean current of the step (more
+    # robust than looking at the first point, which might be a relaxation).
+    datapoints = []
+    # Buffer of indices belonging to the current step — used to backfill step_type
+    # and optionally integrate capacity per step.
+    step_indices = []
+
+    def finalize_step():
+        """Assign step_type + integrate capacity for all points in step_indices."""
+        if not step_indices:
+            return
+        currents = [datapoints[i].get('current_a') for i in step_indices]
+        currents = [c for c in currents if c is not None]
+        mean_i = sum(currents) / len(currents) if currents else 0.0
+        step_type = _classify_step_type(work_mode, mean_i)
+
+        # Integrate capacity (A·h) across the step: ∫ |I| dt / 3600. We store
+        # running capacity (resets to 0 at step start). Sign convention:
+        # charge + discharge are both positive magnitudes, matching how
+        # cycling_cycle_summary interprets them.
+        running_ah = 0.0
+        prev_time = None
+        prev_current = None
+        for i in step_indices:
+            dp = datapoints[i]
+            dp['step_type'] = step_type
+            t = dp.get('time_s')
+            c = dp.get('current_a')
+            if t is not None and c is not None and prev_time is not None and prev_current is not None:
+                dt = t - prev_time
+                if dt > 0:
+                    # Trapezoidal integration of |I| over dt (in seconds) / 3600 → Ah
+                    running_ah += (abs(c) + abs(prev_current)) * 0.5 * dt / 3600.0
+            dp['capacity_ah'] = round(running_ah, 9) if step_type in ('charge', 'discharge', 'cccv') else None
+            prev_time = t
+            prev_current = c
+
+    for raw in lines:
+        line = raw.rstrip('\r\n')
+        if not line.strip():
+            # Blank line = end of current data table (if any)
+            if in_data:
+                finalize_step()
+                step_indices = []
+                in_data = False
+            continue
+
+        # --- Metadata (RU files only; harmless no-op on EN) ---
+        if not in_data and step_number == 0:
+            for key, rx in _RE_RU_META.items():
+                m = rx.match(line)
+                if m:
+                    meta[key] = m.group(1).strip()
+                    break
+
+        # --- Cycle/Step header recognition ---
+        m_ru = _RE_RU_CYCLE_STEP.match(line)
+        if m_ru:
+            if in_data:
+                finalize_step()
+                step_indices = []
+                in_data = False
+            cycle_number = int(m_ru.group(1))
+            step_number = int(m_ru.group(2))
+            work_mode = None  # reset until we see "Тип работы" for this step
+            continue
+
+        m_en_cycle = _RE_EN_CYCLE.match(line)
+        if m_en_cycle:
+            if in_data:
+                finalize_step()
+                step_indices = []
+                in_data = False
+            cycle_number = int(m_en_cycle.group(1))
+            work_mode = None
+            continue
+
+        m_en_step = _RE_EN_STEP.match(line)
+        if m_en_step:
+            if in_data:
+                finalize_step()
+                step_indices = []
+                in_data = False
+            step_number = int(m_en_step.group(1))
+            work_mode = None
+            continue
+
+        # --- Work mode (RU only) ---
+        m_wm = _RE_RU_WORK_MODE.match(line)
+        if m_wm:
+            work_mode = m_wm.group(1).strip()
+            continue
+
+        # --- Data-table header ---
+        if _RE_EN_DATA_HDR.match(line) or _RE_RU_DATA_HDR.match(line):
+            in_data = True
+            continue
+
+        # --- Data rows (only when we're past a table header) ---
+        if in_data:
+            m_row = _RE_DATA_ROW.match(line)
+            if not m_row:
+                # Anything non-numeric in data mode ends the table.
+                finalize_step()
+                step_indices = []
+                in_data = False
+                continue
+            t = safe_float(m_row.group(1))
+            v = safe_float(m_row.group(2))
+            i_a = safe_float(m_row.group(3))
+            if v is None:
+                continue
+            dp = {
+                'cycle_number': cycle_number,
+                'step_number': step_number,
+                'time_s': t,
+                'voltage_v': v,
+                'current_a': i_a,
+            }
+            datapoints.append(dp)
+            step_indices.append(len(datapoints) - 1)
+
+    # Flush any trailing step that didn't end with a blank line.
+    if in_data:
+        finalize_step()
+
+    # Normalize channel to int when possible
+    if 'channel' in meta:
+        try:
+            meta['channel'] = int(str(meta['channel']).strip())
+        except (ValueError, TypeError):
+            pass
+
+    return datapoints, meta
+
+
 def safe_float(val):
     try:
         return float(val.replace(',', '.'))
@@ -184,11 +428,43 @@ def extract_meta(datapoints, summary):
     }
 
 
+def _autodetect_format(filepath):
+    """Peek at the first ~4KB and guess format.
+
+    Strategy:
+      - If we see 'Cycle N' + 'Step N' lines or 'Цикл N, Шаг M' → elitech
+      - Otherwise → generic (tries CSV/TSV)
+    Used when --format=auto (or when the caller wants fallback behavior).
+
+    Note: _RE_EN_* regexes are line-anchored (^...$) — we can't run them on
+    the whole sample (no re.MULTILINE). We split into lines first and test
+    each one explicitly.
+    """
+    try:
+        text, _ = _read_text_autoencoding(filepath)
+    except Exception:
+        return 'generic'
+    sample = text[:8192]
+    has_en_cycle = False
+    has_en_step = False
+    for line in sample.splitlines():
+        if _RE_RU_CYCLE_STEP.match(line):
+            return 'elitech'
+        if _RE_EN_CYCLE.match(line):
+            has_en_cycle = True
+        if _RE_EN_STEP.match(line):
+            has_en_step = True
+        if has_en_cycle and has_en_step:
+            return 'elitech'
+    return 'generic'
+
+
 def main():
     parser = argparse.ArgumentParser(description='Parse battery cycling data files')
     parser.add_argument('--file', required=True, help='Path to data file')
-    parser.add_argument('--format', default='generic', choices=['generic', 'neware', 'arbin', 'biologic'],
-                        help='Equipment/file format')
+    parser.add_argument('--format', default='auto',
+                        choices=['auto', 'generic', 'elitech', 'neware', 'arbin', 'biologic'],
+                        help='Equipment/file format ("auto" = peek at content)')
     parser.add_argument('--session-id', type=int, default=0, help='Session ID (for logging)')
     args = parser.parse_args()
 
@@ -197,8 +473,17 @@ def main():
         sys.exit(1)
 
     try:
-        # All formats currently use generic parser (specific ones to be added in Phase 3)
-        datapoints = parse_generic_csv(args.file)
+        fmt = args.format
+        if fmt == 'auto':
+            fmt = _autodetect_format(args.file)
+
+        meta_from_parser = {}
+        if fmt == 'elitech':
+            datapoints, meta_from_parser = parse_elitech_txt(args.file)
+        else:
+            # generic/neware/arbin/biologic all go through CSV for now
+            # (equipment-specific parsers to be added in Phase 3-4).
+            datapoints = parse_generic_csv(args.file)
 
         if not datapoints:
             print(json.dumps({'error': 'No datapoints parsed from file'}), file=sys.stdout)
@@ -206,6 +491,10 @@ def main():
 
         summary = compute_summary(datapoints)
         meta = extract_meta(datapoints, summary)
+        # Parser-supplied metadata (instrument, sample_name, etc.) wins over
+        # the computed generic meta. Both keys coexist; UI can show either.
+        meta.update(meta_from_parser)
+        meta['detected_format'] = fmt
 
         result = {
             'datapoints': datapoints,

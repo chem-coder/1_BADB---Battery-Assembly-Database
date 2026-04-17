@@ -4,36 +4,50 @@ import LoginPage from '@/pages/LoginPage.vue'
 import AppLayout from '@/layouts/AppLayout.vue'
 import {
   workflowSections,
+  testSections,
   referenceSections,
   adminSections,
   referencePages,
 } from '@/config/navigation'
 
 // ── Build routes from navigation config ──────────────────────────
-const workflowRoutes = workflowSections.flatMap((s) => {
-  const routes = [
-    {
-      path: s.path.slice(1), // remove leading /
-      component: s.listPage,
-      meta: { title: s.label, crumbs: [] },
-    },
-  ]
-  if (s.formPage) {
-    routes.push(
+function buildSectionRoutes(sections, baseCrumbs = []) {
+  return sections.flatMap((s) => {
+    const routes = [
       {
-        path: s.path.slice(1) + '/new',
-        component: s.formPage,
-        meta: { title: s.formTitles.new, crumbs: [{ label: s.label, to: s.path }] },
+        path: s.path.slice(1), // remove leading /
+        component: s.listPage,
+        meta: { title: s.label, crumbs: baseCrumbs },
       },
-      {
-        path: s.path.slice(1) + '/:id',
-        component: s.formPage,
-        meta: { title: s.formTitles.edit, crumbs: [{ label: s.label, to: s.path }] },
-      },
-    )
-  }
-  return routes
-})
+    ]
+    if (s.formPage) {
+      routes.push(
+        {
+          path: s.path.slice(1) + '/new',
+          component: s.formPage,
+          meta: {
+            title: s.formTitles.new,
+            crumbs: [...baseCrumbs, { label: s.label, to: s.path }],
+          },
+        },
+        {
+          path: s.path.slice(1) + '/:id',
+          component: s.formPage,
+          meta: {
+            title: s.formTitles.edit,
+            crumbs: [...baseCrumbs, { label: s.label, to: s.path }],
+          },
+        },
+      )
+    }
+    return routes
+  })
+}
+
+const workflowRoutes = buildSectionRoutes(workflowSections)
+// Testing (Испытания): same shape as workflow, different sidebar group.
+// Primary URL keeps s.path unchanged (e.g. /cycling) so existing bookmarks work.
+const testRoutes = buildSectionRoutes(testSections, [{ label: 'Испытания' }])
 
 const referenceRoutes = referenceSections.map((s) => ({
   path: s.path.slice(1),
@@ -77,6 +91,14 @@ const routes = [
         meta: { title: 'Главная', crumbs: [] } },
 
       ...workflowRoutes,
+      ...testRoutes,
+
+      // Aliases for the new "Испытания" URL namespace. Primary URLs stay as
+      // /cycling etc. for existing bookmarks, but /testing/cycling also works.
+      ...testSections.map((s) => ({
+        path: 'testing' + s.path,
+        redirect: s.path,
+      })),
 
       // Backward compat: /tapes/new and /tapes/:id redirect to /tapes
       // (Constructor is now inline on TapesPage)

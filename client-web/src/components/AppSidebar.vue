@@ -2,7 +2,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { workflowSections, referenceSections, adminSections } from '@/config/navigation'
+import { workflowSections, testSections, referenceSections, adminSections } from '@/config/navigation'
 import tvelLogo from '@/assets/logo/TVEL_horizontal_light.svg'
 
 const emit = defineEmits(['navigate'])
@@ -58,6 +58,10 @@ const sections = computed(() => {
     {
       section: 'СОЗДАНИЕ',
       items: workflowSections.map(mapItem),
+    },
+    {
+      section: 'ИСПЫТАНИЯ',
+      items: testSections.map(mapItem),
     },
     {
       section: 'СПРАВОЧНИКИ',

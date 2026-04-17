@@ -41,7 +41,7 @@ const MAX_SELECTED_CYCLES = 6
 const showUpload = ref(false)
 const uploadForm = ref({
   battery_id: null,
-  equipment_type: 'generic',
+  equipment_type: 'auto',
   channel: null,
   protocol: '',
   notes: '',
@@ -49,11 +49,16 @@ const uploadForm = ref({
 const uploading = ref(false)
 const uploadFileRef = ref(null)
 
+// "Determine automatically" is the default — the parser peeks at the file
+// and picks the right format. Only pick manually if autodetect fails or you
+// want to force a specific interpretation.
 const equipmentOptions = [
+  { label: 'Определить автоматически', value: 'auto' },
+  { label: 'ELITECH P-20X8 (TXT)', value: 'elitech' },
   { label: 'Generic CSV', value: 'generic' },
-  { label: 'Neware', value: 'neware' },
-  { label: 'Arbin', value: 'arbin' },
-  { label: 'BioLogic', value: 'biologic' },
+  { label: 'Neware BTS — скоро', value: 'neware' },
+  { label: 'Arbin MITS Pro — скоро', value: 'arbin' },
+  { label: 'BioLogic EC-Lab — скоро', value: 'biologic' },
 ]
 
 const columns = [
@@ -189,7 +194,7 @@ async function doUpload(event) {
       life: 4000,
     })
     showUpload.value = false
-    uploadForm.value = { battery_id: null, equipment_type: 'generic', channel: null, protocol: '', notes: '' }
+    uploadForm.value = { battery_id: null, equipment_type: 'auto', channel: null, protocol: '', notes: '' }
     // Reload after processing delay
     setTimeout(loadData, 2000)
     setTimeout(loadData, 6000)

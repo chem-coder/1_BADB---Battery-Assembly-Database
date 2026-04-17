@@ -279,19 +279,26 @@ async function processFile(sessionId, filePath, format) {
       ]);
     }
 
-    // Update session
+    // Update session. If the upload was submitted with equipment_type='auto',
+    // the parser figured out the real format (e.g. 'elitech') — persist it so
+    // the sessions table shows the actual format, not "auto".
     await pool.query(`
       UPDATE cycling_sessions SET
         status = 'ready',
         total_cycles = $1,
         started_at = $2,
-        ended_at = $3
+        ended_at = $3,
+        equipment_type = CASE
+          WHEN equipment_type = 'auto' AND $5::text IS NOT NULL THEN $5
+          ELSE equipment_type
+        END
       WHERE session_id = $4
     `, [
       meta.total_cycles || summary.length,
       meta.started_at || null,
       meta.ended_at || null,
       sessionId,
+      meta.detected_format || null,
     ]);
 
   } catch (err) {
