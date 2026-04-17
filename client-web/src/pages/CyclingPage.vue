@@ -3,7 +3,7 @@
  * CyclingPage — Battery cycling test results.
  * Upload cycling data files → view sessions → interactive charts.
  */
-import { ref, computed, onMounted, defineAsyncComponent } from 'vue'
+import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '@/stores/auth'
@@ -48,6 +48,31 @@ const summaryBySession = ref({})
 const cycleDataBySession = ref({})
 const loadingCyclesBy = ref({})
 const selectedCycles = ref([])
+
+// Publication preset: user-typed experiment title appears on chart titles
+// + PNG filename prefix. Empty → auto titles. publicationMode toggles the
+// voltage-profile style (single color dashed, no legend) — matches how
+// papers render these plots.
+const experimentLabel = ref('')
+const publicationMode = ref(false)
+
+// Capacity unit: 'Ah' (absolute) or 'mAh_per_g' (specific). mAh/g only
+// works when every active session has active_mass_mg populated —
+// availability is a computed guard, UI auto-falls back to 'Ah' otherwise.
+const capacityUnit = ref('Ah')
+const specificAvailable = computed(() => {
+  if (!activeSessionIds.value.length) return false
+  return activeSessionIds.value.every(sid => {
+    const row = sessions.value.find(s => s.session_id === sid)
+    const m = Number(row?.active_mass_mg)
+    return Number.isFinite(m) && m > 0
+  })
+})
+// Watch: if user switched away from a session that had mass, drop back to Ah
+// so the chart doesn't silently show blanks for the session without mass.
+watch(specificAvailable, (has) => {
+  if (!has && capacityUnit.value === 'mAh_per_g') capacityUnit.value = 'Ah'
+})
 
 // Limits. No hard cap on active sessions — use filters + compact chips +
 // legend dedup to keep the UI manageable. Cycle-selection cap is 100:
@@ -119,6 +144,7 @@ const uploadForm = ref({
   channel: null,
   protocol: '',
   notes: '',
+  active_mass_mg: null,  // mass of active material in mg, for mAh/g plots
 })
 const uploading = ref(false)
 const fileInputRef = ref(null)
@@ -185,7 +211,7 @@ function formatFileSize(bytes) {
 function resetUploadDialog() {
   files.value = []
   defaultBatteryId.value = null
-  uploadForm.value = { equipment_type: 'auto', channel: null, protocol: '', notes: '' }
+  uploadForm.value = { equipment_type: 'auto', channel: null, protocol: '', notes: '', active_mass_mg: null }
 }
 
 // Progress helpers for the dynamic "Загрузить (N)" / "Загрузка... (K/N)" button
@@ -475,6 +501,7 @@ async function doUpload() {
     if (uploadForm.value.channel) formData.append('channel', uploadForm.value.channel)
     if (uploadForm.value.protocol) formData.append('protocol', uploadForm.value.protocol)
     if (uploadForm.value.notes) formData.append('notes', uploadForm.value.notes)
+    if (uploadForm.value.active_mass_mg) formData.append('active_mass_mg', uploadForm.value.active_mass_mg)
 
     try {
       const { data } = await api.post('/api/cycling/upload', formData, {
@@ -623,10 +650,65 @@ const batteryOptions = computed(() =>
 
     <!-- Charts area (multi-session) -->
     <div v-if="activeSessionViews.length" class="charts-area glass-card">
+      <!-- Toolbar: experiment title + publication-mode toggle -->
+      <div class="charts-toolbar">
+        <div class="toolbar-field">
+          <label class="toolbar-label">Название эксперимента</label>
+          <input
+            v-model="experimentLabel"
+            type="text"
+            class="toolbar-input"
+            placeholder="например: NCM (M2C2_RT)_fresh gel"
+            maxlength="120"
+          />
+        </div>
+        <div class="toolbar-pubmode">
+          <label class="toolbar-label">Единицы ёмкости</label>
+          <div class="pubmode-row" :title="specificAvailable ? '' : 'Укажите массу активного материала для режима mAh/g'">
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': capacityUnit === 'Ah' }"
+              @click="capacityUnit = 'Ah'"
+            >
+              Ah
+            </button>
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': capacityUnit === 'mAh_per_g' }"
+              :disabled="!specificAvailable"
+              @click="capacityUnit = 'mAh_per_g'"
+            >
+              mAh/g
+            </button>
+          </div>
+        </div>
+        <div class="toolbar-pubmode">
+          <label class="toolbar-label">Стиль</label>
+          <div class="pubmode-row">
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': !publicationMode }"
+              @click="publicationMode = false"
+            >
+              <i class="pi pi-cog"></i> Интерактив
+            </button>
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': publicationMode }"
+              @click="publicationMode = true"
+            >
+              <i class="pi pi-file-pdf"></i> Статья
+            </button>
+          </div>
+        </div>
+      </div>
       <CyclingCharts
         :sessions="activeSessionViews"
         :selectedCycles="selectedCycles"
         :maxSelected="MAX_SELECTED_CYCLES"
+        :experimentLabel="experimentLabel"
+        :publicationMode="publicationMode"
+        :capacityUnit="capacityUnit"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"
       />
@@ -753,6 +835,10 @@ const batteryOptions = computed(() =>
             <div class="upload-field">
               <label>Протокол</label>
               <input v-model="uploadForm.protocol" class="upload-input" placeholder="—" :disabled="uploading" />
+            </div>
+            <div class="upload-field">
+              <label title="Масса активного материала в рабочем электроде. Нужна для графиков в mAh/g. Можно заполнить позже.">Масса акт. материала (mg)</label>
+              <input v-model.number="uploadForm.active_mass_mg" type="number" step="0.01" min="0" class="upload-input" placeholder="—" :disabled="uploading" />
             </div>
           </div>
 
@@ -960,6 +1046,81 @@ const batteryOptions = computed(() =>
   flex-shrink: 0;
 }
 .chip-close:hover { background: #E74C3C; color: white; }
+
+/* ── Charts toolbar (experiment label + publication mode toggle) ── */
+.charts-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 0.4rem 0 0.9rem;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
+  margin-bottom: 0.9rem;
+  flex-wrap: wrap;
+}
+.toolbar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 260px;
+}
+.toolbar-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(0, 50, 116, 0.5);
+}
+.toolbar-input {
+  width: 100%;
+  padding: 5px 10px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #003274;
+  background: white;
+}
+.toolbar-input:focus {
+  outline: none;
+  border-color: #003274;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.1);
+}
+
+.toolbar-pubmode {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pubmode-row {
+  display: inline-flex;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 6px;
+  overflow: hidden;
+  background: white;
+}
+.pubmode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: none;
+  background: white;
+  color: rgba(0, 50, 116, 0.6);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.12s;
+  border-right: 1px solid rgba(0, 50, 116, 0.1);
+}
+.pubmode-btn:last-child { border-right: none; }
+.pubmode-btn:hover:not(.is-active) { background: rgba(0, 50, 116, 0.04); color: #003274; }
+.pubmode-btn.is-active {
+  background: #003274;
+  color: white;
+  font-weight: 600;
+}
+.pubmode-btn i { font-size: 11px; }
 
 /* ── Charts placeholder ── */
 .charts-placeholder {

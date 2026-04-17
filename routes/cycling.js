@@ -136,7 +136,7 @@ router.post('/upload', auth, (req, res, next) => {
     return res.status(400).json({ error: magicErr });
   }
 
-  const { battery_id, equipment_type, channel, protocol, notes } = req.body;
+  const { battery_id, equipment_type, channel, protocol, notes, active_mass_mg } = req.body;
 
   if (!battery_id || !Number.isInteger(Number(battery_id))) {
     // Clean up uploaded file
@@ -170,11 +170,15 @@ router.post('/upload', auth, (req, res, next) => {
     fs.renameSync(currentFilePath, rawPath);
     currentFilePath = rawPath;
 
-    // Create session
+    // Create session. active_mass_mg is optional — needed for mAh/g
+    // specific-capacity plots, can be filled in later via PATCH.
+    const massMg = active_mass_mg != null && active_mass_mg !== ''
+      ? Number(active_mass_mg)
+      : null;
     const sessionResult = await pool.query(`
       INSERT INTO cycling_sessions (battery_id, equipment_type, file_name, file_path, file_hash,
-        channel, protocol, notes, status, uploaded_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'processing', $9)
+        channel, protocol, notes, active_mass_mg, status, uploaded_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'processing', $10)
       RETURNING session_id
     `, [
       Number(battery_id),
@@ -185,6 +189,7 @@ router.post('/upload', auth, (req, res, next) => {
       channel ? Number(channel) : null,
       protocol || null,
       notes || null,
+      Number.isFinite(massMg) && massMg > 0 ? massMg : null,
       req.user.userId,
     ]);
 
@@ -452,6 +457,61 @@ router.delete('/sessions/:id', auth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
+// ── PATCH /api/cycling/sessions/:id — editable metadata ───────────────
+// Lets the user backfill active_mass_mg (for mAh/g plots) or correct
+// notes/protocol after upload without re-uploading the file. Only the
+// uploader or an admin can edit.
+router.patch('/sessions/:id', auth, async (req, res) => {
+  const sessionId = Number(req.params.id);
+  if (!Number.isInteger(sessionId)) {
+    return res.status(400).json({ error: 'Invalid session id' });
+  }
+  try {
+    const check = await pool.query('SELECT uploaded_by FROM cycling_sessions WHERE session_id = $1', [sessionId]);
+    if (check.rowCount === 0) return res.status(404).json({ error: 'Session not found' });
+    if (check.rows[0].uploaded_by !== req.user.userId && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    // Whitelist editable columns. Channel/protocol/notes/active_mass_mg
+    // only — file, hash, battery_id, uploaded_by are immutable audit data.
+    const allowed = ['channel', 'protocol', 'notes', 'active_mass_mg'];
+    const sets = [];
+    const values = [];
+    let idx = 1;
+    for (const key of allowed) {
+      if (key in req.body) {
+        let v = req.body[key];
+        if (key === 'active_mass_mg' || key === 'channel') {
+          v = (v === '' || v == null) ? null : Number(v);
+          if (v !== null && !Number.isFinite(v)) {
+            return res.status(400).json({ error: `Invalid ${key}` });
+          }
+          if (key === 'active_mass_mg' && v !== null && v <= 0) {
+            return res.status(400).json({ error: 'active_mass_mg must be > 0' });
+          }
+        } else {
+          v = (v === '' || v == null) ? null : String(v);
+        }
+        sets.push(`${key} = $${idx++}`);
+        values.push(v);
+      }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'No editable fields supplied' });
+    values.push(sessionId);
+
+    const { rows } = await pool.query(
+      `UPDATE cycling_sessions SET ${sets.join(', ')} WHERE session_id = $${idx}
+       RETURNING session_id, channel, protocol, notes, active_mass_mg`,
+      values
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update session' });
   }
 });
 

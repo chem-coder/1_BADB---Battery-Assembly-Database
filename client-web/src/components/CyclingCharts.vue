@@ -34,7 +34,35 @@ const props = defineProps({
   // voltage/dQdV panels — no error.
   selectedCycles: { type: Array, default: () => [] },
   maxSelected: { type: Number, default: 20 },
+  // User-supplied experiment name (appears as chart titles + PNG filename
+  // prefix). Empty string → fall back to auto-generated titles.
+  experimentLabel: { type: String, default: '' },
+  // Publication-style toggle: single color per session in voltage profile,
+  // minimal legend, no tooltip hints — matches how papers render it.
+  publicationMode: { type: Boolean, default: false },
+  // 'Ah' | 'mAh_per_g'. When 'mAh_per_g', capacity axes are divided by
+  // each session's active_mass_mg to show specific capacity. Only meaningful
+  // when sessions have active_mass_mg populated — the parent toggles the
+  // prop back to 'Ah' when any active session lacks mass.
+  capacityUnit: { type: String, default: 'Ah' },
 })
+
+// Convert a capacity value (Ah) to the current display unit based on
+// session-specific active mass. Returns null if mode is mAh/g but mass is
+// missing (we'd otherwise divide by zero/null and poison the axis).
+function convertCapacity(ah, session) {
+  if (ah == null) return null
+  if (props.capacityUnit !== 'mAh_per_g') return ah
+  const massMg = Number(session?.active_mass_mg)
+  if (!Number.isFinite(massMg) || massMg <= 0) return null
+  // mAh/g = Ah × 1000 / (mass_mg / 1000) = Ah × 1_000_000 / mass_mg
+  return (ah * 1_000_000) / massMg
+}
+
+// Axis labels match the active unit.
+function capacityAxisLabel() {
+  return props.capacityUnit === 'mAh_per_g' ? 'C, mAh/g' : 'Ёмкость (Ah)'
+}
 
 // toggle-cycle — add/remove one cycle (across all active sessions)
 // replace-cycles — swap the whole selection (used by quick filters)
@@ -75,7 +103,6 @@ const summary = mergedSummary
 
 // Chart refs for PNG export
 const capacityChartRef = ref(null)
-const efficiencyChartRef = ref(null)
 const voltageChartRef = ref(null)
 const dqdvChartRef = ref(null)
 
@@ -166,29 +193,30 @@ function dedupeLegend(chart) {
   return Array.from(seen.values())
 }
 
-// ── Capacity vs Cycle (one line per session, discharge only) ──────────
-// This is the classic "capacity fade" plot. We show discharge capacity
-// only by default — that's the scientific standard (most Li-ion papers
-// plot discharge C vs cycle). Charge capacity is implicit: the CE chart
-// already encodes charge/discharge ratio, and showing both lines on
-// capacity just clutters the overlay. If a user needs to see the charge
-// side explicitly, that belongs on a dedicated "irreversible capacity"
-// plot (which we can add later).
+// ── Capacity + CE (combined plot, dual Y-axis) ─────────────────────────
+// Standard publication layout (see reference images from lab colleague):
+//   Left Y  — discharge capacity (Ah), solid line with markers
+//   Right Y — Coulombic efficiency (%), thinner dotted line
+// One line pair per session, both sharing the session's color so they
+// read as "that cell's fade × that cell's CE". Showing them on one
+// canvas instead of two saves horizontal space and matches how real
+// Li-ion papers present it.
 const capacityChartData = computed(() => {
   const datasets = []
   const selectedSet = new Set(props.selectedCycles)
+  const isSolo = props.sessions.length === 1
 
   for (const s of props.sessions) {
     if (!s.summary?.length) continue
 
-    // Fill-under-line only in solo mode — overlap stacks ugly otherwise.
-    const isSolo = props.sessions.length === 1
+    // Line 1: discharge capacity (left Y). Fill-under-line in solo mode.
     datasets.push({
       label: sessionShortLabel(s),
       data: s.summary.map(row => ({
         x: row.cycle_number,
-        y: row.discharge_capacity_ah,
+        y: convertCapacity(row.discharge_capacity_ah, s),
       })),
+      yAxisID: 'y',
       borderColor: s.color,
       backgroundColor: isSolo ? fillColor(s.color, 0.08) : 'transparent',
       fill: isSolo,
@@ -200,6 +228,25 @@ const capacityChartData = computed(() => {
       pointHoverRadius: 6,
       borderWidth: 1.8,
     })
+
+    // Line 2: Coulombic efficiency (right Y). Faded shade so the eye
+    // reads capacity as primary. Dotted dash so it's visually distinct
+    // from the solid capacity line even when colors overlap.
+    datasets.push({
+      label: `${sessionShortLabel(s)} · CE`,
+      data: s.summary.map(row => ({
+        x: row.cycle_number,
+        y: row.coulombic_efficiency,
+      })),
+      yAxisID: 'y1',
+      borderColor: fillColor(s.color, 0.55),
+      backgroundColor: fillColor(s.color, 0.55),
+      borderDash: [2, 3],
+      tension: 0.2,
+      pointRadius: 2,
+      pointStyle: 'circle',
+      borderWidth: 1.2,
+    })
   }
 
   return { datasets }
@@ -210,13 +257,13 @@ const capacityOptions = computed(() => ({
   maintainAspectRatio: false,
   animation: FAST_ANIM,
   onClick: (evt, elements, chart) => {
-    // Click → toggle the cycle from the first clicked point. Works across
-    // all session datasets — we read the point's .x (cycle_number) from
-    // the dataset, not the index (labels aren't shared anymore now that
-    // each session is its own dataset with x/y pairs).
+    // Click → toggle the cycle from the first clicked point. Only handle
+    // clicks on the capacity dataset (left Y); CE clicks are just noise.
     if (elements.length > 0) {
       const el = elements[0]
       const ds = chart.data.datasets[el.datasetIndex]
+      // Skip CE datasets (they end in "· CE")
+      if (ds?.label?.endsWith('· CE')) return
       const pt = ds?.data?.[el.index]
       const cycle = typeof pt === 'object' ? pt.x : pt
       if (cycle !== undefined) emit('toggle-cycle', cycle)
@@ -229,19 +276,42 @@ const capacityOptions = computed(() => ({
     },
     title: {
       display: true,
-      text: props.sessions.length > 1
-        ? `Ёмкость vs Цикл · ${props.sessions.length} измерений`
-        : 'Ёмкость vs Цикл',
+      text: props.experimentLabel
+        ? props.experimentLabel
+        : (props.sessions.length > 1
+            ? `Ёмкость и CE · ${props.sessions.length} измерений`
+            : 'Ёмкость и Кулоновская эффективность'),
       font: { size: 13, weight: 600 },
       color: '#003274',
       padding: { bottom: 10 },
     },
     tooltip: {
-      callbacks: { afterBody: () => 'Клик — добавить/убрать цикл' },
+      callbacks: { afterBody: () => 'Клик по ёмкости — добавить/убрать цикл' },
     },
   },
   scales: {
-    y: { title: { display: true, text: 'Ёмкость (Ah)', font: { size: 10 } }, beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
+    // Left Y: discharge capacity — absolute (Ah) or specific (mAh/g)
+    // depending on capacityUnit prop. beginAtZero makes fade readable;
+    // if Y starts mid-range, a 5% fade looks like 50%.
+    y: {
+      type: 'linear',
+      position: 'left',
+      title: { display: true, text: capacityAxisLabel(), font: { size: 10 } },
+      beginAtZero: true,
+      ticks: { font: { size: 10 } },
+      grid: { color: 'rgba(0,50,116,0.05)' },
+    },
+    // Right Y: Coulombic efficiency (%). Keep 70-101 default so first-
+    // cycle formation dips are visible; outliers auto-extend the range.
+    y1: {
+      type: 'linear',
+      position: 'right',
+      title: { display: true, text: 'CE (%)', font: { size: 10 } },
+      suggestedMin: 70,
+      suggestedMax: 101,
+      ticks: { font: { size: 10 } },
+      grid: { display: false },  // avoid double grid lines with y
+    },
     x: {
       type: 'linear',
       title: { display: true, text: 'Цикл', font: { size: 10 } },
@@ -251,57 +321,8 @@ const capacityOptions = computed(() => ({
   },
 }))
 
-// ── Coulombic Efficiency (one line per session) ──
-const efficiencyChartData = computed(() => {
-  const datasets = []
-  for (const s of props.sessions) {
-    if (!s.summary?.length) continue
-    datasets.push({
-      label: sessionShortLabel(s),
-      data: s.summary.map(row => ({
-        x: row.cycle_number,
-        y: row.coulombic_efficiency,
-      })),
-      borderColor: s.color,
-      backgroundColor: 'transparent',
-      tension: 0.2,
-      pointRadius: 2.5,
-      borderWidth: 1.8,
-    })
-  }
-  return { datasets }
-})
-
-const efficiencyOptions = computed(() => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: FAST_ANIM,
-  plugins: {
-    legend: {
-      display: props.sessions.length > 1,
-      position: 'bottom',
-      labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend },
-    },
-    title: {
-      display: true,
-      text: props.sessions.length > 1
-        ? `Кулоновская эффективность · ${props.sessions.length} измерений`
-        : 'Кулоновская эффективность',
-      font: { size: 13, weight: 600 },
-      color: '#003274',
-      padding: { bottom: 10 },
-    },
-  },
-  scales: {
-    y: { title: { display: true, text: '%', font: { size: 10 } }, suggestedMin: 70, suggestedMax: 101, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
-    x: {
-      type: 'linear',
-      title: { display: true, text: 'Цикл', font: { size: 10 } },
-      ticks: { font: { size: 10 }, stepSize: 1 },
-      grid: { display: false },
-    },
-  },
-}))
+// Coulombic efficiency is now folded into capacityChart's right Y-axis
+// (see "Combined Capacity + CE" above) — no separate chart needed.
 
 // ── Voltage Profile (overlay: sessions × selected cycles) ──
 // Visual encoding:
@@ -336,39 +357,50 @@ const voltageChartData = computed(() => {
       // 2000+ and render 4× faster at 10-session overlays.
       const charge = decimate(points.filter(d => d.step_type === 'charge' || d.step_type === 'cccv'))
       const discharge = decimate(points.filter(d => d.step_type === 'discharge'))
-      // Thickness grows from 1.0 (first cycle) to ~2.2 (last cycle)
-      const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.2 : 0.6)
 
-      // Old cycles fade, new cycles vivid — within the session's color
+      // Publication mode (matches colleague's Excel plots): single session
+      // color with alpha gradient across cycles, everything dashed, thin.
+      // Interactive mode: thickness grows with cycle index + alpha gradient
+      // + charge=dashed / discharge=solid distinction.
+      const thickness = props.publicationMode
+        ? 1.0
+        : 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.2 : 0.6)
+
       const alpha = cycleAlpha(cIdx, nCycles)
       const cycleColor = fillColor(s.color, alpha)
+
+      // In publication mode, both halves use the same dash (matches
+      // colleague's figure — nothing distinguishes charge vs discharge
+      // visually, the shape of the curve does that). In interactive mode,
+      // charge=dashed / discharge=solid stays.
+      const chargeDash = [4, 2]
+      const dischargeDash = props.publicationMode ? [4, 2] : undefined
+
+      // X-axis value for each point: capacity (converted to mAh/g if unit
+      // is specific), or time if capacity data isn't available at all.
+      const xOf = (p) => useCapacity ? convertCapacity(p.capacity_ah, s) : p.time_s
 
       if (charge.length) {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
-          data: charge.map(p => ({
-            x: useCapacity ? p.capacity_ah : p.time_s,
-            y: p.voltage_v,
-          })),
+          data: charge.map(p => ({ x: xOf(p), y: p.voltage_v })),
           borderColor: cycleColor,
           backgroundColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
-          borderDash: [4, 2],
+          borderDash: chargeDash,
           showLine: true,
         })
       }
       if (discharge.length) {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
-          data: discharge.map(p => ({
-            x: useCapacity ? p.capacity_ah : p.time_s,
-            y: p.voltage_v,
-          })),
+          data: discharge.map(p => ({ x: xOf(p), y: p.voltage_v })),
           borderColor: cycleColor,
           backgroundColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
+          borderDash: dischargeDash,
           showLine: true,
         })
       }
@@ -384,12 +416,14 @@ const voltageOptions = computed(() => ({
   animation: FAST_ANIM,
   plugins: {
     legend: {
+      display: !props.publicationMode,  // publication figures don't carry legends
       position: 'bottom',
       labels: { boxWidth: 12, font: { size: 10 }, generateLabels: dedupeLegend },
     },
     title: {
       display: true,
       text: (() => {
+        if (props.experimentLabel) return `${props.experimentLabel} — профиль V`
         if (!props.selectedCycles.length) return 'Профиль напряжения'
         const cLabel = `${props.selectedCycles.length} ${props.selectedCycles.length === 1 ? 'цикл' : 'циклов'}`
         if (props.sessions.length <= 1) return `Профиль напряжения — ${cLabel}`
@@ -401,10 +435,14 @@ const voltageOptions = computed(() => ({
     },
   },
   scales: {
-    y: { title: { display: true, text: 'Напряжение (V)', font: { size: 10 } }, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
+    y: { title: { display: true, text: 'E, V', font: { size: 10 } }, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
     x: {
       type: 'linear',
-      title: { display: true, text: hasCapacity.value ? 'Ёмкость (Ah)' : 'Время (с)', font: { size: 10 } },
+      title: {
+        display: true,
+        text: hasCapacity.value ? capacityAxisLabel() : 'Время (с)',
+        font: { size: 10 },
+      },
       ticks: { font: { size: 10 } },
       grid: { display: false },
     },
@@ -506,18 +544,21 @@ const dqdvChartData = computed(() => {
   return { datasets }
 })
 
-const dqdvOptions = {
+const dqdvOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   animation: FAST_ANIM,
   plugins: {
     legend: {
+      display: !props.publicationMode,
       position: 'bottom',
       labels: { boxWidth: 12, font: { size: 10 }, generateLabels: dedupeLegend },
     },
     title: {
       display: true,
-      text: 'Дифференциальная ёмкость (|dQ/dV|)',
+      text: props.experimentLabel
+        ? `${props.experimentLabel} — dQ/dV`
+        : 'Дифференциальная ёмкость (|dQ/dV|)',
       font: { size: 13, weight: 600 },
       color: '#003274',
       padding: { bottom: 10 },
@@ -527,12 +568,12 @@ const dqdvOptions = {
     y: { title: { display: true, text: '|dQ/dV| (Ah/V)', font: { size: 10 } }, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
     x: {
       type: 'linear',
-      title: { display: true, text: 'Напряжение (V)', font: { size: 10 } },
+      title: { display: true, text: 'E, V', font: { size: 10 } },
       ticks: { font: { size: 10 } },
       grid: { display: false },
     },
   },
-}
+}))
 
 // ── Quick filters (replace whole selection) ────────────────────────────
 // All helpers clamp to maxSelected — the lazy-fetch loop in CyclingPage
@@ -644,16 +685,43 @@ function sanitizeFilename(str) {
   return String(str).replace(/[^a-zA-Zа-яА-ЯёЁ0-9_-]/g, '_').slice(0, 80)
 }
 
+// Publication-grade PNG export:
+//   - White background (default Chart.js canvas is transparent, which
+//     looks fine in browser but bad when pasted into Word/PDF)
+//   - 2× device pixel ratio → sharper lines on retina / print
+//   - Filename prefixed with experimentLabel when provided, otherwise
+//     session ids (back-compat)
 function exportChartPNG(chartRef, name) {
   const inst = chartRef.value?.chart
   if (!inst) return
-  const url = inst.toBase64Image('image/png', 1)
+
+  // Render canvas at 2× resolution via Chart.js own option
+  const originalRatio = inst.options.devicePixelRatio
+  inst.options.devicePixelRatio = Math.max(2, window.devicePixelRatio || 1)
+  inst.resize()
+
+  // Build a new canvas with white background underneath
+  const src = inst.canvas
+  const tmp = document.createElement('canvas')
+  tmp.width = src.width
+  tmp.height = src.height
+  const ctx = tmp.getContext('2d')
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, tmp.width, tmp.height)
+  ctx.drawImage(src, 0, 0)
+
+  const url = tmp.toDataURL('image/png', 1)
+
+  // Restore DPR so on-screen rendering stays normal
+  inst.options.devicePixelRatio = originalRatio
+  inst.resize()
+
   const link = document.createElement('a')
   link.href = url
-  // Filename includes all active session ids so multi-session exports are
-  // self-labeling ("cycling_42_43_capacity.png" instead of a single id).
-  const idPart = props.sessions.map(s => s.session_id).join('_') || 'x'
-  link.download = `cycling_${idPart}_${sanitizeFilename(name)}.png`
+  const prefix = props.experimentLabel
+    ? sanitizeFilename(props.experimentLabel)
+    : 'cycling_' + (props.sessions.map(s => s.session_id).join('_') || 'x')
+  link.download = `${prefix}_${sanitizeFilename(name)}.png`
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
@@ -662,23 +730,13 @@ function exportChartPNG(chartRef, name) {
 
 <template>
   <div class="cycling-charts">
-    <!-- Top row: capacity + efficiency -->
-    <div class="charts-row">
-      <div class="chart-card">
-        <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(capacityChartRef, 'capacity')">
-          <i class="pi pi-download"></i>
-        </button>
-        <div class="chart-wrap">
-          <Line v-if="summary.length" ref="capacityChartRef" :data="capacityChartData" :options="capacityOptions" />
-        </div>
-      </div>
-      <div class="chart-card">
-        <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(efficiencyChartRef, 'efficiency')">
-          <i class="pi pi-download"></i>
-        </button>
-        <div class="chart-wrap">
-          <Line v-if="summary.length" ref="efficiencyChartRef" :data="efficiencyChartData" :options="efficiencyOptions" />
-        </div>
+    <!-- Top: combined Capacity + CE chart (dual Y-axis, publication style) -->
+    <div class="chart-card chart-card--wide">
+      <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(capacityChartRef, 'capacity_and_ce')">
+        <i class="pi pi-download"></i>
+      </button>
+      <div class="chart-wrap chart-wrap--tall">
+        <Line v-if="summary.length" ref="capacityChartRef" :data="capacityChartData" :options="capacityOptions" />
       </div>
     </div>
 
@@ -831,10 +889,7 @@ function exportChartPNG(chartRef, name) {
   align-items: center;
   gap: 0.35rem;
   flex-wrap: wrap;
-  padding: 0.5rem 0.75rem;
-  background: rgba(211, 167, 84, 0.06);
-  border: 1px solid rgba(211, 167, 84, 0.2);
-  border-radius: 8px;
+  padding: 0.35rem 0;
 }
 .filter-btn {
   padding: 3px 10px;
