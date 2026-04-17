@@ -10,7 +10,6 @@ import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
 import PageHeader from '@/components/PageHeader.vue'
 import CrudTable from '@/components/CrudTable.vue'
-import StatusBadge from '@/components/StatusBadge.vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
@@ -21,27 +20,80 @@ const router = useRouter()
 const toast = useToast()
 const authStore = useAuthStore()
 
-// ── Data ──
+// ── Data ──────────────────────────────────────────────────────────────
+// Sessions listing (table) — all sessions in the DB the user can see.
 const sessions = ref([])
 const batteries = ref([])
 const loading = ref(true)
-const selectedSession = ref(null)
-const summaryData = ref([])
-// Multi-cycle overlay state:
-// - selectedCycles: cycles the user has activated (chips + chart click)
-// - cycleDataMap:   cycleNumber → datapoints[] (lazy-loaded, cached per session)
-// - loadingCycles:  cycles currently being fetched (for chip spinner)
+
+// ── Multi-session overlay state ──────────────────────────────────────
+// A session is "active" when it appears on the charts. State is keyed by
+// session_id so each session carries its own summary + cycle data and
+// nothing gets clobbered when the user toggles another one on/off.
+//
+// activeSessionIds — ordered array of active session IDs (first-added first).
+// summaryBySession[id]    — [{cycle_number, charge_cap, discharge_cap, ...}]
+// cycleDataBy[id][cycle]  — [{time_s, voltage_v, current_a, ...}] (lazy)
+// loadingCyclesBy[id]     — array of cycleNumbers currently being fetched
+//
+// selectedCycles is still a single global list — the same cycle set applies
+// to every active session (user-level intent: "show me cycle 1, 5, 10 for
+// whatever sessions are on the chart"). If a session doesn't have cycle 10,
+// its datapoints just aren't plotted — no error.
+const activeSessionIds = ref([])
+const summaryBySession = ref({})
+const cycleDataBySession = ref({})
+const loadingCyclesBy = ref({})
 const selectedCycles = ref([])
-const cycleDataMap = ref({})
-const loadingCycles = ref([])
-// Lifted from 6 → 20 for the new quick-filter buttons ("Каждый 5й" on a
-// 20-cycle session would otherwise clip to 6). Voltage profile overlay
-// stays readable up to ~20 lines; above that, users should decimate.
+
+// Limits. Four active sessions is where the color palette + legend stay
+// readable; above that the chart becomes a rainbow. Twenty cycles per
+// session × 4 sessions × 2 step types = 160 lines at worst on voltage
+// profile — still tractable when the user is deliberate, too many for an
+// accidental "select all" which we already clamp.
+const MAX_ACTIVE_SESSIONS = 4
 const MAX_SELECTED_CYCLES = 20
-// Concurrent fetches when loading many cycles at once. 4 is a reasonable
-// compromise: fast enough to feel responsive, gentle enough not to flood
-// the server with 20 simultaneous requests on a big "Все" click.
 const FETCH_CONCURRENCY = 4
+
+// Stable color palette — each active session gets a color based on its
+// position in activeSessionIds (first = BADB blue, second = orange, ...).
+// We don't hash session_id because that risks collisions on adjacent ids
+// (mod 8 maps 42 and 50 to the same slot), and it gives the primary color
+// to whatever the user activated first — the intuitive anchor.
+const SESSION_PALETTE = [
+  '#003274', // 1st — BADB blue
+  '#E67E22', // 2nd — orange
+  '#52C9A6', // 3rd — green
+  '#8E44AD', // 4th — purple (palette trails into rarely-used slots)
+  '#D3A754', // 5th — ochre
+  '#16A085', // 6th — teal
+  '#E74C3C', // 7th — red
+  '#2C3E50', // 8th — slate
+]
+function colorForSession(sessionId) {
+  const idx = activeSessionIds.value.indexOf(sessionId)
+  if (idx < 0) return SESSION_PALETTE[0]
+  return SESSION_PALETTE[idx % SESSION_PALETTE.length]
+}
+function isSessionActive(sessionId) {
+  return activeSessionIds.value.includes(sessionId)
+}
+
+// Derived: active sessions with their metadata (for chips + Charts).
+// Each element is the session row (from `sessions`) merged with runtime
+// state (summary, cycles, loading flags, assigned color).
+const activeSessionViews = computed(() => {
+  return activeSessionIds.value.map(id => {
+    const meta = sessions.value.find(s => s.session_id === id) || { session_id: id }
+    return {
+      ...meta,
+      color: colorForSession(id),
+      summary: summaryBySession.value[id] || [],
+      cycleDataMap: cycleDataBySession.value[id] || {},
+      loadingCycles: loadingCyclesBy.value[id] || [],
+    }
+  })
+})
 
 // ── Upload dialog ──
 // Multi-file upload model:
@@ -136,12 +188,14 @@ const uploadStats = computed(() => {
 })
 
 const columns = [
-  { field: 'session_id', header: '#', width: 60, sortable: true },
-  { field: 'battery_id', header: 'Аккумулятор', width: 120, sortable: true },
-  { field: 'equipment_type', header: 'Оборудование', width: 120, sortable: true, filterable: true },
+  // Synthetic column "active" — a toggle [●/○] that adds/removes the row
+  // from the charts overlay. Field name `active` doesn't exist in the API
+  // row, we just render it via #col-active slot.
+  { field: 'active', header: '', width: 44, sortable: false },
+  { field: 'battery_id', header: 'Аккумулятор', width: 130, sortable: true },
+  { field: 'equipment_type', header: 'Оборудование', width: 130, sortable: true, filterable: true },
   { field: 'total_cycles', header: 'Циклов', width: 80, sortable: true },
-  { field: 'status', header: 'Статус', width: 100, sortable: true, filterable: true },
-  { field: 'file_name', header: 'Файл', width: 180 },
+  { field: 'file_name', header: 'Файл', width: 200 },
   { field: 'uploader_name', header: 'Загрузил', width: 130, filterable: true },
   { field: 'uploaded_at', header: 'Дата', width: 140, sortable: true },
 ]
@@ -162,73 +216,67 @@ async function loadData() {
 
 onMounted(loadData)
 
-// ── Session selection → load charts ──
-async function onSessionClick(row) {
-  selectedSession.value = row
-  // Clear per-session cycle overlay state
-  selectedCycles.value = []
-  cycleDataMap.value = {}
-  loadingCycles.value = []
+// ── Session activation ─────────────────────────────────────────────────
+// Add/remove a session from the active overlay. First call also fetches the
+// session's per-cycle summary (the data that feeds capacity/CE charts).
+//
+// Row-click on the table routes here, as does the [●] toggle button in the
+// leftmost column. If a session is already active, clicking it again
+// deactivates it (remove from activeSessionIds; cached data is kept so a
+// re-add is instant).
+async function toggleSession(row) {
+  if (!row || row.status !== 'ready') {
+    if (row?.status === 'processing') {
+      toast.add({ severity: 'info', summary: 'Сессия ещё обрабатывается', life: 2500 })
+    } else if (row?.status === 'error') {
+      toast.add({ severity: 'error', summary: 'Сессия с ошибкой', detail: row.error_message || '', life: 3500 })
+    }
+    return
+  }
+  const sid = row.session_id
+  if (activeSessionIds.value.includes(sid)) {
+    activeSessionIds.value = activeSessionIds.value.filter(x => x !== sid)
+    // Also drop any selected cycles that were only relevant to this
+    // session's length — but since selectedCycles is a global list, we
+    // leave it. Empty cycles for a session just don't plot.
+    return
+  }
+  if (activeSessionIds.value.length >= MAX_ACTIVE_SESSIONS) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Лимит сессий',
+      detail: `Можно сравнивать до ${MAX_ACTIVE_SESSIONS} сессий одновременно`,
+      life: 3000,
+    })
+    return
+  }
+
+  // Activate: push ID first so color assignment is stable before fetch.
+  activeSessionIds.value = [...activeSessionIds.value, sid]
+
+  // Skip fetch if already cached (user toggled off then on).
+  if (summaryBySession.value[sid]) return
+
   try {
-    const { data } = await api.get(`/api/cycling/sessions/${row.session_id}/summary`)
-    summaryData.value = data
+    const { data } = await api.get(`/api/cycling/sessions/${sid}/summary`)
+    summaryBySession.value = { ...summaryBySession.value, [sid]: data }
   } catch {
-    summaryData.value = []
+    // Rollback on failure so the user can retry.
+    activeSessionIds.value = activeSessionIds.value.filter(x => x !== sid)
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить данные сессии', life: 3000 })
   }
 }
 
-// Replace the whole selection (triggered by the "Все / Каждый N / Диапазон"
-// quick filters). Fetches missing cycles in parallel with a small concurrency
-// cap, so clicking "Все" on a 20-cycle session doesn't fire 20 simultaneous
-// API calls.
-async function replaceCycles(newList) {
-  if (!selectedSession.value) return
-  const clamped = (newList || []).slice(0, MAX_SELECTED_CYCLES)
-
-  // Capture session to detect switch mid-flight (same guard used in toggleCycle).
-  const capturedSessionId = selectedSession.value.session_id
-
-  // Swap the selection immediately — UI chips/charts react before fetches finish.
-  selectedCycles.value = clamped
-
-  const missing = clamped.filter(c => !cycleDataMap.value[c])
-  if (!missing.length) return
-
-  // Mark all missing as loading (dedup against in-flight fetches from a prior click)
-  loadingCycles.value = [...new Set([...loadingCycles.value, ...missing])]
-
-  const queue = [...missing]
-  const workers = Array.from(
-    { length: Math.min(FETCH_CONCURRENCY, queue.length) },
-    async () => {
-      while (queue.length) {
-        const c = queue.shift()
-        try {
-          const { data } = await api.get(`/api/cycling/sessions/${capturedSessionId}/cycles/${c}`)
-          if (selectedSession.value?.session_id !== capturedSessionId) return
-          cycleDataMap.value = { ...cycleDataMap.value, [c]: data }
-        } catch {
-          // Per-cycle failure is silent — row stays without data. User can
-          // retry by clicking the chip manually (toggleCycle path).
-        } finally {
-          if (selectedSession.value?.session_id === capturedSessionId) {
-            loadingCycles.value = loadingCycles.value.filter(x => x !== c)
-          }
-        }
-      }
-    }
-  )
-  await Promise.all(workers)
+function removeActiveSession(sid) {
+  activeSessionIds.value = activeSessionIds.value.filter(x => x !== sid)
 }
 
-// Toggle a cycle in the overlay:
-// - if already selected → remove (but keep data cached for quick re-enable)
-// - if not selected → add; lazy-fetch datapoints if not cached
-// - cap at MAX_SELECTED_CYCLES to avoid chart clutter / memory blowup
-// - guards against session-switch races: captures session_id at entry and
-//   bails out if the user switched sessions before the fetch resolved.
+// Toggle a cycle across ALL active sessions. selectedCycles is a single
+// global list — the user's intent is "show cycle N on every session on the
+// chart". If a session doesn't have that cycle, it just isn't drawn.
+// Fetches missing per-session datapoints in parallel (across sessions).
 async function toggleCycle(cycleNum) {
-  if (!selectedSession.value) return
+  if (!activeSessionIds.value.length) return
 
   const idx = selectedCycles.value.indexOf(cycleNum)
   if (idx >= 0) {
@@ -246,40 +294,94 @@ async function toggleCycle(cycleNum) {
     return
   }
 
-  // Capture session at entry — used to detect session switch mid-flight.
-  const capturedSessionId = selectedSession.value.session_id
-
-  // Add to selection immediately (chip turns active)
+  // Capture active list to detect session changes mid-flight.
+  const capturedActiveIds = [...activeSessionIds.value]
   selectedCycles.value = [...selectedCycles.value, cycleNum]
 
-  // If already cached, done
-  if (cycleDataMap.value[cycleNum]) return
+  // Fetch for every currently-active session that doesn't have this cycle yet.
+  await Promise.all(capturedActiveIds.map(sid => fetchCycleForSession(sid, cycleNum)))
+}
 
-  // Fetch datapoints
-  loadingCycles.value = [...loadingCycles.value, cycleNum]
+// Replace the whole cycle selection across ALL active sessions (the quick
+// filters: "Все / Каждый N / Диапазон"). Fetches missing cycle datapoints
+// in parallel with a small concurrency cap per session.
+async function replaceCycles(newList) {
+  if (!activeSessionIds.value.length) return
+  const clamped = (newList || []).slice(0, MAX_SELECTED_CYCLES)
+  selectedCycles.value = clamped
+  if (!clamped.length) return
+
+  // For each active session, find its missing cycles and fetch them.
+  const capturedActiveIds = [...activeSessionIds.value]
+  await Promise.all(capturedActiveIds.map(async sid => {
+    const have = cycleDataBySession.value[sid] || {}
+    const missing = clamped.filter(c => !have[c])
+    if (!missing.length) return
+    await fetchCyclesBatched(sid, missing)
+  }))
+}
+
+// Fetch datapoints for one (sid, cycleNum) pair. Used by toggleCycle.
+async function fetchCycleForSession(sid, cycleNum) {
+  const existing = cycleDataBySession.value[sid] || {}
+  if (existing[cycleNum]) return  // cached
+
+  // Mark loading.
+  loadingCyclesBy.value = {
+    ...loadingCyclesBy.value,
+    [sid]: [...(loadingCyclesBy.value[sid] || []), cycleNum],
+  }
   try {
-    const { data } = await api.get(`/api/cycling/sessions/${capturedSessionId}/cycles/${cycleNum}`)
-    // Bail out if the user switched sessions while the fetch was in flight —
-    // otherwise we'd stomp the new session's cycleDataMap with old data.
-    if (selectedSession.value?.session_id !== capturedSessionId) return
-    cycleDataMap.value = { ...cycleDataMap.value, [cycleNum]: data }
-  } catch {
-    // Only mutate state if we're still on the same session.
-    if (selectedSession.value?.session_id === capturedSessionId) {
-      selectedCycles.value = selectedCycles.value.filter(c => c !== cycleNum)
-      toast.add({
-        severity: 'error',
-        summary: 'Ошибка',
-        detail: `Не удалось загрузить цикл ${cycleNum}`,
-        life: 3000,
-      })
+    const { data } = await api.get(`/api/cycling/sessions/${sid}/cycles/${cycleNum}`)
+    // Still active? (User could have deactivated during fetch.)
+    if (!activeSessionIds.value.includes(sid)) return
+    cycleDataBySession.value = {
+      ...cycleDataBySession.value,
+      [sid]: { ...(cycleDataBySession.value[sid] || {}), [cycleNum]: data },
     }
+  } catch {
+    // Silent — user can retry by clicking the chip.
   } finally {
-    // Same session guard — loadingCycles was reset on session switch.
-    if (selectedSession.value?.session_id === capturedSessionId) {
-      loadingCycles.value = loadingCycles.value.filter(c => c !== cycleNum)
+    const list = loadingCyclesBy.value[sid] || []
+    loadingCyclesBy.value = {
+      ...loadingCyclesBy.value,
+      [sid]: list.filter(c => c !== cycleNum),
     }
   }
+}
+
+// Batched fetch with concurrency limit, for a single session fetching many
+// cycles at once (called from replaceCycles per active session).
+async function fetchCyclesBatched(sid, cycleNums) {
+  loadingCyclesBy.value = {
+    ...loadingCyclesBy.value,
+    [sid]: [...new Set([...(loadingCyclesBy.value[sid] || []), ...cycleNums])],
+  }
+  const queue = [...cycleNums]
+  const workers = Array.from(
+    { length: Math.min(FETCH_CONCURRENCY, queue.length) },
+    async () => {
+      while (queue.length) {
+        const c = queue.shift()
+        try {
+          const { data } = await api.get(`/api/cycling/sessions/${sid}/cycles/${c}`)
+          if (!activeSessionIds.value.includes(sid)) return
+          cycleDataBySession.value = {
+            ...cycleDataBySession.value,
+            [sid]: { ...(cycleDataBySession.value[sid] || {}), [c]: data },
+          }
+        } catch { /* silent per-cycle */ }
+        finally {
+          const list = loadingCyclesBy.value[sid] || []
+          loadingCyclesBy.value = {
+            ...loadingCyclesBy.value,
+            [sid]: list.filter(x => x !== c),
+          }
+        }
+      }
+    }
+  )
+  await Promise.all(workers)
 }
 
 // ── Upload ──────────────────────────────────────────────────────────────
@@ -368,12 +470,20 @@ async function deleteSession(items) {
     } catch { /* silent */ }
   }
   await loadData()
-  if (selectedSession.value && deletedIds.includes(selectedSession.value.session_id)) {
-    selectedSession.value = null
-    summaryData.value = []
-    selectedCycles.value = []
-    cycleDataMap.value = {}
-    loadingCycles.value = []
+  // Purge any deleted session from the active overlay + per-session caches.
+  if (deletedIds.length) {
+    activeSessionIds.value = activeSessionIds.value.filter(id => !deletedIds.includes(id))
+    for (const id of deletedIds) {
+      delete summaryBySession.value[id]
+      delete cycleDataBySession.value[id]
+      delete loadingCyclesBy.value[id]
+    }
+    // Trigger reactivity after delete-in-place
+    summaryBySession.value = { ...summaryBySession.value }
+    cycleDataBySession.value = { ...cycleDataBySession.value }
+    loadingCyclesBy.value = { ...loadingCyclesBy.value }
+    // If no active sessions remain, clear cycle selection too.
+    if (!activeSessionIds.value.length) selectedCycles.value = []
   }
 }
 
@@ -407,61 +517,82 @@ const batteryOptions = computed(() =>
       :data="sessions"
       id-field="session_id"
       table-name="Сессии циклирования"
-      @row-click="onSessionClick"
+      @row-click="toggleSession"
       @delete="deleteSession"
     >
+      <template #col-active="{ data }">
+        <button
+          class="active-toggle"
+          :class="{ 'is-active': isSessionActive(data.session_id), 'is-disabled': data.status !== 'ready' }"
+          :title="data.status === 'ready'
+            ? (isSessionActive(data.session_id) ? 'Убрать с графиков' : 'Показать на графиках')
+            : (data.status === 'processing' ? 'Ещё обрабатывается' : 'Ошибка обработки')"
+          @click.stop="toggleSession(data)"
+        >
+          <span
+            class="active-dot"
+            :style="isSessionActive(data.session_id)
+              ? { background: colorForSession(data.session_id), borderColor: colorForSession(data.session_id) }
+              : {}"
+          ></span>
+          <i v-if="data.status === 'processing'" class="pi pi-spin pi-spinner" style="font-size:10px"></i>
+          <i v-else-if="data.status === 'error'" class="pi pi-exclamation-circle" style="font-size:10px;color:#E74C3C"></i>
+        </button>
+      </template>
       <template #col-battery_id="{ data }">
         <span class="battery-link" @click.stop="router.push(`/assembly/${data.battery_id}`)">
           Акк. #{{ data.battery_id }}
         </span>
       </template>
-      <template #col-status="{ data }">
-        <StatusBadge :status="data.status" />
-      </template>
       <template #col-uploaded_at="{ data }">
         {{ formatDate(data.uploaded_at) }}
       </template>
       <template #col-file_name="{ data }">
-        <span :title="data.file_name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:170px;">
+        <span :title="data.file_name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:200px;">
           {{ data.file_name }}
         </span>
       </template>
     </CrudTable>
 
-    <!-- Charts area -->
-    <div v-if="selectedSession" class="charts-area glass-card">
-      <div class="charts-header">
-        <div class="charts-title">
-          Сессия #{{ selectedSession.session_id }}
-          — Акк. #{{ selectedSession.battery_id }}
-          <span v-if="selectedSession.project_name" class="charts-project">{{ selectedSession.project_name }}</span>
-        </div>
-        <div class="charts-meta">
-          {{ selectedSession.total_cycles }} циклов
-          · {{ selectedSession.equipment_type }}
-          <span v-if="selectedSession.protocol"> · {{ selectedSession.protocol }}</span>
-        </div>
+    <!-- Active sessions bar (chips above charts) -->
+    <div v-if="activeSessionViews.length" class="active-sessions-bar glass-card">
+      <span class="active-label">На графиках:</span>
+      <div
+        v-for="s in activeSessionViews"
+        :key="s.session_id"
+        class="session-chip"
+        :style="{ borderColor: s.color, boxShadow: `inset 3px 0 0 ${s.color}` }"
+      >
+        <span class="chip-dot" :style="{ background: s.color }"></span>
+        <span class="chip-label">
+          <strong>#{{ s.session_id }}</strong>
+          <span v-if="s.battery_id"> · Акк#{{ s.battery_id }}</span>
+          <span v-if="s.file_name" class="chip-file" :title="s.file_name">· {{ s.file_name }}</span>
+        </span>
+        <span v-if="s.loadingCycles.length" class="chip-loading">
+          <i class="pi pi-spin pi-spinner" style="font-size:9px"></i>
+          {{ s.loadingCycles.length }}
+        </span>
+        <button class="chip-close" title="Убрать с графиков" @click="removeActiveSession(s.session_id)">
+          <i class="pi pi-times" style="font-size:10px"></i>
+        </button>
       </div>
+    </div>
 
+    <!-- Charts area (multi-session) -->
+    <div v-if="activeSessionViews.length" class="charts-area glass-card">
       <CyclingCharts
-        v-if="summaryData.length"
-        :summary="summaryData"
-        :cycleDataMap="cycleDataMap"
+        :sessions="activeSessionViews"
         :selectedCycles="selectedCycles"
-        :loadingCycles="loadingCycles"
-        :totalCycles="selectedSession.total_cycles || summaryData.length"
-        :sessionId="selectedSession.session_id"
         :maxSelected="MAX_SELECTED_CYCLES"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"
       />
-      <div v-else-if="selectedSession.status === 'processing'" class="charts-loading">
-        <i class="pi pi-spin pi-spinner"></i> Данные обрабатываются...
-      </div>
-      <div v-else-if="selectedSession.status === 'error'" class="charts-error">
-        <i class="pi pi-exclamation-triangle"></i> {{ selectedSession.error_message || 'Ошибка обработки' }}
-      </div>
-      <div v-else class="charts-empty">Нет данных</div>
+    </div>
+    <div v-else class="charts-placeholder glass-card">
+      <i class="pi pi-chart-line" style="font-size:24px;opacity:0.3"></i>
+      <div>Выберите одну или несколько сессий в таблице — графики появятся здесь.</div>
+      <div class="placeholder-hint">Клик по строке или по кружку слева добавит сессию на графики. До {{ MAX_ACTIVE_SESSIONS }} сессий одновременно.</div>
     </div>
 
     <!-- Upload dialog — multi-file -->
@@ -623,6 +754,129 @@ const batteryOptions = computed(() =>
   cursor: pointer;
 }
 .battery-link:hover { text-decoration: underline; }
+
+/* ── Active toggle (●/○ in table column) ── */
+.active-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 32px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease;
+}
+.active-toggle:hover:not(.is-disabled) { transform: scale(1.1); }
+.active-toggle.is-disabled { cursor: not-allowed; opacity: 0.5; }
+.active-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 50, 116, 0.3);
+  background: transparent;
+  transition: all 0.15s ease;
+}
+.active-toggle.is-active .active-dot {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 1), 0 0 0 3px currentColor;
+}
+
+/* ── Active sessions chips bar ── */
+.active-sessions-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.6rem 1rem;
+  flex-wrap: wrap;
+}
+.active-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(0, 50, 116, 0.5);
+  flex-shrink: 0;
+}
+.session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 12px;
+  border: 1.5px solid;
+  border-radius: 8px;
+  background: white;
+  font-size: 12px;
+  color: #1F2937;
+  max-width: 300px;
+}
+.chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.chip-label strong { color: #003274; font-weight: 700; }
+.chip-file {
+  color: #6B7280;
+  font-size: 11px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #F39C12;
+}
+.chip-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: rgba(0, 50, 116, 0.06);
+  color: rgba(0, 50, 116, 0.6);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+.chip-close:hover { background: #E74C3C; color: white; }
+
+/* ── Charts placeholder ── */
+.charts-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  color: rgba(0, 50, 116, 0.6);
+  font-size: 13px;
+}
+.placeholder-hint {
+  font-size: 11px;
+  color: rgba(0, 50, 116, 0.35);
+  max-width: 400px;
+}
 
 /* ── Charts ── */
 .charts-area { padding: 1.25rem; }

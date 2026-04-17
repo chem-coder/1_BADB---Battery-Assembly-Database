@@ -25,21 +25,53 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler, ScatterController)
 
+// Multi-session props — each session carries its own summary + cycleDataMap
+// + color. See CyclingPage.activeSessionViews for the shape.
 const props = defineProps({
-  summary: { type: Array, default: () => [] },
-  cycleDataMap: { type: Object, default: () => ({}) },
+  sessions: { type: Array, default: () => [] },
+  // Cycle selection is global (applies to every session on the chart). If
+  // a session doesn't have a given cycle, it's silently skipped in the
+  // voltage/dQdV panels — no error.
   selectedCycles: { type: Array, default: () => [] },
-  loadingCycles: { type: Array, default: () => [] },
-  totalCycles: { type: Number, default: 0 },
-  sessionId: { type: Number, default: 0 },
-  // Cap on simultaneous selection — shown in quick-filter buttons so the
-  // user sees why "Все" might truncate to this many.
   maxSelected: { type: Number, default: 20 },
 })
 
-// toggle-cycle — add/remove one cycle (existing behavior, used by chip + chart click)
+// toggle-cycle — add/remove one cycle (across all active sessions)
 // replace-cycles — swap the whole selection (used by quick filters)
 const emit = defineEmits(['toggle-cycle', 'replace-cycles'])
+
+// ── Compatibility helpers for the rest of the component ────────────────
+// Aggregated "summary" across all sessions — used for cycle-filter buttons
+// ("Все (N)" needs to know the full range). We take the union of cycle
+// numbers seen in any session, sorted, deduped.
+const mergedSummary = computed(() => {
+  const seen = new Set()
+  const out = []
+  for (const s of props.sessions) {
+    for (const row of s.summary || []) {
+      if (seen.has(row.cycle_number)) continue
+      seen.add(row.cycle_number)
+      out.push({ cycle_number: row.cycle_number })
+    }
+  }
+  out.sort((a, b) => a.cycle_number - b.cycle_number)
+  return out
+})
+
+// Aggregated loading set across sessions — so a single spinner on a chip
+// lights up regardless of which session is fetching cycle N.
+const mergedLoadingSet = computed(() => {
+  const all = new Set()
+  for (const s of props.sessions) {
+    for (const c of s.loadingCycles || []) all.add(c)
+  }
+  return all
+})
+
+// For the legacy "summary" variable used by filter functions, expose the
+// merged list under the old name so we don't have to rename everywhere.
+// (We still use props.sessions for actual chart data.)
+const summary = mergedSummary
 
 // Chart refs for PNG export
 const capacityChartRef = ref(null)
@@ -47,114 +79,176 @@ const efficiencyChartRef = ref(null)
 const voltageChartRef = ref(null)
 const dqdvChartRef = ref(null)
 
-// ── Color palette for multi-cycle overlay ──
-// Ordered, distinct, colorblind-friendlyish
-const CYCLE_COLORS = [
-  '#003274', // BADB blue
-  '#E74C3C', // red
-  '#52C9A6', // green
-  '#D3A754', // ochre
-  '#8E44AD', // purple
-  '#16A085', // teal
-  '#E67E22', // orange
-  '#2C3E50', // slate
-]
-function colorForIndex(idx) {
-  return CYCLE_COLORS[idx % CYCLE_COLORS.length]
+// ── Session label helper (shown in chart legends) ──
+function sessionShortLabel(s) {
+  // Prefer a concise "#42 Акк#5" when battery_id known, else just #42
+  if (s.battery_id) return `#${s.session_id} Акк#${s.battery_id}`
+  return `#${s.session_id}`
 }
 
-// ── Capacity vs Cycle ──
-const capacityChartData = computed(() => {
-  const labels = props.summary.map(s => s.cycle_number)
-  // Highlight selected cycles with larger point radius
-  const selectedSet = new Set(props.selectedCycles)
-  const pointRadius = props.summary.map(s => selectedSet.has(s.cycle_number) ? 5 : 2)
-  const pointBg = props.summary.map(s => selectedSet.has(s.cycle_number) ? '#D3A754' : '#003274')
+// Translucent fill for the capacity fill-under-line (session.color + alpha)
+function fillColor(hex, alpha = 0.08) {
+  // #RRGGBB → rgba(r,g,b,alpha)
+  const h = hex.replace('#', '')
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
 
-  return {
-    labels,
-    datasets: [
-      {
-        label: 'Разряд (Ah)',
-        data: props.summary.map(s => s.discharge_capacity_ah),
-        borderColor: '#003274',
-        backgroundColor: 'rgba(0, 50, 116, 0.06)',
-        fill: true,
-        tension: 0.2,
-        pointRadius,
-        pointBackgroundColor: pointBg,
-        pointHoverRadius: 6,
-      },
-      {
-        label: 'Заряд (Ah)',
-        data: props.summary.map(s => s.charge_capacity_ah),
-        borderColor: '#52C9A6',
-        backgroundColor: 'transparent',
-        borderDash: [4, 2],
-        tension: 0.2,
-        pointRadius: 1,
-      },
-    ],
+// ── Capacity vs Cycle (one line per session × {discharge, charge}) ──
+const capacityChartData = computed(() => {
+  const datasets = []
+  const selectedSet = new Set(props.selectedCycles)
+
+  for (const s of props.sessions) {
+    if (!s.summary?.length) continue
+
+    // Discharge — solid line, session color, fill only for single-session
+    // case (multi-session fill stacks ugly and obscures other lines).
+    const isSolo = props.sessions.length === 1
+    datasets.push({
+      label: `${sessionShortLabel(s)} · разряд`,
+      data: s.summary.map(row => ({
+        x: row.cycle_number,
+        y: row.discharge_capacity_ah,
+      })),
+      borderColor: s.color,
+      backgroundColor: isSolo ? fillColor(s.color, 0.08) : 'transparent',
+      fill: isSolo,
+      tension: 0.2,
+      pointRadius: s.summary.map(row => selectedSet.has(row.cycle_number) ? 5 : 2.5),
+      pointBackgroundColor: s.summary.map(row =>
+        selectedSet.has(row.cycle_number) ? '#D3A754' : s.color
+      ),
+      pointHoverRadius: 6,
+      borderWidth: 1.8,
+    })
+
+    // Charge — dashed line, same color, thinner
+    datasets.push({
+      label: `${sessionShortLabel(s)} · заряд`,
+      data: s.summary.map(row => ({
+        x: row.cycle_number,
+        y: row.charge_capacity_ah,
+      })),
+      borderColor: s.color,
+      backgroundColor: 'transparent',
+      borderDash: [4, 2],
+      tension: 0.2,
+      pointRadius: 1,
+      borderWidth: 1.3,
+    })
   }
+
+  return { datasets }
 })
 
-const capacityOptions = {
+const capacityOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
-  onClick: (evt, elements) => {
+  onClick: (evt, elements, chart) => {
+    // Click → toggle the cycle from the first clicked point. Works across
+    // all session datasets — we read the point's .x (cycle_number) from
+    // the dataset, not the index (labels aren't shared anymore now that
+    // each session is its own dataset with x/y pairs).
     if (elements.length > 0) {
-      const idx = elements[0].index
-      const cycle = props.summary[idx]?.cycle_number
+      const el = elements[0]
+      const ds = chart.data.datasets[el.datasetIndex]
+      const pt = ds?.data?.[el.index]
+      const cycle = typeof pt === 'object' ? pt.x : pt
       if (cycle !== undefined) emit('toggle-cycle', cycle)
     }
   },
   plugins: {
     legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
-    title: { display: true, text: 'Ёмкость vs Цикл', font: { size: 13, weight: 600 }, color: '#003274', padding: { bottom: 10 } },
+    title: {
+      display: true,
+      text: props.sessions.length > 1
+        ? `Ёмкость vs Цикл (${props.sessions.length} сессий)`
+        : 'Ёмкость vs Цикл',
+      font: { size: 13, weight: 600 },
+      color: '#003274',
+      padding: { bottom: 10 },
+    },
     tooltip: {
-      callbacks: {
-        afterBody: () => 'Клик — добавить/убрать цикл',
-      },
+      callbacks: { afterBody: () => 'Клик — добавить/убрать цикл' },
     },
   },
   scales: {
     y: { title: { display: true, text: 'Ёмкость (Ah)', font: { size: 10 } }, beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
-    x: { title: { display: true, text: 'Цикл', font: { size: 10 } }, ticks: { font: { size: 10 } }, grid: { display: false } },
+    x: {
+      type: 'linear',
+      title: { display: true, text: 'Цикл', font: { size: 10 } },
+      ticks: { font: { size: 10 }, stepSize: 1 },
+      grid: { display: false },
+    },
   },
-}
-
-// ── Coulombic Efficiency ──
-const efficiencyChartData = computed(() => ({
-  labels: props.summary.map(s => s.cycle_number),
-  datasets: [{
-    label: 'Кулоновская эффективность (%)',
-    data: props.summary.map(s => s.coulombic_efficiency),
-    borderColor: '#D3A754',
-    backgroundColor: 'rgba(211, 167, 84, 0.06)',
-    fill: true,
-    tension: 0.2,
-    pointRadius: 2,
-  }],
 }))
 
-const efficiencyOptions = {
+// ── Coulombic Efficiency (one line per session) ──
+const efficiencyChartData = computed(() => {
+  const datasets = []
+  for (const s of props.sessions) {
+    if (!s.summary?.length) continue
+    datasets.push({
+      label: sessionShortLabel(s),
+      data: s.summary.map(row => ({
+        x: row.cycle_number,
+        y: row.coulombic_efficiency,
+      })),
+      borderColor: s.color,
+      backgroundColor: 'transparent',
+      tension: 0.2,
+      pointRadius: 2.5,
+      borderWidth: 1.8,
+    })
+  }
+  return { datasets }
+})
+
+const efficiencyOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: { display: false },
-    title: { display: true, text: 'Кулоновская эффективность', font: { size: 13, weight: 600 }, color: '#003274', padding: { bottom: 10 } },
+    legend: {
+      display: props.sessions.length > 1,
+      position: 'bottom',
+      labels: { boxWidth: 12, font: { size: 11 } },
+    },
+    title: {
+      display: true,
+      text: props.sessions.length > 1
+        ? `Кулоновская эффективность (${props.sessions.length} сессий)`
+        : 'Кулоновская эффективность',
+      font: { size: 13, weight: 600 },
+      color: '#003274',
+      padding: { bottom: 10 },
+    },
   },
   scales: {
-    y: { title: { display: true, text: '%', font: { size: 10 } }, suggestedMin: 95, suggestedMax: 101, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
-    x: { title: { display: true, text: 'Цикл', font: { size: 10 } }, ticks: { font: { size: 10 } }, grid: { display: false } },
+    y: { title: { display: true, text: '%', font: { size: 10 } }, suggestedMin: 70, suggestedMax: 101, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
+    x: {
+      type: 'linear',
+      title: { display: true, text: 'Цикл', font: { size: 10 } },
+      ticks: { font: { size: 10 }, stepSize: 1 },
+      grid: { display: false },
+    },
   },
-}
+}))
 
-// ── Voltage Profile (overlay of selected cycles) ──
+// ── Voltage Profile (overlay: sessions × selected cycles) ──
+// Visual encoding:
+//   color = session (stable, from palette)
+//   line thickness = cycle position (earlier cycles thinner; later thicker)
+//     makes capacity fade visible at a glance
+//   solid = discharge, dashed = charge (same as single-session)
 const hasCapacity = computed(() => {
-  for (const cycleNum of props.selectedCycles) {
-    const points = props.cycleDataMap[cycleNum] || []
-    if (points.some(d => d.capacity_ah != null)) return true
+  for (const s of props.sessions) {
+    for (const cycleNum of props.selectedCycles) {
+      const points = s.cycleDataMap?.[cycleNum] || []
+      if (points.some(d => d.capacity_ah != null)) return true
+    }
   }
   return false
 })
@@ -163,45 +257,49 @@ const voltageChartData = computed(() => {
   const datasets = []
   const sortedCycles = [...props.selectedCycles].sort((a, b) => a - b)
   const useCapacity = hasCapacity.value
+  const nCycles = sortedCycles.length
 
-  sortedCycles.forEach((cycleNum, idx) => {
-    const points = props.cycleDataMap[cycleNum] || []
-    if (!points.length) return
+  for (const s of props.sessions) {
+    sortedCycles.forEach((cycleNum, cIdx) => {
+      const points = s.cycleDataMap?.[cycleNum] || []
+      if (!points.length) return
 
-    const color = colorForIndex(idx)
-    const charge = points.filter(d => d.step_type === 'charge' || d.step_type === 'cccv')
-    const discharge = points.filter(d => d.step_type === 'discharge')
+      const charge = points.filter(d => d.step_type === 'charge' || d.step_type === 'cccv')
+      const discharge = points.filter(d => d.step_type === 'discharge')
+      // Thickness grows from 1.0 (first cycle) to ~2.2 (last cycle)
+      const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.2 : 0.6)
 
-    if (charge.length) {
-      datasets.push({
-        label: `Цикл ${cycleNum} · заряд`,
-        data: charge.map(p => ({
-          x: useCapacity ? p.capacity_ah : p.time_s,
-          y: p.voltage_v,
-        })),
-        borderColor: color,
-        backgroundColor: color,
-        pointRadius: 0,
-        borderWidth: 1.6,
-        borderDash: [4, 2],
-        showLine: true,
-      })
-    }
-    if (discharge.length) {
-      datasets.push({
-        label: `Цикл ${cycleNum} · разряд`,
-        data: discharge.map(p => ({
-          x: useCapacity ? p.capacity_ah : p.time_s,
-          y: p.voltage_v,
-        })),
-        borderColor: color,
-        backgroundColor: color,
-        pointRadius: 0,
-        borderWidth: 1.6,
-        showLine: true,
-      })
-    }
-  })
+      if (charge.length) {
+        datasets.push({
+          label: `${sessionShortLabel(s)} Ц${cycleNum} · заряд`,
+          data: charge.map(p => ({
+            x: useCapacity ? p.capacity_ah : p.time_s,
+            y: p.voltage_v,
+          })),
+          borderColor: s.color,
+          backgroundColor: s.color,
+          pointRadius: 0,
+          borderWidth: thickness,
+          borderDash: [4, 2],
+          showLine: true,
+        })
+      }
+      if (discharge.length) {
+        datasets.push({
+          label: `${sessionShortLabel(s)} Ц${cycleNum} · разряд`,
+          data: discharge.map(p => ({
+            x: useCapacity ? p.capacity_ah : p.time_s,
+            y: p.voltage_v,
+          })),
+          borderColor: s.color,
+          backgroundColor: s.color,
+          pointRadius: 0,
+          borderWidth: thickness,
+          showLine: true,
+        })
+      }
+    })
+  }
 
   return { datasets }
 })
@@ -213,9 +311,12 @@ const voltageOptions = computed(() => ({
     legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
     title: {
       display: true,
-      text: props.selectedCycles.length
-        ? `Профиль напряжения — ${props.selectedCycles.length} ${props.selectedCycles.length === 1 ? 'цикл' : 'циклов'}`
-        : 'Профиль напряжения',
+      text: (() => {
+        if (!props.selectedCycles.length) return 'Профиль напряжения'
+        const cLabel = `${props.selectedCycles.length} ${props.selectedCycles.length === 1 ? 'цикл' : 'циклов'}`
+        if (props.sessions.length <= 1) return `Профиль напряжения — ${cLabel}`
+        return `Профиль напряжения — ${props.sessions.length} сессий × ${cLabel}`
+      })(),
       font: { size: 13, weight: 600 },
       color: '#003274',
       padding: { bottom: 10 },
@@ -278,38 +379,41 @@ function computeDQDV(points) {
 const dqdvChartData = computed(() => {
   const datasets = []
   const sortedCycles = [...props.selectedCycles].sort((a, b) => a - b)
+  const nCycles = sortedCycles.length
 
-  sortedCycles.forEach((cycleNum, idx) => {
-    const points = props.cycleDataMap[cycleNum] || []
-    if (!points.length) return
+  for (const s of props.sessions) {
+    sortedCycles.forEach((cycleNum, cIdx) => {
+      const points = s.cycleDataMap?.[cycleNum] || []
+      if (!points.length) return
 
-    const color = colorForIndex(idx)
-    const { charge, discharge } = computeDQDV(points)
+      const { charge, discharge } = computeDQDV(points)
+      const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.0 : 0.5)
 
-    if (charge.length) {
-      datasets.push({
-        label: `Цикл ${cycleNum} · заряд`,
-        data: charge,
-        borderColor: color,
-        backgroundColor: color,
-        pointRadius: 0,
-        borderWidth: 1.5,
-        borderDash: [4, 2],
-        showLine: true,
-      })
-    }
-    if (discharge.length) {
-      datasets.push({
-        label: `Цикл ${cycleNum} · разряд`,
-        data: discharge,
-        borderColor: color,
-        backgroundColor: color,
-        pointRadius: 0,
-        borderWidth: 1.5,
-        showLine: true,
-      })
-    }
-  })
+      if (charge.length) {
+        datasets.push({
+          label: `${sessionShortLabel(s)} Ц${cycleNum} · заряд`,
+          data: charge,
+          borderColor: s.color,
+          backgroundColor: s.color,
+          pointRadius: 0,
+          borderWidth: thickness,
+          borderDash: [4, 2],
+          showLine: true,
+        })
+      }
+      if (discharge.length) {
+        datasets.push({
+          label: `${sessionShortLabel(s)} Ц${cycleNum} · разряд`,
+          data: discharge,
+          borderColor: s.color,
+          backgroundColor: s.color,
+          pointRadius: 0,
+          borderWidth: thickness,
+          showLine: true,
+        })
+      }
+    })
+  }
 
   return { datasets }
 })
@@ -342,7 +446,7 @@ const dqdvOptions = {
 // All helpers clamp to maxSelected — the lazy-fetch loop in CyclingPage
 // doesn't scale past ~20 cycles without noticeable lag, and the voltage
 // overlay becomes unreadable past that anyway.
-const allCycleNumbers = computed(() => props.summary.map(s => s.cycle_number))
+const allCycleNumbers = computed(() => mergedSummary.value.map(s => s.cycle_number))
 
 // UI state for the custom-range popover
 const rangeOpen = ref(false)
@@ -405,7 +509,7 @@ function countEveryNth(n) {
 
 // ── Quick cycle buttons ──
 const cycleButtons = computed(() => {
-  const numbers = props.summary.map(s => s.cycle_number)
+  const numbers = mergedSummary.value.map(s => s.cycle_number)
   if (!numbers.length) return []  // guard: empty summary → no buttons
   if (numbers.length <= 12) return numbers
 
@@ -421,7 +525,10 @@ const cycleButtons = computed(() => {
 })
 
 const selectedSet = computed(() => new Set(props.selectedCycles))
-const loadingSet = computed(() => new Set(props.loadingCycles))
+// loadingSet — union across all sessions (chip spinner is a global "is
+// any session fetching this cycle?" indicator; the per-session chip above
+// the charts shows which specific session is loading)
+const loadingSet = mergedLoadingSet
 
 function handleToggle(cycleNum) {
   emit('toggle-cycle', cycleNum)
@@ -438,7 +545,10 @@ function exportChartPNG(chartRef, name) {
   const url = inst.toBase64Image('image/png', 1)
   const link = document.createElement('a')
   link.href = url
-  link.download = `cycling_session_${props.sessionId || 'x'}_${sanitizeFilename(name)}.png`
+  // Filename includes all active session ids so multi-session exports are
+  // self-labeling ("cycling_42_43_capacity.png" instead of a single id).
+  const idPart = props.sessions.map(s => s.session_id).join('_') || 'x'
+  link.download = `cycling_${idPart}_${sanitizeFilename(name)}.png`
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
