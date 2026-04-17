@@ -25,6 +25,9 @@ const authStore = useAuthStore()
 const sessions = ref([])
 const batteries = ref([])
 const loading = ref(true)
+// Template ref to CrudTable → lets us read its filteredData (rows visible
+// after the user applies column filters). Used by "График" header click.
+const tableRef = ref(null)
 
 // ── Multi-session overlay state ──────────────────────────────────────
 // A session is "active" when it appears on the charts. State is keyed by
@@ -189,10 +192,12 @@ const uploadStats = computed(() => {
 })
 
 const columns = [
-  // Synthetic column "active" — a toggle [●/○] that adds/removes the row
-  // from the charts overlay. Field name `active` doesn't exist in the API
-  // row, we just render it via #col-active slot.
-  { field: 'active', header: '', width: 44, sortable: false },
+  // Synthetic column "active" — a colored dot toggle that adds/removes the
+  // row from the charts overlay. Field name `active` doesn't exist in the
+  // API row, we render it via #col-active slot. filterable:false disables
+  // the default column filter popover and makes the header itself click-
+  // able (emits header-click → onTableHeaderClick toggles all visible).
+  { field: 'active', header: 'График', width: 80, sortable: false, filterable: false },
   { field: 'battery_id', header: 'Аккумулятор', width: 130, sortable: true },
   { field: 'equipment_type', header: 'Оборудование', width: 130, sortable: true, filterable: true },
   { field: 'total_cycles', header: 'Циклов', width: 80, sortable: true },
@@ -270,6 +275,63 @@ async function toggleSession(row) {
 
 function removeActiveSession(sid) {
   activeSessionIds.value = activeSessionIds.value.filter(x => x !== sid)
+}
+
+// Header click on the "График" column — toggle all visible sessions
+// on/off. "Visible" = rows left after any column filters the user applied
+// (we read filteredData off the CrudTable ref). If everything visible is
+// already on, we turn them all off; otherwise we activate up to
+// MAX_ACTIVE_SESSIONS of the ready ones (in table order). Respects
+// status=='ready' (skips processing + error rows).
+async function onTableHeaderClick(field) {
+  if (field !== 'active') return
+  // Pull filtered rows from CrudTable (post-filter view). Fallback to all
+  // sessions if the ref isn't ready yet (first render edge case).
+  const visibleSessions = (tableRef.value?.filteredData ?? sessions.value)
+    .filter(s => s.status === 'ready')
+  if (!visibleSessions.length) return
+
+  // If every visible ready session is already active → clear all.
+  const allVisibleActive = visibleSessions.every(s => isSessionActive(s.session_id))
+  if (allVisibleActive) {
+    // Deactivate only the visible ones (keep any active sessions that were
+    // hidden by filter — otherwise user loses context when they clear the
+    // filter later).
+    const visibleIds = new Set(visibleSessions.map(s => s.session_id))
+    activeSessionIds.value = activeSessionIds.value.filter(id => !visibleIds.has(id))
+    if (!activeSessionIds.value.length) selectedCycles.value = []
+    return
+  }
+
+  // Activate visible rows that aren't yet active, up to the overall cap.
+  const toAdd = []
+  for (const s of visibleSessions) {
+    if (activeSessionIds.value.length + toAdd.length >= MAX_ACTIVE_SESSIONS) break
+    if (!isSessionActive(s.session_id)) toAdd.push(s)
+  }
+  if (!toAdd.length) return
+
+  activeSessionIds.value = [...activeSessionIds.value, ...toAdd.map(s => s.session_id)]
+  await Promise.all(toAdd.map(async s => {
+    if (summaryBySession.value[s.session_id]) return
+    try {
+      const { data } = await api.get(`/api/cycling/sessions/${s.session_id}/summary`)
+      summaryBySession.value = { ...summaryBySession.value, [s.session_id]: data }
+    } catch {
+      activeSessionIds.value = activeSessionIds.value.filter(id => id !== s.session_id)
+    }
+  }))
+
+  // If the visible list exceeded the cap, let the user know we truncated.
+  const couldActivateCount = visibleSessions.filter(s => !isSessionActive(s.session_id) || toAdd.includes(s)).length
+  if (couldActivateCount > toAdd.length) {
+    toast.add({
+      severity: 'info',
+      summary: 'Лимит сессий',
+      detail: `Показаны первые ${MAX_ACTIVE_SESSIONS} · лимит одновременного сравнения`,
+      life: 3500,
+    })
+  }
 }
 
 // Toggle a cycle across ALL active sessions. selectedCycles is a single
@@ -514,30 +576,35 @@ const batteryOptions = computed(() =>
 
     <!-- Sessions table -->
     <CrudTable
+      ref="tableRef"
       :columns="columns"
       :data="sessions"
       id-field="session_id"
       table-name="Сессии циклирования"
       @row-click="toggleSession"
       @delete="deleteSession"
+      @header-click="onTableHeaderClick"
     >
       <template #col-active="{ data }">
-        <button
-          class="active-toggle"
-          :class="{ 'is-active': isSessionActive(data.session_id), 'is-disabled': data.status !== 'ready' }"
-          :title="data.status === 'ready'
-            ? (isSessionActive(data.session_id) ? 'Убрать с графиков' : 'Показать на графиках')
-            : (data.status === 'processing' ? 'Ещё обрабатывается' : 'Ошибка обработки')"
-          @click.stop="toggleSession(data)"
-        >
-          <i v-if="data.status === 'processing'" class="pi pi-spin pi-spinner chart-toggle-icon"></i>
-          <i v-else-if="data.status === 'error'" class="pi pi-exclamation-circle chart-toggle-icon" style="color:#E74C3C"></i>
-          <i
-            v-else
-            class="pi pi-chart-line chart-toggle-icon"
-            :style="isSessionActive(data.session_id) ? { color: colorForSession(data.session_id) } : {}"
-          ></i>
-        </button>
+        <div class="active-cell">
+          <button
+            class="active-toggle"
+            :class="{ 'is-active': isSessionActive(data.session_id), 'is-disabled': data.status !== 'ready' }"
+            :title="data.status === 'ready'
+              ? (isSessionActive(data.session_id) ? 'Убрать с графиков' : 'Показать на графиках')
+              : (data.status === 'processing' ? 'Ещё обрабатывается' : 'Ошибка обработки')"
+            @click.stop="toggleSession(data)"
+          >
+            <span
+              class="active-dot"
+              :style="isSessionActive(data.session_id)
+                ? { background: colorForSession(data.session_id), borderColor: colorForSession(data.session_id) }
+                : {}"
+            ></span>
+            <i v-if="data.status === 'processing'" class="pi pi-spin pi-spinner" style="font-size:10px"></i>
+            <i v-else-if="data.status === 'error'" class="pi pi-exclamation-circle" style="font-size:10px;color:#E74C3C"></i>
+          </button>
+        </div>
       </template>
       <template #col-battery_id="{ data }">
         <span class="battery-link" @click.stop="router.push(`/assembly/${data.battery_id}`)">
@@ -755,41 +822,33 @@ const batteryOptions = computed(() =>
 }
 .battery-link:hover { text-decoration: underline; }
 
-/* ── Active toggle (chart icon in table column) ── */
+/* ── Active toggle (colored dot in table column) ── */
 .active-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
   width: 32px;
-  height: 28px;
-  border: 1.5px solid transparent;
-  border-radius: 6px;
+  height: 26px;
+  border: none;
   background: transparent;
   cursor: pointer;
   padding: 0;
+  transition: transform 0.12s ease;
+}
+.active-toggle:hover:not(.is-disabled) { transform: scale(1.1); }
+.active-toggle.is-disabled { cursor: not-allowed; opacity: 0.5; }
+.active-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 50, 116, 0.3);
+  background: transparent;
   transition: all 0.15s ease;
 }
-.active-toggle:hover:not(.is-disabled) {
-  background: rgba(0, 50, 116, 0.06);
-  border-color: rgba(0, 50, 116, 0.15);
-}
-.active-toggle.is-disabled { cursor: not-allowed; opacity: 0.5; }
-
-.chart-toggle-icon {
-  font-size: 14px;
-  color: rgba(0, 50, 116, 0.25);
-  transition: color 0.15s ease, transform 0.15s ease;
-}
-.active-toggle.is-active {
-  /* Subtle highlight ring in the session's color so the row stands out
-     without repeating the whole color in the icon background */
-  background: rgba(0, 50, 116, 0.04);
-}
-.active-toggle.is-active .chart-toggle-icon {
-  font-size: 15px;
-  /* color set inline via style binding; bolder weight for visibility */
-  font-weight: 900;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+.active-toggle.is-active .active-dot {
+  transform: scale(1.1);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 1), 0 0 0 3px currentColor;
 }
 
 /* ── Active sessions chips bar ── */
