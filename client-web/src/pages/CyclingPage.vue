@@ -46,12 +46,13 @@ const cycleDataBySession = ref({})
 const loadingCyclesBy = ref({})
 const selectedCycles = ref([])
 
-// Limits. Four active sessions is where the color palette + legend stay
-// readable; above that the chart becomes a rainbow. Twenty cycles per
-// session × 4 sessions × 2 step types = 160 lines at worst on voltage
-// profile — still tractable when the user is deliberate, too many for an
-// accidental "select all" which we already clamp.
-const MAX_ACTIVE_SESSIONS = 4
+// Limits. MAX_ACTIVE_SESSIONS matches the palette size — 8 distinct
+// colors, 8 active sessions max. Above that, colors would repeat. Voltage
+// profile × dQ/dV can get busy (8 sessions × 20 cycles × 2 step types ≈
+// 320 lines worst case), but since user has to click each one explicitly,
+// the burden is self-imposed. For bigger comparisons, Excel export (Phase 3)
+// is the right tool — graphs stop being useful past ~6 overlayed cells anyway.
+const MAX_ACTIVE_SESSIONS = 8
 const MAX_SELECTED_CYCLES = 20
 const FETCH_CONCURRENCY = 4
 
@@ -529,14 +530,13 @@ const batteryOptions = computed(() =>
             : (data.status === 'processing' ? 'Ещё обрабатывается' : 'Ошибка обработки')"
           @click.stop="toggleSession(data)"
         >
-          <span
-            class="active-dot"
-            :style="isSessionActive(data.session_id)
-              ? { background: colorForSession(data.session_id), borderColor: colorForSession(data.session_id) }
-              : {}"
-          ></span>
-          <i v-if="data.status === 'processing'" class="pi pi-spin pi-spinner" style="font-size:10px"></i>
-          <i v-else-if="data.status === 'error'" class="pi pi-exclamation-circle" style="font-size:10px;color:#E74C3C"></i>
+          <i v-if="data.status === 'processing'" class="pi pi-spin pi-spinner chart-toggle-icon"></i>
+          <i v-else-if="data.status === 'error'" class="pi pi-exclamation-circle chart-toggle-icon" style="color:#E74C3C"></i>
+          <i
+            v-else
+            class="pi pi-chart-line chart-toggle-icon"
+            :style="isSessionActive(data.session_id) ? { color: colorForSession(data.session_id) } : {}"
+          ></i>
         </button>
       </template>
       <template #col-battery_id="{ data }">
@@ -755,33 +755,41 @@ const batteryOptions = computed(() =>
 }
 .battery-link:hover { text-decoration: underline; }
 
-/* ── Active toggle (●/○ in table column) ── */
+/* ── Active toggle (chart icon in table column) ── */
 .active-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
   width: 32px;
-  height: 26px;
-  border: none;
+  height: 28px;
+  border: 1.5px solid transparent;
+  border-radius: 6px;
   background: transparent;
   cursor: pointer;
   padding: 0;
-  transition: transform 0.12s ease;
-}
-.active-toggle:hover:not(.is-disabled) { transform: scale(1.1); }
-.active-toggle.is-disabled { cursor: not-allowed; opacity: 0.5; }
-.active-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 2px solid rgba(0, 50, 116, 0.3);
-  background: transparent;
   transition: all 0.15s ease;
 }
-.active-toggle.is-active .active-dot {
-  transform: scale(1.1);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 1), 0 0 0 3px currentColor;
+.active-toggle:hover:not(.is-disabled) {
+  background: rgba(0, 50, 116, 0.06);
+  border-color: rgba(0, 50, 116, 0.15);
+}
+.active-toggle.is-disabled { cursor: not-allowed; opacity: 0.5; }
+
+.chart-toggle-icon {
+  font-size: 14px;
+  color: rgba(0, 50, 116, 0.25);
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+.active-toggle.is-active {
+  /* Subtle highlight ring in the session's color so the row stands out
+     without repeating the whole color in the icon background */
+  background: rgba(0, 50, 116, 0.04);
+}
+.active-toggle.is-active .chart-toggle-icon {
+  font-size: 15px;
+  /* color set inline via style binding; bolder weight for visibility */
+  font-weight: 900;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
 }
 
 /* ── Active sessions chips bar ── */
