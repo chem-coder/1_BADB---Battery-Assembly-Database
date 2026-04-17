@@ -10,6 +10,7 @@
  */
 import { ref, computed } from 'vue'
 import { Line, Scatter } from 'vue-chartjs'
+import Dialog from 'primevue/dialog'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -89,6 +90,60 @@ function formatPct(v) {
 function formatVolt(v) {
   return (v == null || !Number.isFinite(v)) ? '—' : v.toFixed(3)
 }
+
+// ── Raw datapoints viewer (modal) ───────────────────────────────────────
+// Click a row in the per-cycle summary table to open this modal and
+// inspect every datapoint of that cycle. Loads cycle data if not cached
+// (reuses the same /cycles/:n endpoint the voltage profile uses).
+const rawModalOpen = ref(false)
+const rawModalSession = ref(null)
+const rawModalCycle = ref(null)
+const rawFilter = ref('all')        // 'all' | 'charge' | 'discharge' | 'rest' | 'cccv'
+const rawSearchMin = ref(null)      // voltage range lo
+const rawSearchMax = ref(null)      // voltage range hi
+const rawPage = ref(0)
+const RAW_PAGE_SIZE = 200
+
+function openRawPoints(session, cycleNumber) {
+  rawModalSession.value = session
+  rawModalCycle.value = cycleNumber
+  rawPage.value = 0
+  rawFilter.value = 'all'
+  rawSearchMin.value = null
+  rawSearchMax.value = null
+  rawModalOpen.value = true
+}
+
+// Source points for the modal (from the already-cached cycleDataMap)
+const rawModalPoints = computed(() => {
+  const s = rawModalSession.value
+  const c = rawModalCycle.value
+  if (!s || c == null) return []
+  return s.cycleDataMap?.[c] || []
+})
+
+const rawModalFiltered = computed(() => {
+  let pts = rawModalPoints.value
+  if (rawFilter.value !== 'all') {
+    pts = pts.filter(p => p.step_type === rawFilter.value)
+  }
+  const lo = Number(rawSearchMin.value)
+  const hi = Number(rawSearchMax.value)
+  if (Number.isFinite(lo)) pts = pts.filter(p => (p.voltage_v ?? -Infinity) >= lo)
+  if (Number.isFinite(hi)) pts = pts.filter(p => (p.voltage_v ?? Infinity) <= hi)
+  return pts
+})
+
+const rawModalPageCount = computed(() =>
+  Math.max(1, Math.ceil(rawModalFiltered.value.length / RAW_PAGE_SIZE))
+)
+const rawModalPagePoints = computed(() => {
+  const start = rawPage.value * RAW_PAGE_SIZE
+  return rawModalFiltered.value.slice(start, start + RAW_PAGE_SIZE)
+})
+
+// Panel "📐 Как считаем" — collapsed by default
+const formulasOpen = ref(false)
 
 // toggle-cycle — add/remove one cycle (across all active sessions)
 // replace-cycles — swap the whole selection (used by quick filters)
@@ -810,7 +865,13 @@ function exportChartPNG(chartRef, name) {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in s.summary" :key="row.cycle_number">
+              <tr
+                v-for="row in s.summary"
+                :key="row.cycle_number"
+                class="summary-row"
+                :title="'Открыть сырые точки цикла ' + row.cycle_number"
+                @click="openRawPoints(s, row.cycle_number)"
+              >
                 <td class="cell-cycle">{{ row.cycle_number }}</td>
                 <td>{{ formatCap(row.charge_capacity_ah, s) }}</td>
                 <td>{{ formatCap(row.discharge_capacity_ah, s) }}</td>
@@ -822,6 +883,54 @@ function exportChartPNG(chartRef, name) {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <!-- 📐 Collapsible formulas panel (scientific transparency) -->
+    <div v-if="sessions.length" class="formulas-panel">
+      <button class="formulas-head" @click="formulasOpen = !formulasOpen">
+        <i :class="formulasOpen ? 'pi pi-chevron-down' : 'pi pi-chevron-right'"></i>
+        📐 Как считаются параметры
+        <span class="formulas-hint">{{ formulasOpen ? 'скрыть' : 'показать формулы' }}</span>
+      </button>
+      <div v-if="formulasOpen" class="formulas-body">
+        <dl class="formulas-list">
+          <dt>Ёмкость заряда / разряда (Ah)</dt>
+          <dd>
+            <code>Q = ∑<sub>steps</sub> max<sub>step</sub>(∫ |I|·dt / 3600)</code>
+            <small>Трапецоидальное интегрирование |тока| по времени, per-step максимум (корректно для CCCV: CC + CV шаги складываются), затем суммирование по шагам того же типа внутри одного цикла.</small>
+          </dd>
+          <dt>Удельная ёмкость (mAh/g)</dt>
+          <dd>
+            <code>Q<sub>spec</sub> = Q · 10<sup>6</sup> / m<sub>AM</sub></code>
+            <small>Q в ампер-часах, m<sub>AM</sub> в милиграммах активного материала. Формула выводится из 1 Ah = 1000 mAh и m(g) = m(mg)/1000.</small>
+          </dd>
+          <dt>Кулоновская эффективность, CE (%)</dt>
+          <dd>
+            <code>CE = Q<sub>DChg</sub> / Q<sub>Chg</sub> × 100</code>
+            <small>Показывает долю лития, возвращаемого из анода. CE &lt; 100% — часть заряда идёт на необратимые процессы (SEI, разложение электролита).</small>
+          </dd>
+          <dt>Энергетическая эффективность, EE (%)</dt>
+          <dd>
+            <code>EE = E<sub>DChg</sub> / E<sub>Chg</sub> × 100</code>
+            <small>Round-trip energy efficiency. Учитывает потери на перенапряжение (voltage hysteresis), чего CE не отражает.</small>
+          </dd>
+          <dt>Среднее напряжение (V̄)</dt>
+          <dd>
+            <code>V̄ = ⟨V⟩<sub>step</sub></code>
+            <small>Арифметическое среднее напряжения по точкам шага. Рост ΔV̄ = V̄<sub>chg</sub> − V̄<sub>dch</sub> отражает рост поляризации / омического сопротивления (старение ячейки).</small>
+          </dd>
+          <dt>Дифференциальная ёмкость, dQ/dV (Ah/V)</dt>
+          <dd>
+            <code>|dQ/dV| = |ΔQ<sub>i,i-1</sub> / ΔV<sub>i,i-1</sub>|</code>
+            <small>Пары точек внутри одного шага, |ΔV| &gt; 2 mV (отсечка шума). Сглаживание: скользящее среднее w=5. Пики соответствуют фазовым переходам материала.</small>
+          </dd>
+          <dt>Классификация step_type</dt>
+          <dd>
+            <code>«Гальваностат» + I̅ &gt; 0 → charge, I̅ &lt; 0 → discharge</code>
+            <small>«Вольтметр» (OCV-измерение) → rest. «Потенциостат» → cccv при I ≠ 0, rest при I = 0. Для файлов без «Тип работы» (EN locale) — только по знаку среднего тока шага.</small>
+          </dd>
+        </dl>
       </div>
     </div>
 
@@ -920,6 +1029,97 @@ function exportChartPNG(chartRef, name) {
         <Scatter ref="dqdvChartRef" :data="dqdvChartData" :options="dqdvOptions" />
       </div>
     </div>
+
+    <!-- Raw datapoints viewer modal — opens when user clicks a row in
+         the summary table. Shows every point of that cycle with filter
+         by step_type and voltage-range search. -->
+    <Dialog
+      v-model:visible="rawModalOpen"
+      :modal="true"
+      :dismissableMask="true"
+      :style="{ width: '880px', maxWidth: '95vw' }"
+      :header="rawModalSession && rawModalCycle != null
+        ? `Сырые точки · ${sessionShortLabel(rawModalSession)} · Цикл ${rawModalCycle}`
+        : 'Сырые точки'"
+    >
+      <div v-if="rawModalSession" class="raw-modal">
+        <!-- Filter row -->
+        <div class="raw-filter-row">
+          <div class="raw-filter-group">
+            <label>Тип шага:</label>
+            <div class="raw-filter-btns">
+              <button
+                v-for="opt in [
+                  { v: 'all',       l: 'Все'       },
+                  { v: 'charge',    l: 'Заряд'    },
+                  { v: 'discharge', l: 'Разряд'   },
+                  { v: 'cccv',      l: 'CCCV'     },
+                  { v: 'rest',      l: 'Отдых'    },
+                ]"
+                :key="opt.v"
+                class="raw-filter-btn"
+                :class="{ 'is-active': rawFilter === opt.v }"
+                @click="rawFilter = opt.v; rawPage = 0"
+              >{{ opt.l }}</button>
+            </div>
+          </div>
+          <div class="raw-filter-group">
+            <label>V от</label>
+            <input v-model.number="rawSearchMin" type="number" step="0.01" class="raw-range" placeholder="—"
+                   @input="rawPage = 0" />
+            <label>до</label>
+            <input v-model.number="rawSearchMax" type="number" step="0.01" class="raw-range" placeholder="—"
+                   @input="rawPage = 0" />
+          </div>
+          <div class="raw-count">
+            Показано: <strong>{{ rawModalFiltered.length }}</strong>
+            из {{ rawModalPoints.length }} точек
+          </div>
+        </div>
+
+        <!-- Points table -->
+        <div class="raw-table-scroll">
+          <table class="raw-table">
+            <thead>
+              <tr>
+                <th class="c-idx">#</th>
+                <th>t (s)</th>
+                <th>V</th>
+                <th>I (A)</th>
+                <th>Q (Ah)</th>
+                <th>step</th>
+                <th>type</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(p, idx) in rawModalPagePoints" :key="rawPage * 200 + idx">
+                <td class="c-idx">{{ rawPage * 200 + idx + 1 }}</td>
+                <td>{{ p.time_s?.toFixed(2) ?? '—' }}</td>
+                <td>{{ p.voltage_v?.toFixed(5) ?? '—' }}</td>
+                <td>{{ p.current_a == null ? '—' : p.current_a.toExponential(4) }}</td>
+                <td>{{ p.capacity_ah == null ? '—' : p.capacity_ah.toExponential(4) }}</td>
+                <td>{{ p.step_number ?? '—' }}</td>
+                <td>
+                  <span class="raw-type-chip" :data-type="p.step_type">{{ p.step_type || '—' }}</span>
+                </td>
+              </tr>
+              <tr v-if="!rawModalPagePoints.length">
+                <td colspan="7" class="raw-empty">Нет точек под фильтр</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Pagination -->
+        <div v-if="rawModalPageCount > 1" class="raw-pagination">
+          <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage = 0">« первая</button>
+          <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage--">‹ назад</button>
+          <span class="raw-pg-info">Страница {{ rawPage + 1 }} из {{ rawModalPageCount }}</span>
+          <button class="raw-pg-btn" :disabled="rawPage >= rawModalPageCount - 1" @click="rawPage++">вперёд ›</button>
+          <button class="raw-pg-btn" :disabled="rawPage >= rawModalPageCount - 1" @click="rawPage = rawModalPageCount - 1">последняя »</button>
+        </div>
+      </div>
+    </Dialog>
   </div>
 </template>
 
@@ -1218,6 +1418,192 @@ function exportChartPNG(chartRef, name) {
   font-weight: 600;
   color: #003274 !important;
 }
+.summary-row { cursor: pointer; transition: background 0.08s; }
+.summary-row:hover td { background: rgba(211, 167, 84, 0.08); }
+
+/* ── Formulas panel ── */
+.formulas-panel {
+  border: 1px solid rgba(0, 50, 116, 0.08);
+  border-radius: 8px;
+  background: white;
+  overflow: hidden;
+}
+.formulas-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(0, 50, 116, 0.02);
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #003274;
+  text-align: left;
+  transition: background 0.12s;
+}
+.formulas-head:hover { background: rgba(0, 50, 116, 0.05); }
+.formulas-hint {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 11px;
+  color: rgba(0, 50, 116, 0.45);
+}
+.formulas-body { padding: 10px 16px 14px; }
+.formulas-list { margin: 0; }
+.formulas-list dt {
+  font-size: 12px;
+  font-weight: 700;
+  color: #003274;
+  margin-top: 10px;
+}
+.formulas-list dt:first-child { margin-top: 0; }
+.formulas-list dd {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.formulas-list code {
+  display: inline-block;
+  background: rgba(0, 50, 116, 0.06);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+  color: #003274;
+}
+.formulas-list small {
+  display: block;
+  margin-top: 3px;
+  color: #6B7280;
+  font-size: 11px;
+}
+
+/* ── Raw datapoints modal ── */
+.raw-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.raw-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.08);
+}
+.raw-filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(0, 50, 116, 0.7);
+}
+.raw-filter-group label { font-size: 11px; font-weight: 600; }
+.raw-filter-btns {
+  display: inline-flex;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.raw-filter-btn {
+  padding: 3px 8px;
+  border: none;
+  background: white;
+  font-size: 11px;
+  font-family: inherit;
+  color: rgba(0, 50, 116, 0.7);
+  cursor: pointer;
+  border-right: 1px solid rgba(0, 50, 116, 0.1);
+  transition: all 0.12s;
+}
+.raw-filter-btn:last-child { border-right: none; }
+.raw-filter-btn:hover:not(.is-active) { background: rgba(0, 50, 116, 0.04); color: #003274; }
+.raw-filter-btn.is-active { background: #003274; color: white; }
+.raw-range {
+  width: 70px;
+  padding: 3px 6px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  text-align: center;
+}
+.raw-count { margin-left: auto; font-size: 11px; color: rgba(0, 50, 116, 0.55); }
+.raw-count strong { color: #003274; }
+
+.raw-table-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid rgba(0, 50, 116, 0.06);
+  border-radius: 6px;
+}
+.raw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.raw-table thead th {
+  position: sticky;
+  top: 0;
+  background: rgba(0, 50, 116, 0.04);
+  padding: 4px 8px;
+  text-align: right;
+  font-weight: 600;
+  color: #003274;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.1);
+  white-space: nowrap;
+  z-index: 1;
+}
+.raw-table thead th.c-idx { text-align: center; width: 40px; }
+.raw-table tbody td {
+  padding: 2px 8px;
+  text-align: right;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.03);
+  color: #1F2937;
+}
+.raw-table tbody td.c-idx { text-align: center; color: rgba(0, 50, 116, 0.45); }
+.raw-table tbody tr:hover td { background: rgba(0, 50, 116, 0.02); }
+.raw-type-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: rgba(0, 50, 116, 0.06);
+  color: rgba(0, 50, 116, 0.7);
+}
+.raw-type-chip[data-type="charge"] { background: rgba(82, 201, 166, 0.15); color: #0E6B50; }
+.raw-type-chip[data-type="discharge"] { background: rgba(0, 50, 116, 0.15); color: #003274; }
+.raw-type-chip[data-type="cccv"] { background: rgba(211, 167, 84, 0.2); color: #8B6914; }
+.raw-type-chip[data-type="rest"] { background: rgba(107, 114, 128, 0.12); color: #4B5563; }
+.raw-empty { text-align: center; padding: 2rem; color: rgba(0, 50, 116, 0.4); }
+
+.raw-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  padding-top: 6px;
+}
+.raw-pg-btn {
+  padding: 3px 10px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 4px;
+  background: white;
+  font-size: 11px;
+  font-family: inherit;
+  color: #003274;
+  cursor: pointer;
+}
+.raw-pg-btn:hover:not(:disabled) { background: #003274; color: white; }
+.raw-pg-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.raw-pg-info { font-size: 11px; color: rgba(0, 50, 116, 0.55); min-width: 180px; text-align: center; }
 
 .chart-placeholder {
   display: flex;
