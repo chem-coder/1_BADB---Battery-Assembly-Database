@@ -10,6 +10,7 @@
  */
 import { ref, reactive, computed, watch, nextTick } from 'vue'
 import AutoComplete from 'primevue/autocomplete'
+import EntityMeta from '@/components/EntityMeta.vue'
 
 const props = defineProps({
   stageCode: { type: String, required: true },
@@ -26,6 +27,35 @@ const emit = defineEmits(['reorder', 'select-tape', 'remove-tape'])
 
 const fields = computed(() => props.stageConfig?.fields || [])
 
+// ── Cross-stage field visibility by form factor ──
+// Fields in the stage config may carry `showIfFormFactor: 'coin'|'pouch'|...`
+// (single value or array) to indicate they should only render when at least
+// one tape in the current view has a matching form factor in its general
+// stage. Battery uses `general.form_factor`; electrode uses
+// `general.target_form_factor` (both exposed by their state composables).
+// If NO tape has a form factor set, we fall back to showing ALL fields
+// so a brand-new entity still gets a full editor.
+const activeFormFactors = computed(() => {
+  const factors = new Set()
+  for (const tid of props.tabOrder) {
+    const ts = props.tapeStates[String(tid)]
+    const ff = ts?.general?.form_factor ?? ts?.general?.target_form_factor
+    if (ff) factors.add(ff)
+  }
+  return factors
+})
+
+const visibleFields = computed(() => {
+  if (activeFormFactors.value.size === 0) return fields.value
+  return fields.value.filter(field => {
+    if (!field.showIfFormFactor) return true
+    const allowed = Array.isArray(field.showIfFormFactor)
+      ? field.showIfFormFactor
+      : [field.showIfFormFactor]
+    return allowed.some(ff => activeFormFactors.value.has(ff))
+  })
+})
+
 const sourceTapeIds = computed(() => props.tabOrder.filter(tid => String(tid) !== String(props.targetTapeId)))
 
 function isActiveTape(tid) {
@@ -41,14 +71,30 @@ const _defaultIdFields = {
   users: 'user_id', projects: 'project_id', recipes: 'tape_recipe_id',
   atmospheres: 'code', dryMixingMethods: 'dry_mixing_id',
   wetMixingMethods: 'wet_mixing_id', foils: 'foil_id', coatingMethods: 'coating_id',
+  separators: 'sep_id', electrolytes: 'electrolyte_id', tapes: 'tape_id',
+  cathodeTapes: 'tape_id', anodeTapes: 'tape_id',
+  electrodeBatches: 'cut_batch_id',
 }
 const _defaultNameFields = {
   users: 'name', projects: 'name', recipes: 'name',
   atmospheres: 'display', dryMixingMethods: 'description',
   wetMixingMethods: 'description', foils: 'type', coatingMethods: 'comments',
+  separators: 'name', electrolytes: 'name', tapes: 'name',
+  cathodeTapes: 'name', anodeTapes: 'name',
+  electrodeBatches: 'cut_batch_id',
 }
 
-function getRefOptions(field) {
+function getRefOptions(field, tapeId = null) {
+  // Cascade: dependsOn + optionsByDep → filter options by parent field value
+  if (field.dependsOn && field.optionsByDep && tapeId != null) {
+    const parentVal = getValue(tapeId, field.dependsOn)
+    if (parentVal && field.optionsByDep[parentVal]) {
+      return field.optionsByDep[parentVal].map(o => ({ value: o.value, label: o.label }))
+    }
+    // No parent selected → fallback options (flat list) or empty
+    if (field.fallbackOptions) return field.fallbackOptions.map(o => ({ value: o.value, label: o.label }))
+    return []
+  }
   if (field.options) return field.options.map(o => ({ value: o.value, label: o.label }))
   if (field.ref && props.refs[field.ref]?.length) {
     const items = props.refs[field.ref]
@@ -80,16 +126,21 @@ function copyField(sourceTapeId, fieldKey, destTapeId) {
   if (!dest) return
   const val = getValue(sourceTapeId, fieldKey)
   setValue(dest, fieldKey, val)
-  // Sync local AC model for destination tape
-  const f = fields.value.find(ff => ff.key === fieldKey)
-  if (f?.type === 'select') {
-    acModels[acKey(String(dest), fieldKey)] = resolveAcOption(dest, f)
+  // Sync local AC models for destination tape — re-sync all currently visible
+  // select fields because cascades (e.g. form_factor → config_code) may clear
+  // other fields. Hidden (form-factor-filtered) fields are not touched — they
+  // belong to a different form factor and would just add noise.
+  for (const f of visibleFields.value) {
+    if (f.type === 'select') {
+      acModels[acKey(String(dest), f.key)] = resolveAcOption(dest, f)
+    }
   }
 }
 
-// Copy all fields of the CURRENT stage only (not all stages)
+// Copy all fields of the CURRENT stage only (not all stages). Only visible
+// fields are copied — a pouch tape should not receive coin_size_code etc.
 function copyAllCurrentStage(sourceTapeId) {
-  for (const f of fields.value) {
+  for (const f of visibleFields.value) {
     copyField(sourceTapeId, f.key)
   }
 }
@@ -116,7 +167,9 @@ function copyFieldToAllLeft(sourceTapeId, fieldKey) {
 function copyAllCurrentStageToAllLeft(sourceTapeId) {
   const idx = props.tabOrder.indexOf(String(sourceTapeId))
   if (idx <= 0) return
-  for (const f of fields.value) {
+  // Only copy currently visible fields — hidden fields belong to a different
+  // form factor and should not leak into tapes that don't use them.
+  for (const f of visibleFields.value) {
     for (let i = 0; i < idx; i++) {
       copyField(sourceTapeId, f.key, props.tabOrder[i])
     }
@@ -162,7 +215,7 @@ function acKey(tid, fieldKey) {
 function resolveAcOption(tapeId, field) {
   const val = getValue(tapeId, field.key)
   if (!val && val !== 0) return null
-  const opts = getRefOptions(field)
+  const opts = getRefOptions(field, tapeId)
   return opts.find(o => String(o.value) === String(val)) || null
 }
 
@@ -179,16 +232,23 @@ function syncAcModels() {
 
 watch([() => props.stageCode, () => props.tabOrder], syncAcModels, { immediate: true, deep: true })
 
-function searchAc(field, event) {
+function searchAc(tapeId, field, event) {
   const query = (event.query || '').toLowerCase()
-  const opts = getRefOptions(field)
-  acSuggestions.value[field.key] = opts.filter(o => o.label.toLowerCase().includes(query))
+  const opts = getRefOptions(field, tapeId)
+  acSuggestions.value[acKey(tapeId, field.key)] = opts.filter(o => o.label.toLowerCase().includes(query))
 }
 
 function onAcItemSelect(tapeId, field, e) {
   // Commit selected option to tape state
   if (e.value && typeof e.value === 'object') {
     setValue(tapeId, field.key, e.value.value)
+  }
+  // Re-sync AC models for all select fields on this tape — cascade (e.g.
+  // target_form_factor → target_config_code clear) may have invalidated others.
+  for (const f of fields.value) {
+    if (f.type === 'select' && f.key !== field.key) {
+      acModels[acKey(String(tapeId), f.key)] = resolveAcOption(tapeId, f)
+    }
   }
   // Blur input after selection (DS pattern — use component ref, not event target)
   setTimeout(() => {
@@ -212,7 +272,7 @@ function setAcRef(tid, fieldKey, el) {
 // PrimeVue hardcodes hide() when query becomes empty (line 459-461 in AutoComplete.vue).
 // @clear fires right after — re-show dropdown with all options.
 function onAcClear(tid, field) {
-  acSuggestions.value[field.key] = getRefOptions(field)
+  acSuggestions.value[acKey(tid, field.key)] = getRefOptions(field, tid)
   nextTick(() => {
     const comp = acRefs[acKey(tid, field.key)]
     if (comp?.show) comp.show()
@@ -311,7 +371,7 @@ function onColDragEnd(e) {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="field in fields" :key="field.key" class="ce-row">
+        <tr v-for="field in visibleFields" :key="field.key" class="ce-row">
           <!-- Row label -->
           <td class="ce-td-label">{{ field.label }}</td>
 
@@ -345,8 +405,8 @@ function onColDragEnd(e) {
               <AutoComplete
                 :ref="(el) => setAcRef(tid, field.key, el)"
                 v-model="acModels[tid + '__' + field.key]"
-                :suggestions="acSuggestions[field.key] || []"
-                @complete="searchAc(field, $event)"
+                :suggestions="acSuggestions[tid + '__' + field.key] || []"
+                @complete="searchAc(tid, field, $event)"
                 @item-select="onAcItemSelect(tid, field, $event)"
                 @clear="onAcClear(tid, field)"
                 optionLabel="label"
@@ -378,6 +438,20 @@ function onColDragEnd(e) {
           </td>
         </tr>
       </tbody>
+      <tfoot>
+        <tr class="ce-meta-row">
+          <td class="ce-td-label"></td>
+          <td v-for="tid in tabOrder" :key="tid" class="ce-td ce-td-meta">
+            <EntityMeta
+              v-if="tapeStates[String(tid)]?.meta"
+              :createdByName="tapeStates[String(tid)].meta.created_by_name"
+              :createdAt="tapeStates[String(tid)].meta.created_at"
+              :updatedByName="tapeStates[String(tid)].meta.updated_by_name"
+              :updatedAt="tapeStates[String(tid)].meta.updated_at"
+            />
+          </td>
+        </tr>
+      </tfoot>
     </table>
 
     <!-- Context menu: apply to all tapes left -->
@@ -771,6 +845,17 @@ function onColDragEnd(e) {
 .ce-select-clear:hover {
   color: #666;
   background: rgba(0, 0, 0, 0.06);
+}
+
+/* ── Entity meta footer ── */
+.ce-meta-row .ce-td-meta {
+  padding: 0;
+  border-left: none;
+  vertical-align: top;
+}
+.ce-meta-row .ce-td-meta :deep(.entity-meta) {
+  border-top: none;
+  padding: 6px 8px;
 }
 </style>
 

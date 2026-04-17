@@ -1,72 +1,165 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+/**
+ * MaterialsPage — "Материалы" (справочник)
+ * Master-detail layout: left panel = material list, right panel = instances & components.
+ * All CRUD inline, no dialogs.
+ */
+import { ref, computed, onMounted } from 'vue'
+import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import { useStatus } from '@/composables/useStatus'
 import PageHeader from '@/components/PageHeader.vue'
+import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
+import Button from 'primevue/button'
 
-const { statusMsg, statusError, showStatus } = useStatus()
+const toast = useToast()
 
 const roleMap = {
-  cathode_active: 'катодный активный материал',
-  anode_active: 'анодный активный материал',
+  cathode_active: 'катодный АМ',
+  anode_active: 'анодный АМ',
   binder: 'связующее',
-  conductive_additive: 'проводящая добавка',
+  conductive_additive: 'добавка',
   solvent: 'растворитель',
   other: 'другое',
 }
 
-// --- State ---
+const roleOptions = [
+  { value: 'cathode_active', label: 'Катодный АМ' },
+  { value: 'anode_active', label: 'Анодный АМ' },
+  { value: 'binder', label: 'Связующее' },
+  { value: 'conductive_additive', label: 'Добавка' },
+  { value: 'solvent', label: 'Растворитель' },
+  { value: 'other', label: 'Другое' },
+]
+
+// ── Materials ─────────────────────────────────────────────────────────
 const materials = ref([])
-const newName = ref('')
-const newRole = ref('')
+const filterText = ref('')
+const filterRole = ref('')
+const selectedMaterialId = ref(null)
 
-// Toggle state
-const allMaterialsExpanded = ref(false)
-const compositionsExpanded = ref(false)
+const filteredMaterials = computed(() => {
+  let result = materials.value
+  const q = filterText.value.toLowerCase().trim()
+  if (q) result = result.filter(m => m.name.toLowerCase().includes(q))
+  if (filterRole.value) result = result.filter(m => m.role === filterRole.value)
+  return result
+})
 
-// Open state tracking for preservation
-const openMaterials = ref(new Set())
-const openInstances = ref(new Set())
+const selectedMaterial = computed(() =>
+  materials.value.find(m => m.material_id === selectedMaterialId.value) || null
+)
 
-// Instances & components loaded per parent
-const instancesMap = ref({})   // materialId → [instances]
-const componentsMap = ref({})  // instanceId → [components]
-const instancesLoaded = ref({})
-const componentsLoaded = ref({})
-
-// Inline edit state (only one at a time)
-const editType = ref(null)   // 'material' | 'instance' | 'component'
-const editId = ref(null)
-const editName = ref('')
-const editRole = ref('')
-const editNotes = ref('')
-const editMassFraction = ref('')
-
-// Inline create state
-const creatingInstanceFor = ref(null) // materialId
-const newInstanceName = ref('')
-const newInstanceNotes = ref('')
-
-const creatingComponentFor = ref(null) // instanceId
-const newComponentInstanceId = ref('')
-const newComponentPercent = ref('')
-const newComponentNotes = ref('')
-const allInstances = ref([]) // for component dropdown
-
-// --- API ---
 async function loadMaterials() {
   try {
     const { data } = await api.get('/api/materials')
     materials.value = data.sort((a, b) => a.name.localeCompare(b.name))
   } catch {
-    showStatus('Не удалось загрузить материалы', true)
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить материалы', life: 3000 })
   }
 }
 
+onMounted(loadMaterials)
+
+function selectMaterial(m) {
+  if (selectedMaterialId.value === m.material_id) return
+  selectedMaterialId.value = m.material_id
+  editForm.value = { name: m.name, role: m.role }
+  instances.value = []
+  openInstances.value = new Set()
+  componentsMap.value = {}
+  componentsLoaded.value = {}
+  cancelAllEdits()
+  resetInstanceCreate()
+  resetComponentCreate()
+  loadInstances(m.material_id)
+}
+
+// ── Create material (inline in left panel) ────────────────────────────
+const creatingMaterial = ref(false)
+const newMaterialForm = ref({ name: '', role: '' })
+
+function startMaterialCreate() {
+  creatingMaterial.value = true
+  newMaterialForm.value = { name: '', role: '' }
+}
+
+function cancelMaterialCreate() {
+  creatingMaterial.value = false
+  newMaterialForm.value = { name: '', role: '' }
+}
+
+async function saveNewMaterial() {
+  const name = newMaterialForm.value.name.trim()
+  if (!name) { toast.add({ severity: 'warn', summary: 'Название обязательно', life: 3000 }); return }
+  if (!newMaterialForm.value.role) { toast.add({ severity: 'warn', summary: 'Роль обязательна', life: 3000 }); return }
+  try {
+    const { data } = await api.post('/api/materials', { name, role: newMaterialForm.value.role })
+    toast.add({ severity: 'success', summary: 'Материал создан', life: 3000 })
+    cancelMaterialCreate()
+    await loadMaterials()
+    // Auto-select the new material
+    const created = materials.value.find(m => m.name === name)
+    if (created) selectMaterial(created)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка создания', life: 3000 })
+  }
+}
+
+// ── Edit material (right panel metadata) ──────────────────────────────
+const editForm = ref({ name: '', role: '' })
+
+async function saveMaterialEdit() {
+  const name = editForm.value.name.trim()
+  if (!name) return
+  try {
+    await api.put(`/api/materials/${selectedMaterialId.value}`, {
+      name,
+      role: editForm.value.role,
+    })
+    toast.add({ severity: 'success', summary: 'Материал обновлён', life: 3000 })
+    await loadMaterials()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка обновления', life: 3000 })
+  }
+}
+
+async function deleteMaterial(m) {
+  if (!confirm(`Удалить материал "${m.name}"?`)) return
+  try {
+    await api.delete(`/api/materials/${m.material_id}`)
+    toast.add({ severity: 'success', summary: 'Удалено', life: 3000 })
+    if (selectedMaterialId.value === m.material_id) {
+      selectedMaterialId.value = null
+    }
+    await loadMaterials()
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка удаления', life: 3000 })
+  }
+}
+
+// ── Instances ─────────────────────────────────────────────────────────
+const instances = ref([])
+const instancesLoading = ref(false)
+const openInstances = ref(new Set())
+const componentsMap = ref({})
+const componentsLoaded = ref({})
+const allInstances = ref([])
+
 async function loadInstances(materialId) {
-  const { data } = await api.get(`/api/materials/${materialId}/instances`)
-  instancesMap.value[materialId] = data.sort((a, b) => a.name.localeCompare(b.name))
-  instancesLoaded.value[materialId] = true
+  instancesLoading.value = true
+  try {
+    const { data } = await api.get(`/api/materials/${materialId}/instances`)
+    instances.value = data.sort((a, b) => a.name.localeCompare(b.name))
+    // Auto-expand all instances and load their components
+    const ids = instances.value.map(i => i.material_instance_id)
+    openInstances.value = new Set(ids)
+    ids.forEach(id => {
+      if (!componentsLoaded.value[id]) loadComponents(id)
+    })
+  } finally {
+    instancesLoading.value = false
+  }
 }
 
 async function loadComponents(instanceId) {
@@ -80,513 +173,433 @@ async function loadAllInstances() {
   allInstances.value = data
 }
 
-// --- Material CRUD ---
-async function createMaterial() {
-  const name = newName.value.trim()
-  if (!name) { showStatus('Название обязательно', true); return }
-  if (!newRole.value) { showStatus('Роль обязательна', true); return }
-  try {
-    await api.post('/api/materials', { name, role: newRole.value })
-    newName.value = ''
-    newRole.value = ''
-    showStatus('Материал создан')
-    await loadMaterials()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка создания', true)
-  }
-}
-
-async function deleteMaterial(m) {
-  if (!confirm(`Удалить материал "${m.name}"?`)) return
-  try {
-    await api.delete(`/api/materials/${m.material_id}`)
-    showStatus('Удалено')
-    await loadMaterials()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка удаления', true)
-  }
-}
-
-// --- Instance CRUD ---
-async function deleteInstance(inst) {
-  if (!confirm(`Удалить экземпляр "${inst.name}"?`)) return
-  try {
-    await api.delete(`/api/materials/instances/${inst.material_instance_id}`)
-    showStatus('Удалено')
-    // Reload parent instances
-    const matId = inst.material_id
-    if (matId) await loadInstances(matId)
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка удаления', true)
-  }
-}
-
-// --- Component CRUD ---
-async function deleteComponent(comp, instanceId) {
-  if (!confirm('Удалить компонент?')) return
-  try {
-    await api.delete(`/api/materials/instances/components/${comp.material_instance_component_id}`)
-    showStatus('Удалено')
-    await loadComponents(instanceId)
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка удаления', true)
-  }
-}
-
-// --- Toggle expand/collapse ---
-function toggleMaterials() {
-  allMaterialsExpanded.value = !allMaterialsExpanded.value
-  if (allMaterialsExpanded.value) {
-    materials.value.forEach(m => {
-      openMaterials.value.add(m.material_id)
-      if (!instancesLoaded.value[m.material_id]) loadInstances(m.material_id)
-    })
-  } else {
-    openMaterials.value.clear()
-    openInstances.value.clear()
-    compositionsExpanded.value = false
-  }
-}
-
-function toggleCompositions() {
-  if (!allMaterialsExpanded.value) return
-  compositionsExpanded.value = !compositionsExpanded.value
-  if (compositionsExpanded.value) {
-    for (const matId of openMaterials.value) {
-      const insts = instancesMap.value[matId] || []
-      insts.forEach(inst => {
-        openInstances.value.add(inst.material_instance_id)
-        if (!componentsLoaded.value[inst.material_instance_id]) {
-          loadComponents(inst.material_instance_id)
-        }
-      })
-    }
-  } else {
-    openInstances.value.clear()
-  }
-}
-
-// --- Material toggle ---
-function toggleMaterial(m) {
-  const id = m.material_id
-  if (openMaterials.value.has(id)) {
-    openMaterials.value.delete(id)
-  } else {
-    openMaterials.value.add(id)
-    if (!instancesLoaded.value[id]) loadInstances(id)
-  }
-}
-
 function toggleInstance(inst) {
   const id = inst.material_instance_id
   if (openInstances.value.has(id)) {
-    openInstances.value.delete(id)
+    openInstances.value = new Set([...openInstances.value].filter(x => x !== id))
   } else {
-    openInstances.value.add(id)
+    openInstances.value = new Set([...openInstances.value, id])
     if (!componentsLoaded.value[id]) loadComponents(id)
   }
 }
 
-// --- Inline edit ---
-function startEdit(type, item) {
-  cancelEdit()
-  editType.value = type
-  if (type === 'material') {
-    editId.value = item.material_id
-    editName.value = item.name
-    editRole.value = item.role
-  } else if (type === 'instance') {
-    editId.value = item.material_instance_id
-    editName.value = item.name
-    editNotes.value = item.notes || ''
-  } else if (type === 'component') {
-    editId.value = item.material_instance_component_id
-    editMassFraction.value = (item.mass_fraction * 100).toFixed(2)
-    editNotes.value = item.notes || ''
-  }
+// ── Mutual exclusion for edit/create states ───────────────────────────
+const editingInstanceId = ref(null)
+const editInstanceForm = ref({ name: '', notes: '' })
+const editingComponentId = ref(null)
+const editComponentForm = ref({ mass_fraction: '', notes: '' })
+const creatingInstance = ref(false)
+const newInstanceForm = ref({ name: '', notes: '' })
+const creatingComponentFor = ref(null)
+const newComponentForm = ref({ instance_id: '', percent: '', notes: '' })
+
+function cancelAllEdits() {
+  editingInstanceId.value = null
+  editingComponentId.value = null
+  creatingInstance.value = false
+  creatingComponentFor.value = null
 }
 
-function cancelEdit() {
-  editType.value = null
-  editId.value = null
-  editName.value = ''
-  editRole.value = ''
-  editNotes.value = ''
-  editMassFraction.value = ''
+// ── Instance CRUD ─────────────────────────────────────────────────────
+function startEditInstance(inst) {
+  cancelAllEdits()
+  editingInstanceId.value = inst.material_instance_id
+  editInstanceForm.value = { name: inst.name, notes: inst.notes || '' }
 }
 
-async function saveEditMaterial(m) {
-  const name = editName.value.trim()
-  if (!name) return
-  try {
-    await api.put(`/api/materials/${m.material_id}`, { name, role: editRole.value || m.role })
-    cancelEdit()
-    showStatus('Сохранено')
-    await loadMaterials()
-  } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка обновления', true)
-  }
-}
+function cancelEditInstance() { editingInstanceId.value = null }
 
 async function saveEditInstance(inst) {
-  const name = editName.value.trim()
+  const name = editInstanceForm.value.name.trim()
   if (!name) return
   try {
     await api.put(`/api/materials/instances/${inst.material_instance_id}`, {
       name,
-      notes: editNotes.value.trim() || null,
+      notes: editInstanceForm.value.notes.trim() || null,
     })
-    cancelEdit()
-    showStatus('Сохранено')
-    if (inst.material_id) await loadInstances(inst.material_id)
+    toast.add({ severity: 'success', summary: 'Экземпляр обновлён', life: 3000 })
+    editingInstanceId.value = null
+    await loadInstances(selectedMaterialId.value)
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка обновления', true)
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка обновления', life: 3000 })
   }
 }
 
+async function deleteInstance(inst) {
+  if (!confirm(`Удалить экземпляр "${inst.name}"?`)) return
+  try {
+    await api.delete(`/api/materials/instances/${inst.material_instance_id}`)
+    toast.add({ severity: 'success', summary: 'Экземпляр удалён', life: 3000 })
+    await loadInstances(selectedMaterialId.value)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка удаления', life: 3000 })
+  }
+}
+
+function startInstanceCreate() {
+  cancelAllEdits()
+  creatingInstance.value = true
+  newInstanceForm.value = { name: '', notes: '' }
+}
+
+function resetInstanceCreate() {
+  creatingInstance.value = false
+  newInstanceForm.value = { name: '', notes: '' }
+}
+
+async function saveNewInstance() {
+  const name = newInstanceForm.value.name.trim()
+  if (!name) return
+  try {
+    await api.post(`/api/materials/${selectedMaterialId.value}/instances`, {
+      name,
+      notes: newInstanceForm.value.notes.trim() || null,
+    })
+    toast.add({ severity: 'success', summary: 'Экземпляр создан', life: 3000 })
+    resetInstanceCreate()
+    await loadInstances(selectedMaterialId.value)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка создания', life: 3000 })
+  }
+}
+
+// ── Component CRUD ────────────────────────────────────────────────────
+function startEditComponent(comp) {
+  cancelAllEdits()
+  editingComponentId.value = comp.material_instance_component_id
+  editComponentForm.value = {
+    mass_fraction: (comp.mass_fraction * 100).toFixed(2),
+    notes: comp.notes || '',
+  }
+}
+
+function cancelEditComponent() { editingComponentId.value = null }
+
 async function saveEditComponent(comp, instanceId) {
-  const pct = Number(editMassFraction.value)
+  const pct = Number(editComponentForm.value.mass_fraction)
   if (isNaN(pct) || pct <= 0 || pct > 100) {
-    showStatus('Некорректный % (0–100)', true)
+    toast.add({ severity: 'warn', summary: 'Некорректный % (0-100)', life: 3000 })
     return
   }
   try {
     await api.put(`/api/materials/instances/components/${comp.material_instance_component_id}`, {
       mass_fraction: pct / 100,
-      notes: editNotes.value.trim() || null,
+      notes: editComponentForm.value.notes.trim() || null,
     })
-    cancelEdit()
-    showStatus('Сохранено')
+    toast.add({ severity: 'success', summary: 'Компонент обновлён', life: 3000 })
+    editingComponentId.value = null
     await loadComponents(instanceId)
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка обновления', true)
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка обновления', life: 3000 })
   }
 }
 
-function onEditKeydown(e, saveFn) {
-  if (e.key === 'Enter') { e.preventDefault(); saveFn() }
-  if (e.key === 'Escape') cancelEdit()
-}
-
-// --- Inline create: Instance ---
-function startCreateInstance(materialId) {
-  cancelEdit()
-  cancelCreateComponent()
-  creatingInstanceFor.value = materialId
-  newInstanceName.value = ''
-  newInstanceNotes.value = ''
-}
-
-function cancelCreateInstance() {
-  creatingInstanceFor.value = null
-  newInstanceName.value = ''
-  newInstanceNotes.value = ''
-}
-
-async function saveNewInstance(materialId) {
-  const name = newInstanceName.value.trim()
-  if (!name) return
+async function deleteComponent(comp, instanceId) {
+  if (!confirm('Удалить компонент?')) return
   try {
-    await api.post(`/api/materials/${materialId}/instances`, {
-      name,
-      notes: newInstanceNotes.value.trim() || null,
-    })
-    cancelCreateInstance()
-    showStatus('Экземпляр создан')
-    await loadInstances(materialId)
+    await api.delete(`/api/materials/instances/components/${comp.material_instance_component_id}`)
+    toast.add({ severity: 'success', summary: 'Компонент удалён', life: 3000 })
+    await loadComponents(instanceId)
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка создания', true)
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка удаления', life: 3000 })
   }
 }
 
-// --- Inline create: Component ---
-async function startCreateComponent(instanceId) {
-  cancelEdit()
-  cancelCreateInstance()
+async function startComponentCreate(instanceId) {
+  cancelAllEdits()
   creatingComponentFor.value = instanceId
-  newComponentInstanceId.value = ''
-  newComponentPercent.value = ''
-  newComponentNotes.value = ''
+  newComponentForm.value = { instance_id: '', percent: '', notes: '' }
   await loadAllInstances()
 }
 
-function cancelCreateComponent() {
+function resetComponentCreate() {
   creatingComponentFor.value = null
-  newComponentInstanceId.value = ''
-  newComponentPercent.value = ''
-  newComponentNotes.value = ''
+  newComponentForm.value = { instance_id: '', percent: '', notes: '' }
 }
 
 async function saveNewComponent(instanceId) {
-  const matInstId = newComponentInstanceId.value
-  const pct = Number(newComponentPercent.value)
-  if (!matInstId) { showStatus('Выберите экземпляр', true); return }
+  const matInstId = newComponentForm.value.instance_id
+  const pct = Number(newComponentForm.value.percent)
+  if (!matInstId) { toast.add({ severity: 'warn', summary: 'Выберите экземпляр', life: 3000 }); return }
   if (isNaN(pct) || pct <= 0 || pct > 100) {
-    showStatus('Некорректный % (0–100)', true)
+    toast.add({ severity: 'warn', summary: 'Некорректный % (0-100)', life: 3000 })
     return
   }
   try {
     await api.post(`/api/materials/instances/${instanceId}/components`, {
       component_material_instance_id: Number(matInstId),
       mass_fraction: pct / 100,
-      notes: newComponentNotes.value.trim() || null,
+      notes: newComponentForm.value.notes.trim() || null,
     })
-    cancelCreateComponent()
-    showStatus('Компонент добавлен')
+    toast.add({ severity: 'success', summary: 'Компонент добавлен', life: 3000 })
+    resetComponentCreate()
     await loadComponents(instanceId)
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка создания', true)
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка создания', life: 3000 })
   }
 }
 
-function isEditing(type, id) {
-  return editType.value === type && editId.value === id
+function onEditKeydown(e, saveFn, cancelFn) {
+  if (e.key === 'Enter') { e.preventDefault(); saveFn() }
+  if (e.key === 'Escape') cancelFn()
 }
-
-onMounted(loadMaterials)
 </script>
 
 <template>
   <div class="materials-page">
     <PageHeader title="Материалы" icon="pi pi-warehouse" />
 
-    <!-- Create material -->
-    <div class="create-bar">
-      <input
-        v-model="newName"
-        class="ds-input create-name"
-        placeholder="Название материала"
-        autocomplete="off"
-        @keydown.enter="createMaterial"
-      />
-      <select v-model="newRole" class="ds-select create-role">
-        <option value="">— роль —</option>
-        <option value="cathode_active">Катодный АМ</option>
-        <option value="anode_active">Анодный АМ</option>
-        <option value="binder">Связующее</option>
-        <option value="conductive_additive">Добавка</option>
-        <option value="solvent">Растворитель</option>
-        <option value="other">Другое</option>
-      </select>
-      <button type="button" class="ds-btn ds-btn--primary" @click="createMaterial">
-        <i class="pi pi-plus"></i> Добавить
-      </button>
-    </div>
-
-    <div
-      v-if="statusMsg"
-      class="status-feedback"
-      :style="{ color: statusError ? '#b00020' : '#1a8a64' }"
-    >
-      {{ statusMsg }}
-    </div>
-
-    <!-- Toolbar -->
-    <div class="materials-toolbar">
-      <button type="button" class="ds-btn ds-btn--secondary" @click="toggleMaterials">
-        <i class="pi pi-list"></i> Экземпляры
-      </button>
-      <button
-        type="button"
-        class="ds-btn ds-btn--secondary"
-        :disabled="!allMaterialsExpanded"
-        @click="toggleCompositions"
-      >
-        <i class="pi pi-sitemap"></i> Составы
-      </button>
-    </div>
-
-    <!-- Tree -->
-    <ul class="items-list">
-      <li v-for="m in materials" :key="m.material_id" class="tree-row level-material">
-        <!-- Material summary -->
-        <div class="tree-summary" @click="toggleMaterial(m)">
-          <span class="tree-arrow" :class="{ open: openMaterials.has(m.material_id) }">▸</span>
-
-          <template v-if="isEditing('material', m.material_id)">
-            <input
-              v-model="editName"
-              style="flex: 1"
-              @keydown="onEditKeydown($event, () => saveEditMaterial(m))"
-              @click.stop
-            />
-            <select v-model="editRole" @click.stop>
-              <option value="cathode_active">катодный активный материал</option>
-              <option value="anode_active">анодный активный материал</option>
-              <option value="binder">связующее</option>
-              <option value="conductive_additive">проводящая добавка</option>
-              <option value="solvent">растворитель</option>
-              <option value="other">другое</option>
-            </select>
-            <button type="button" @click.stop="saveEditMaterial(m)">Сохранить</button>
-            <button type="button" @click.stop="cancelEdit">Отмена</button>
-          </template>
-
-          <template v-else>
-            <span class="row-title" style="display: inline-block; width: 10vw">{{ m.name }}</span>
-            <span class="row-meta" style="display: inline-block; width: 25vw">{{ roleMap[m.role] || m.role }}</span>
-            <div class="actions" @click.stop>
-              <button class="btn-icon" title="Редактировать" @click="startEdit('material', m)"><i class="pi pi-pencil"></i></button>
-              <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteMaterial(m)"><i class="pi pi-trash"></i></button>
-            </div>
-          </template>
+    <div class="materials-content">
+      <!-- ── Left Panel: Material List ── -->
+      <div class="left-panel">
+        <div class="left-toolbar">
+          <Button label="Добавить" icon="pi pi-plus" severity="secondary" outlined class="add-btn" @click="startMaterialCreate" />
         </div>
 
-        <!-- Instances (Level 2) -->
-        <div v-if="openMaterials.has(m.material_id)" class="children-container">
-          <template v-if="instancesLoaded[m.material_id]">
-            <div
-              v-for="inst in (instancesMap[m.material_id] || [])"
-              :key="inst.material_instance_id"
-              class="tree-row level-instance"
-            >
-              <!-- Instance summary -->
-              <div class="tree-summary" @click="toggleInstance(inst)">
-                <span class="tree-arrow" :class="{ open: openInstances.has(inst.material_instance_id) }">▸</span>
+        <!-- Inline create material -->
+        <div v-if="creatingMaterial" class="create-material-form">
+          <InputText
+            v-model="newMaterialForm.name"
+            placeholder="Название"
+            class="w-full"
+            @keydown.enter.prevent="saveNewMaterial"
+            @keydown.escape="cancelMaterialCreate"
+          />
+          <Select
+            v-model="newMaterialForm.role"
+            :options="roleOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="-- роль --"
+            class="w-full"
+          />
+          <div class="create-material-actions">
+            <Button label="Создать" @click="saveNewMaterial" />
+            <Button label="Отмена" severity="secondary" outlined @click="cancelMaterialCreate" />
+          </div>
+        </div>
 
-                <template v-if="isEditing('instance', inst.material_instance_id)">
-                  <input
-                    v-model="editName"
-                    style="flex: 1"
-                    @keydown="onEditKeydown($event, () => saveEditInstance(inst))"
-                    @click.stop
-                  />
-                  <textarea
-                    v-model="editNotes"
-                    rows="2"
-                    placeholder="Комментарий"
-                    style="display: block; margin-top: 0.4rem"
-                    @click.stop
-                  ></textarea>
-                  <button type="button" @click.stop="saveEditInstance(inst)">Сохранить</button>
-                  <button type="button" @click.stop="cancelEdit">Отмена</button>
-                </template>
-
-                <template v-else>
-                  <span class="row-title" style="display: inline-block; width: 35vw">{{ inst.name }}</span>
-                  <div class="actions" @click.stop>
-                    <button class="btn-icon" title="Редактировать" @click="startEdit('instance', inst)"><i class="pi pi-pencil"></i></button>
-                    <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteInstance(inst)"><i class="pi pi-trash"></i></button>
-                  </div>
-                </template>
-              </div>
-
-              <!-- Components (Level 3) -->
-              <div v-if="openInstances.has(inst.material_instance_id)" class="children-container">
-                <template v-if="componentsLoaded[inst.material_instance_id]">
-                  <div
-                    v-for="comp in (componentsMap[inst.material_instance_id] || [])"
-                    :key="comp.material_instance_component_id"
-                    class="tree-row level-component"
-                  >
-                    <div class="tree-summary">
-                      <template v-if="isEditing('component', comp.material_instance_component_id)">
-                        <input
-                          v-model="editMassFraction"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max="100"
-                          style="width: 80px"
-                          @keydown="onEditKeydown($event, () => saveEditComponent(comp, inst.material_instance_id))"
-                          @click.stop
-                        />
-                        <span style="margin: 0 0.25rem">%</span>
-                        <textarea
-                          v-model="editNotes"
-                          rows="2"
-                          placeholder="Комментарий"
-                          style="display: block; margin-top: 0.4rem"
-                          @click.stop
-                        ></textarea>
-                        <button type="button" @click.stop="saveEditComponent(comp, inst.material_instance_id)">Сохранить</button>
-                        <button type="button" @click.stop="cancelEdit">Отмена</button>
-                      </template>
-
-                      <template v-else>
-                        <span class="row-title" style="display: inline-block; width: 10vw">{{ comp.component_name }}</span>
-                        <span class="row-meta" style="display: inline-block; width: 10vw">{{ (comp.mass_fraction * 100).toFixed(2) }} %</span>
-                        <div class="actions" @click.stop>
-                          <button class="btn-icon" title="Редактировать" @click="startEdit('component', comp)"><i class="pi pi-pencil"></i></button>
-                          <button class="btn-icon btn-icon--danger" title="Удалить" @click="deleteComponent(comp, inst.material_instance_id)"><i class="pi pi-trash"></i></button>
-                        </div>
-                      </template>
-                    </div>
-                  </div>
-
-                  <!-- Create component inline -->
-                  <div v-if="creatingComponentFor === inst.material_instance_id" class="inline-create level-component">
-                    <select v-model="newComponentInstanceId" style="margin-right: 0.5rem">
-                      <option value="">— экземпляр —</option>
-                      <option
-                        v-for="ai in allInstances"
-                        :key="ai.material_instance_id"
-                        :value="ai.material_instance_id"
-                      >{{ ai.name }}</option>
-                    </select>
-                    <input
-                      v-model="newComponentPercent"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      max="100"
-                      placeholder="%"
-                      style="width: 80px"
-                      @keydown.enter.prevent="saveNewComponent(inst.material_instance_id)"
-                      @keydown.escape="cancelCreateComponent"
-                    />
-                    <textarea
-                      v-model="newComponentNotes"
-                      rows="2"
-                      placeholder="Комментарий (необязательно)"
-                      style="display: block; margin-top: 0.4rem"
-                    ></textarea>
-                    <button type="button" @click="saveNewComponent(inst.material_instance_id)">Сохранить</button>
-                    <button type="button" @click="cancelCreateComponent">Отмена</button>
-                  </div>
-
-                  <button
-                    v-if="creatingComponentFor !== inst.material_instance_id"
-                    type="button"
-                    class="add-child-btn level-component"
-                    @click="startCreateComponent(inst.material_instance_id)"
-                  >+ Состав</button>
-                </template>
-                <div v-else style="margin-left: 3rem; color: #6B7280">Загрузка...</div>
-              </div>
-            </div>
-
-            <!-- Create instance inline -->
-            <div v-if="creatingInstanceFor === m.material_id" class="inline-create level-instance">
-              <input
-                v-model="newInstanceName"
-                type="text"
-                placeholder="Название экземпляра"
-                style="margin-right: 0.5rem"
-                @keydown.enter.prevent="saveNewInstance(m.material_id)"
-                @keydown.escape="cancelCreateInstance"
-              />
-              <textarea
-                v-model="newInstanceNotes"
-                rows="2"
-                placeholder="Комментарий (необязательно)"
-                style="display: block; margin-top: 0.4rem"
-              ></textarea>
-              <button type="button" @click="saveNewInstance(m.material_id)">Сохранить</button>
-              <button type="button" @click="cancelCreateInstance">Отмена</button>
-            </div>
-
+        <!-- Filters -->
+        <div class="filter-wrap">
+          <InputText v-model="filterText" placeholder="Поиск..." class="w-full" />
+          <div class="role-chips">
             <button
-              v-if="creatingInstanceFor !== m.material_id"
-              type="button"
-              class="add-child-btn level-instance"
-              @click="startCreateInstance(m.material_id)"
-            >+ Экземпляр</button>
-          </template>
-          <div v-else style="margin-left: 1.5rem; color: #6B7280">Загрузка...</div>
+              v-for="opt in roleOptions"
+              :key="opt.value"
+              :class="['role-chip', { active: filterRole === opt.value }]"
+              @click="filterRole = filterRole === opt.value ? '' : opt.value"
+            >{{ opt.label }}</button>
+          </div>
         </div>
-      </li>
-    </ul>
+
+        <!-- Material list -->
+        <div class="material-list">
+          <div
+            v-for="m in filteredMaterials"
+            :key="m.material_id"
+            :class="['material-item', { active: selectedMaterialId === m.material_id }]"
+            @click="selectMaterial(m)"
+          >
+            <div class="material-item-info">
+              <span class="material-item-name">{{ m.name }}</span>
+              <span class="material-item-role">{{ roleMap[m.role] || m.role }}</span>
+            </div>
+            <Button
+              icon="pi pi-trash"
+              severity="danger"
+              text
+              class="material-item-delete"
+              @click.stop="deleteMaterial(m)"
+            />
+          </div>
+          <div v-if="filteredMaterials.length === 0" class="empty-text">
+            {{ filterText ? 'Ничего не найдено' : 'Нет материалов' }}
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Right Panel: Selected Material Detail ── -->
+      <div class="right-panel">
+        <template v-if="selectedMaterial">
+          <!-- Metadata -->
+          <div class="detail-section">
+            <div class="section-title">Метаданные</div>
+            <div class="metadata-row">
+              <InputText v-model="editForm.name" placeholder="Название" class="meta-name" />
+              <Select
+                v-model="editForm.role"
+                :options="roleOptions"
+                optionLabel="label"
+                optionValue="value"
+                class="meta-role"
+              />
+              <Button label="Сохранить" @click="saveMaterialEdit" />
+            </div>
+          </div>
+
+          <!-- Instances -->
+          <div class="detail-section">
+            <div class="section-header">
+              <span class="section-title">Экземпляры</span>
+              <Button label="Экземпляр" icon="pi pi-plus" severity="secondary" outlined @click="startInstanceCreate" />
+            </div>
+
+            <div v-if="instancesLoading" class="loading-text">Загрузка...</div>
+
+            <div v-else class="instances-list">
+              <div v-for="inst in instances" :key="inst.material_instance_id" class="instance-block">
+                <!-- Instance row -->
+                <div class="instance-row">
+                  <button type="button" class="expand-btn" @click="toggleInstance(inst)">
+                    <i :class="['pi', openInstances.has(inst.material_instance_id) ? 'pi-chevron-down' : 'pi-chevron-right']" />
+                  </button>
+
+                  <template v-if="editingInstanceId === inst.material_instance_id">
+                    <InputText
+                      v-model="editInstanceForm.name"
+                      class="inst-name-input"
+                      @keydown="onEditKeydown($event, () => saveEditInstance(inst), cancelEditInstance)"
+                    />
+                    <InputText
+                      v-model="editInstanceForm.notes"
+                      placeholder="Комментарий"
+                      class="inst-notes-input"
+                      @keydown="onEditKeydown($event, () => saveEditInstance(inst), cancelEditInstance)"
+                    />
+                    <Button icon="pi pi-check" text @click="saveEditInstance(inst)" />
+                    <Button icon="pi pi-times" text severity="secondary" @click="cancelEditInstance" />
+                  </template>
+
+                  <template v-else>
+                    <span class="inst-name">{{ inst.name }}</span>
+                    <span v-if="inst.notes" class="inst-notes">{{ inst.notes }}</span>
+                    <div class="actions">
+                      <Button icon="pi pi-pencil" text @click.stop="startEditInstance(inst)" />
+                      <Button icon="pi pi-trash" text severity="danger" @click.stop="deleteInstance(inst)" />
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Components (expanded) -->
+                <div v-if="openInstances.has(inst.material_instance_id)" class="components-section">
+                  <template v-if="componentsLoaded[inst.material_instance_id]">
+                    <table v-if="(componentsMap[inst.material_instance_id] || []).length > 0" class="comp-table">
+                      <thead>
+                        <tr>
+                          <th>Компонент</th>
+                          <th>%</th>
+                          <th>Заметки</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="comp in componentsMap[inst.material_instance_id]" :key="comp.material_instance_component_id">
+                          <template v-if="editingComponentId === comp.material_instance_component_id">
+                            <td>{{ comp.component_name }}</td>
+                            <td>
+                              <InputText
+                                v-model="editComponentForm.mass_fraction"
+                                class="input-narrow"
+                                @keydown="onEditKeydown($event, () => saveEditComponent(comp, inst.material_instance_id), cancelEditComponent)"
+                              />
+                            </td>
+                            <td>
+                              <InputText
+                                v-model="editComponentForm.notes"
+                                placeholder="Комментарий"
+                                @keydown="onEditKeydown($event, () => saveEditComponent(comp, inst.material_instance_id), cancelEditComponent)"
+                              />
+                            </td>
+                            <td>
+                              <Button icon="pi pi-check" text @click="saveEditComponent(comp, inst.material_instance_id)" />
+                              <Button icon="pi pi-times" text severity="secondary" @click="cancelEditComponent" />
+                            </td>
+                          </template>
+                          <template v-else>
+                            <td>{{ comp.component_name }}</td>
+                            <td>{{ (comp.mass_fraction * 100).toFixed(2) }}%</td>
+                            <td class="meta-text">{{ comp.notes || '' }}</td>
+                            <td>
+                              <Button icon="pi pi-pencil" text @click="startEditComponent(comp)" />
+                              <Button icon="pi pi-trash" text severity="danger" @click="deleteComponent(comp, inst.material_instance_id)" />
+                            </td>
+                          </template>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div v-else class="empty-text">Нет компонентов</div>
+
+                    <!-- Create component inline -->
+                    <div v-if="creatingComponentFor === inst.material_instance_id" class="create-comp-row">
+                      <Select
+                        v-model="newComponentForm.instance_id"
+                        :options="allInstances"
+                        optionLabel="name"
+                        optionValue="material_instance_id"
+                        placeholder="-- экземпляр --"
+                        class="comp-select"
+                      />
+                      <InputText
+                        v-model="newComponentForm.percent"
+                        placeholder="%"
+                        class="input-narrow"
+                        @keydown.enter.prevent="saveNewComponent(inst.material_instance_id)"
+                        @keydown.escape="resetComponentCreate"
+                      />
+                      <InputText
+                        v-model="newComponentForm.notes"
+                        placeholder="Комментарий"
+                        class="input-flex"
+                        @keydown.enter.prevent="saveNewComponent(inst.material_instance_id)"
+                        @keydown.escape="resetComponentCreate"
+                      />
+                      <Button icon="pi pi-check" text @click="saveNewComponent(inst.material_instance_id)" />
+                      <Button icon="pi pi-times" text severity="secondary" @click="resetComponentCreate" />
+                    </div>
+                    <Button
+                      v-else
+                      label="Состав"
+                      icon="pi pi-plus"
+                      text
+                      severity="secondary"
+                      @click="startComponentCreate(inst.material_instance_id)"
+                    />
+                  </template>
+                  <div v-else class="loading-text">Загрузка...</div>
+                </div>
+              </div>
+
+              <div v-if="instances.length === 0 && !instancesLoading" class="empty-text">Нет экземпляров</div>
+
+              <!-- Create instance inline -->
+              <div v-if="creatingInstance" class="create-inst-row">
+                <InputText
+                  v-model="newInstanceForm.name"
+                  placeholder="Название экземпляра"
+                  @keydown.enter.prevent="saveNewInstance"
+                  @keydown.escape="resetInstanceCreate"
+                />
+                <InputText
+                  v-model="newInstanceForm.notes"
+                  placeholder="Комментарий"
+                  class="input-flex"
+                  @keydown.enter.prevent="saveNewInstance"
+                  @keydown.escape="resetInstanceCreate"
+                />
+                <Button icon="pi pi-check" text @click="saveNewInstance" />
+                <Button icon="pi pi-times" text severity="secondary" @click="resetInstanceCreate" />
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Empty state -->
+        <div v-else class="empty-state">
+          <i class="pi pi-arrow-left" style="font-size: 1.5rem; color: #D1D7DE"></i>
+          <p>Выберите материал из списка слева</p>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -597,106 +610,302 @@ onMounted(loadMaterials)
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1rem;
 }
-.materials-page :deep(.page-header) {
-  margin-bottom: 3px !important;
-}
+.materials-page :deep(.page-header) { margin-bottom: 3px !important; }
 
-.material-create-form {
-  margin-bottom: 1rem;
-}
-
-.materials-toolbar {
+/* ── Master-detail layout (glass-card) ── */
+.materials-content {
   display: flex;
+  background: rgba(255, 255, 255, 0.62);
+  border: 0.5px solid rgba(180, 210, 255, 0.55);
+  border-radius: 12px;
+  box-shadow: 0 4px 11px rgba(0, 50, 116, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px) saturate(1.4);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  min-height: 500px;
+  max-height: calc(100vh - 160px);
+  overflow: hidden;
+}
+
+/* ── Left panel ── */
+.left-panel {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 0.5px solid rgba(180, 210, 255, 0.4);
+  display: flex;
+  flex-direction: column;
+  background: rgba(248, 252, 255, 0.5);
+}
+
+.left-toolbar {
+  padding: 0.75rem;
+  border-bottom: 0.5px solid rgba(180, 210, 255, 0.3);
+}
+.add-btn { width: 100%; }
+
+.create-material-form {
+  padding: 0.75rem;
+  border-bottom: 0.5px solid rgba(180, 210, 255, 0.3);
+  display: flex;
+  flex-direction: column;
   gap: 0.5rem;
-  align-items: center;
-  margin: 0.75rem 0;
+}
+.create-material-actions {
+  display: flex;
+  gap: 0.4rem;
 }
 
-.materials-toolbar button[disabled] {
-  opacity: 0.5;
-  cursor: not-allowed;
+.filter-wrap {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 0.5px solid rgba(180, 210, 255, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.role-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.role-chip {
+  padding: 2px 8px;
+  border: 0.5px solid rgba(180, 210, 255, 0.55);
+  border-radius: 20px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.6);
+  color: #6B7280;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.role-chip:hover {
+  border-color: rgba(82, 201, 166, 0.45);
+  color: #003274;
+  box-shadow: 2px 3px 6px rgba(82, 201, 166, 0.12);
+}
+.role-chip.active {
+  background: rgba(0, 50, 116, 0.08);
+  border-color: #003274;
+  color: #003274;
+  font-weight: 600;
 }
 
-.tree-row {
-  list-style: none;
+.material-list {
+  flex: 1;
+  overflow-y: auto;
 }
 
-.level-instance {
-  margin-left: 1.5rem;
-}
-
-.level-component {
-  margin-left: 3rem;
-}
-
-.tree-summary {
+.material-item {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.45rem 0.5rem;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
   cursor: pointer;
-  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
-  border-radius: 4px;
+  border-bottom: 0.5px solid rgba(180, 210, 255, 0.2);
+  transition: background 0.15s;
+}
+.material-item:hover { background: rgba(0, 50, 116, 0.04); }
+.material-item.active {
+  background: rgba(0, 50, 116, 0.08);
+  border-left: 3px solid #003274;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 50, 116, 0.08);
+}
+
+.material-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+}
+.material-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #003274;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.material-item-role {
+  font-size: 11px;
+  color: #6B7280;
+}
+
+.material-item-delete {
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.material-item:hover .material-item-delete { opacity: 1; }
+.material-item-delete.p-button { width: 2rem; height: 2rem; }
+
+/* ── Right panel ── */
+.right-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 0.75rem;
+  color: #6B7280;
+  font-size: 14px;
+}
+
+/* ── Detail sections ── */
+.detail-section {
+  margin-bottom: 1.5rem;
+}
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+.section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(0, 50, 116, 0.50);
+  margin-bottom: 0.5rem;
+}
+
+.metadata-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.meta-name { flex: 1; }
+.meta-role { width: 160px; flex-shrink: 0; }
+
+/* ── Shared form styles ── */
+.w-full { width: 100%; }
+.input-narrow { width: 80px; flex-shrink: 0; }
+.input-flex { flex: 1; }
+.comp-select { min-width: 200px; }
+
+.meta-text { color: #6B7280; font-size: 12px; }
+.loading-text { color: #6B7280; font-size: 13px; padding: 0.5rem 0; }
+.empty-text { color: #6B7280; font-size: 13px; padding: 0.5rem 0; text-align: center; }
+
+/* ── Instances ── */
+.instances-list {
+  display: flex;
+  flex-direction: column;
+}
+.instance-block {
+  border-bottom: 0.5px solid rgba(180, 210, 255, 0.3);
+}
+.instance-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.25rem;
   transition: background 0.12s;
 }
-.tree-summary:hover { background: rgba(0, 50, 116, 0.03); }
+.instance-row:hover { background: rgba(0, 50, 116, 0.03); }
 
-.row-title { color: #003274; font-weight: 600; font-size: 13px; }
-.row-meta { color: #6B7280; font-size: 13px; }
-
-.tree-arrow {
-  display: inline-block;
-  margin-right: 0.4rem;
-  color: #6B7280;
-  transition: transform 0.15s ease;
-  user-select: none;
-  font-size: 12px;
-}
-.tree-arrow.open { transform: rotate(90deg); }
-
-.actions { display: flex; gap: 0.15rem; margin-left: auto; }
-
-.btn-icon {
+.expand-btn {
   background: none;
   border: none;
   cursor: pointer;
   color: #6B7280;
-  padding: 4px 6px;
-  border-radius: 4px;
-  font-size: 13px;
-  transition: background 0.12s, color 0.12s;
-}
-.btn-icon:hover { background: rgba(0, 50, 116, 0.06); color: #003274; }
-.btn-icon--danger:hover { color: #b00020; }
-
-.inline-create { padding: 0.5rem 0; }
-.inline-create input,
-.inline-create select,
-.inline-create textarea {
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-}
-.inline-create input:focus,
-.inline-create select:focus,
-.inline-create textarea:focus {
-  border-color: #003274;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
+  padding: 2px 4px;
+  font-size: 11px;
 }
 
-.add-child-btn {
-  margin: 0.25rem 0;
-  font-size: 12px;
-  cursor: pointer;
-  background: none;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  padding: 0.3rem 0.6rem;
+.inst-name {
+  font-weight: 600;
+  font-size: 13px;
   color: #003274;
+  flex-shrink: 0;
 }
-.add-child-btn:hover { background: rgba(0, 50, 116, 0.04); }
+.inst-notes {
+  color: #6B7280;
+  font-size: 12px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inst-name-input { flex: 0 0 200px; }
+.inst-notes-input { flex: 1; }
+
+.actions { display: flex; gap: 0.15rem; margin-left: auto; flex-shrink: 0; }
+
+/* ── Components ── */
+.components-section {
+  margin-left: 1.75rem;
+  padding-bottom: 0.5rem;
+}
+.comp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.comp-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  padding: 0.25rem 0.4rem;
+  border-bottom: 0.5px solid rgba(180, 210, 255, 0.4);
+}
+.comp-table td {
+  padding: 0.25rem 0.4rem;
+  vertical-align: middle;
+}
+.comp-table th:nth-child(2), .comp-table td:nth-child(2) { width: 80px; }
+.comp-table th:nth-child(4), .comp-table td:nth-child(4) { width: 70px; }
+
+.create-comp-row, .create-inst-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+.create-comp-row .pv-select { max-width: 250px; }
+
+/* ── PrimeVue overrides for compact areas ── */
+.instance-row :deep(.p-button-icon-only) {
+  width: 2rem;
+  height: 2rem;
+}
+.comp-table :deep(.p-button-icon-only) {
+  width: 2rem;
+  height: 2rem;
+}
+.material-item-delete :deep(.p-button) {
+  width: 2rem;
+  height: 2rem;
+}
+
+/* ── Mobile ── */
+@media (max-width: 768px) {
+  .materials-content {
+    flex-direction: column;
+    max-height: none;
+    min-height: auto;
+  }
+  .left-panel {
+    width: 100%;
+    max-height: 40vh;
+    border-right: none;
+    border-bottom: 0.5px solid rgba(180, 210, 255, 0.4);
+  }
+  .right-panel {
+    padding: 1rem;
+  }
+  .metadata-row {
+    flex-wrap: wrap;
+  }
+  .meta-name { flex: 1 1 100%; }
+  .meta-role { width: 100%; }
+}
 </style>

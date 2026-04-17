@@ -6,11 +6,13 @@ const props = defineProps({ status: { type: String, default: '' } })
 
 const MAP = {
   accepted:   { label: 'Принято',    severity: 'success'   },
-  processing: { label: 'В работе',   severity: 'warn'      },
+  processing: { label: 'Обработка',  severity: 'warn'      },
   draft:      { label: 'Черновик',   severity: 'secondary' },
   rejected:   { label: 'Отклонено', severity: 'danger'    },
   active:     { label: 'Активно',    severity: 'success'   },
   inactive:   { label: 'Неактивен', severity: 'secondary' },
+  ready:      { label: 'Готово',     severity: 'success'   },
+  error:      { label: 'Ошибка',    severity: 'danger'    },
 }
 
 const label    = computed(() => MAP[props.status]?.label    ?? props.status)

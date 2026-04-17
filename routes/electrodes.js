@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
+
 const ALLOWED_TARGET_FORM_FACTORS = new Set(['coin', 'pouch', 'cylindrical']);
 const ALLOWED_TARGET_CONFIG_CODES = new Set([
   '2016',
@@ -117,7 +120,7 @@ router.get('/test', async (req, res) => {
   res.json(result.rows);
 });
 
-router.get('/electrode-cut-batches', async (req, res) => {
+router.get('/electrode-cut-batches', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `
@@ -127,7 +130,8 @@ router.get('/electrode-cut-batches', async (req, res) => {
         t.project_id,
         p.name AS project_name,
         r.role AS tape_role,
-        u.name AS created_by_name,
+        u_created.name AS created_by_name,
+        u_updated.name AS updated_by_name,
         d.start_time AS drying_start,
         d.end_time AS drying_end,
         COALESCE(ec.electrode_count, 0) AS electrode_count
@@ -138,8 +142,10 @@ router.get('/electrode-cut-batches', async (req, res) => {
         ON p.project_id = t.project_id
       LEFT JOIN tape_recipes r
         ON r.tape_recipe_id = t.tape_recipe_id
-      LEFT JOIN users u
-        ON u.user_id = b.created_by
+      LEFT JOIN users u_created
+        ON u_created.user_id = b.created_by
+      LEFT JOIN users u_updated
+        ON u_updated.user_id = b.updated_by
       LEFT JOIN electrode_drying d
         ON d.cut_batch_id = b.cut_batch_id
       LEFT JOIN (
@@ -165,7 +171,7 @@ router.get('/electrode-cut-batches', async (req, res) => {
 
 // -------- ELECTRODE CUT BATCHES --------
 // CREATE cut batch
-router.post('/electrode-cut-batches', async (req, res) => {
+router.post('/electrode-cut-batches', auth, async (req, res) => {
   const {
     tape_id,
     created_by,
@@ -331,7 +337,7 @@ router.post('/electrode-cut-batches', async (req, res) => {
 });
 
 // UPDATE
-router.put('/electrode-cut-batches/:id', async (req, res) => {
+router.put('/electrode-cut-batches/:id', auth, async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   const {
@@ -359,7 +365,8 @@ router.put('/electrode-cut-batches/:id', async (req, res) => {
         shape,
         diameter_mm,
         length_mm,
-        width_mm
+        width_mm,
+        comments
       FROM electrode_cut_batches
       WHERE cut_batch_id = $1
       `,
@@ -385,6 +392,17 @@ router.put('/electrode-cut-batches/:id', async (req, res) => {
       return res.status(400).json({ error: geometry.error });
     }
 
+    const newVals = {
+      target_form_factor: geometry.target_form_factor,
+      target_config_code: geometry.target_config_code,
+      target_config_other: geometry.target_config_other,
+      shape: geometry.shape,
+      diameter_mm: geometry.diameter_mm,
+      length_mm: geometry.length_mm,
+      width_mm: geometry.width_mm,
+      comments: comments !== undefined ? (comments || null) : current.comments
+    };
+
     const result = await pool.query(
       `
       UPDATE electrode_cut_batches
@@ -396,19 +414,22 @@ router.put('/electrode-cut-batches/:id', async (req, res) => {
         diameter_mm = $5,
         length_mm = $6,
         width_mm = $7,
-        comments = $8
-      WHERE cut_batch_id = $9
+        comments = $8,
+        updated_by = $9,
+        updated_at = now()
+      WHERE cut_batch_id = $10
       RETURNING *
       `,
       [
-        geometry.target_form_factor,
-        geometry.target_config_code,
-        geometry.target_config_other,
-        geometry.shape,
-        geometry.diameter_mm,
-        geometry.length_mm,
-        geometry.width_mm,
-        comments || null,
+        newVals.target_form_factor,
+        newVals.target_config_code,
+        newVals.target_config_other,
+        newVals.shape,
+        newVals.diameter_mm,
+        newVals.length_mm,
+        newVals.width_mm,
+        newVals.comments,
+        req.user.userId,
         cutBatchId
       ]
     );
@@ -416,6 +437,8 @@ router.put('/electrode-cut-batches/:id', async (req, res) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Партия не найдена' });
     }
+
+    await trackChanges(pool, 'electrode_cut_batch', 'electrode_cut_batches', 'cut_batch_id', cutBatchId, current, newVals, req.user.userId);
 
     res.json(result.rows[0]);
 
@@ -426,7 +449,7 @@ router.put('/electrode-cut-batches/:id', async (req, res) => {
 });
 
 // GET cut batch by ID
-router.get('/electrode-cut-batches/:id', async (req, res) => {
+router.get('/electrode-cut-batches/:id', auth, async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -436,9 +459,13 @@ router.get('/electrode-cut-batches/:id', async (req, res) => {
   try {
     const result = await pool.query(
       `
-      SELECT *
-      FROM electrode_cut_batches
-      WHERE cut_batch_id = $1
+      SELECT b.*,
+        u_created.name AS created_by_name,
+        u_updated.name AS updated_by_name
+      FROM electrode_cut_batches b
+      LEFT JOIN users u_created ON u_created.user_id = b.created_by
+      LEFT JOIN users u_updated ON u_updated.user_id = b.updated_by
+      WHERE b.cut_batch_id = $1
       `,
       [cutBatchId]
     );
@@ -455,7 +482,7 @@ router.get('/electrode-cut-batches/:id', async (req, res) => {
 });
 
 // DELETE cut batch (and cascade delete electrodes and measurements)
-router.delete('/electrode-cut-batches/:id', async (req, res) => {
+router.delete('/electrode-cut-batches/:id', auth, async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -478,7 +505,7 @@ router.delete('/electrode-cut-batches/:id', async (req, res) => {
 
 
 // GET electrodes by batch
-router.get('/electrode-cut-batches/:id/electrodes', async (req, res) => {
+router.get('/electrode-cut-batches/:id/electrodes', auth, async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -511,7 +538,7 @@ router.get('/electrode-cut-batches/:id/electrodes', async (req, res) => {
 // -------- FOIL MASS MEASUREMENTS --------
 
 // ADD measurement
-router.post('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
+router.post('/electrode-cut-batches/:id/foil-masses', auth, async (req, res) => {
   const cutBatchId = Number(req.params.id);
   const { mass_g } = req.body;
   const mass = Number(mass_g);
@@ -538,7 +565,7 @@ router.post('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
 });
 
 // GET measurements
-router.get('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
+router.get('/electrode-cut-batches/:id/foil-masses', auth, async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -564,7 +591,7 @@ router.get('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
 });
 
 // DELETE all measurements for a batch
-router.delete('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
+router.delete('/electrode-cut-batches/:id/foil-masses', auth, async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -591,7 +618,7 @@ router.delete('/electrode-cut-batches/:id/foil-masses', async (req, res) => {
 // These don't seem to appear anywhere... 
 // THere are no foil-measurements routes in the html files... 
 // UPDATE measurement
-router.put('/foil-measurements/:id', async (req, res) => {
+router.put('/foil-measurements/:id', auth, async (req, res) => {
   const measurementId = Number(req.params.id);
   const { mass_g } = req.body;
 
@@ -600,6 +627,11 @@ router.put('/foil-measurements/:id', async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT mass_g FROM foil_mass_measurements WHERE foil_measurement_id = $1', [measurementId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Измерение не найдено' });
+    }
+
     const result = await pool.query(
       `
       UPDATE foil_mass_measurements
@@ -614,6 +646,8 @@ router.put('/foil-measurements/:id', async (req, res) => {
       return res.status(404).json({ error: 'Измерение не найдено' });
     }
 
+    await trackChanges(pool, 'foil_measurement', 'foil_mass_measurements', 'foil_measurement_id', measurementId, current.rows[0], { mass_g }, req.user.userId, null, false);
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -622,7 +656,7 @@ router.put('/foil-measurements/:id', async (req, res) => {
 });
 
 // DELETE measurement
-router.delete('/foil-measurements/:id', async (req, res) => {
+router.delete('/foil-measurements/:id', auth, async (req, res) => {
   const measurementId = Number(req.params.id);
 
   if (!Number.isInteger(measurementId)) {
@@ -647,7 +681,7 @@ router.delete('/foil-measurements/:id', async (req, res) => {
 // -------- ELECTRODES --------
 
 // CREATE electrode
-router.post('/', async (req, res) => {
+router.post('/', auth, async (req, res) => {
   const {
     cut_batch_id,
     electrode_mass_g,
@@ -691,7 +725,7 @@ router.post('/', async (req, res) => {
       [
         cut_batch_id,
         mass,
-        cup_number || null,
+        cup_number ?? null,
         comments || null
       ]
     );
@@ -707,7 +741,7 @@ router.post('/', async (req, res) => {
 });
 
 // UPDATE electrode status
-router.put('/:id/status', async (req, res) => {
+router.put('/:id/status', auth, async (req, res) => {
   const electrodeId = Number(req.params.id);
   const { status_code, used_in_battery_id, scrapped_reason } = req.body;
 
@@ -728,6 +762,13 @@ router.put('/:id/status', async (req, res) => {
   }
   
   try {
+    const current = await pool.query('SELECT status_code, used_in_battery_id, scrapped_reason FROM electrodes WHERE electrode_id = $1', [electrodeId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Электрод не найден' });
+    }
+
+    const newVals = { status_code, used_in_battery_id: used_in_battery_id || null, scrapped_reason: scrapped_reason || null };
+
     const result = await pool.query(
       `
       UPDATE electrodes
@@ -737,17 +778,14 @@ router.put('/:id/status', async (req, res) => {
       WHERE electrode_id = $4
       RETURNING *
       `,
-      [
-        status_code,
-        used_in_battery_id || null,
-        scrapped_reason || null,
-        electrodeId
-      ]
+      [newVals.status_code, newVals.used_in_battery_id, newVals.scrapped_reason, electrodeId]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Электрод не найден' });
     }
+
+    await trackChanges(pool, 'electrode', 'electrodes', 'electrode_id', electrodeId, current.rows[0], newVals, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -757,7 +795,7 @@ router.put('/:id/status', async (req, res) => {
 });
 
 // UPDATE electrode fields (mass, cup, comments)
-router.put('/:id', async (req, res) => {
+router.put('/:id', auth, async (req, res) => {
 
   const electrodeId = Number(req.params.id);
   const {
@@ -771,6 +809,10 @@ router.put('/:id', async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT electrode_mass_g, cup_number, comments FROM electrodes WHERE electrode_id = $1', [electrodeId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Electrode not found' });
+    }
 
     const result = await pool.query(
       `
@@ -794,6 +836,12 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Electrode not found' });
     }
 
+    const newVals = {};
+    if (electrode_mass_g !== undefined) newVals.electrode_mass_g = electrode_mass_g;
+    if (cup_number !== undefined) newVals.cup_number = cup_number;
+    if (comments !== undefined) newVals.comments = comments;
+    await trackChanges(pool, 'electrode', 'electrodes', 'electrode_id', electrodeId, current.rows[0], newVals, req.user.userId, null, false);
+
     res.json(result.rows[0]);
 
   } catch (err) {
@@ -806,7 +854,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE single electrode
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
 
   const electrodeId = Number(req.params.id);
 
@@ -858,7 +906,7 @@ router.delete('/:id', async (req, res) => {
 // -------- ELECTRODE DRYING --------
 
 // CREATE or UPDATE drying record (UPSERT)
-router.post('/electrode-cut-batches/:id/drying', async (req, res) => {
+router.post('/electrode-cut-batches/:id/drying', auth, async (req, res) => {
 
   const cutBatchId = Number(req.params.id);
 
@@ -902,7 +950,7 @@ router.post('/electrode-cut-batches/:id/drying', async (req, res) => {
         cutBatchId,
         start_time || null,
         end_time || null,
-        temperature_c || null,
+        temperature_c ?? null,
         other_parameters || null,
         comments || null
       ]
@@ -920,7 +968,7 @@ router.post('/electrode-cut-batches/:id/drying', async (req, res) => {
 });
 
 // GET drying records by batch
-router.get('/electrode-cut-batches/:id/drying', async (req, res) => {
+router.get('/electrode-cut-batches/:id/drying', auth, async (req, res) => {
   const cutBatchId = Number(req.params.id);
 
   if (!Number.isInteger(cutBatchId)) {
@@ -946,7 +994,7 @@ router.get('/electrode-cut-batches/:id/drying', async (req, res) => {
 });
 
 // PUT update drying record
-router.put('/electrode-drying/:id', async (req, res) => {
+router.put('/electrode-drying/:id', auth, async (req, res) => {
   const dryingId = Number(req.params.id);
   const { start_time, end_time, temperature_c, other_parameters, comments } = req.body;
 
@@ -955,6 +1003,13 @@ router.put('/electrode-drying/:id', async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT start_time, end_time, temperature_c, other_parameters, comments FROM electrode_drying WHERE drying_id = $1', [dryingId]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Запись не найдена' });
+    }
+
+    const newVals = { start_time: start_time || null, end_time: end_time || null, temperature_c: temperature_c ?? null, other_parameters: other_parameters || null, comments: comments || null };
+
     const result = await pool.query(
       `
       UPDATE electrode_drying
@@ -966,19 +1021,14 @@ router.put('/electrode-drying/:id', async (req, res) => {
       WHERE drying_id = $6
       RETURNING *
       `,
-      [
-        start_time || null,
-        end_time || null,
-        temperature_c || null,
-        other_parameters || null,
-        comments || null,
-        dryingId
-      ]
+      [newVals.start_time, newVals.end_time, newVals.temperature_c, newVals.other_parameters, newVals.comments, dryingId]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Запись не найдена' });
     }
+
+    await trackChanges(pool, 'electrode_drying', 'electrode_drying', 'drying_id', dryingId, current.rows[0], newVals, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -988,7 +1038,7 @@ router.put('/electrode-drying/:id', async (req, res) => {
 });
 
 // DELETE drying record
-router.delete('/electrode-drying/:id', async (req, res) => {
+router.delete('/electrode-drying/:id', auth, async (req, res) => {
   const dryingId = Number(req.params.id);
 
   if (!Number.isInteger(dryingId)) {

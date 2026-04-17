@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -12,7 +14,7 @@ router.get('/test', async (req, res) => {
 // -------- STRUCTURES --------
 
 // CREATE
-router.post('/', async (req, res) => {
+router.post('/', auth, async (req, res) => {
   const { name, comments } = req.body;
   
   // 1. validate required strings
@@ -45,7 +47,7 @@ router.post('/', async (req, res) => {
 });
 
 // READ
-router.get('/', async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT sep_str_id, name, comments FROM separator_structure ORDER BY name'
@@ -58,7 +60,7 @@ router.get('/', async (req, res) => {
 });
 
 // UPDATE
-router.put('/:id', async (req, res) => {
+router.put('/:id', auth, async (req, res) => {
   const { id } = req.params;
   const { name, comments } = req.body;
 
@@ -67,6 +69,13 @@ router.put('/:id', async (req, res) => {
   }
 
   try {
+    const current = await pool.query('SELECT name, comments FROM separator_structure WHERE sep_str_id = $1', [id]);
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Структура не найдена' });
+    }
+
+    const newVals = { name: name.trim(), comments: comments || null };
+
     const result = await pool.query(
       `
       UPDATE separator_structure
@@ -75,12 +84,14 @@ router.put('/:id', async (req, res) => {
       WHERE sep_str_id = $3
       RETURNING sep_str_id, name, comments
       `,
-      [name.trim(), comments || null, id]
+      [newVals.name, newVals.comments, id]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Структура не найдена' });
     }
+
+    await trackChanges(pool, 'sep_structure', 'separator_structure', 'sep_str_id', Number(id), current.rows[0], newVals, req.user.userId, null, false);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -94,7 +105,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   const { id } = req.params;
 
   try {

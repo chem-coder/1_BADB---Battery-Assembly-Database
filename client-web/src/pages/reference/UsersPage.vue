@@ -13,6 +13,7 @@ import CrudTable from '@/components/CrudTable.vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
 
 const toast = useToast()
 const crudTable = ref(null)
@@ -197,18 +198,21 @@ async function saveUser() {
       modal
       @hide="resetForm"
     >
-      <div class="form-grid">
+      <form class="form-grid" @submit.prevent="saveUser">
         <label>Имя</label>
         <InputText v-model="form.name" placeholder="Имя пользователя" class="w-full" />
 
         <template v-if="mode === 'edit'">
           <label>Статус</label>
-          <select v-model="form.active" class="pv-select">
-            <option :value="true">активен</option>
-            <option :value="false">неактивен</option>
-          </select>
+          <Select
+            v-model="form.active"
+            :options="[{ label: 'активен', value: true }, { label: 'неактивен', value: false }]"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+          />
         </template>
-      </div>
+      </form>
 
       <template #footer>
         <Button label="Отмена" severity="secondary" outlined @click="resetForm" />
@@ -245,15 +249,6 @@ async function saveUser() {
   color: #003274;
 }
 .w-full { width: 100%; }
-.pv-select {
-  width: 100%;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-  background: white;
-}
-
 /* ── Page-specific cell styles ── */
 .status-pill {
   display: inline-flex;

@@ -1,47 +1,153 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, defineAsyncComponent, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/services/api'
+import Select from 'primevue/select'
+import MultiSelect from 'primevue/multiselect'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
+import DashboardPipeline from '@/components/DashboardPipeline.vue'
+const DashboardGraph = defineAsyncComponent(() => import('@/components/DashboardGraph.vue'))
+const DashboardAnalytics = defineAsyncComponent(() => import('@/components/DashboardAnalytics.vue'))
 import { workflowSections, referenceSections } from '@/config/navigation'
 
 const router = useRouter()
 
-// ── Data store — keyed by section.key ──────────────────────────────────
-const data   = ref({})    // { tapes: [...], electrodes: [...], ... }
-const errors = ref({})    // { tapes: true, ... }
-const counts = ref({})    // { materials: 12, recipes: 5, ... }
+// ── Tab state ─────────────────────────────────────────────────────────
+const activeTab = ref('overview') // 'overview' | 'pipeline' | 'graph' | 'analytics'
 
-// ── KPI cards — built from workflowSections ────────────────────────────
-const kpis = computed(() =>
-  workflowSections.map(s => ({
-    key: s.key,
-    label: s.shortLabel || s.label,
-    icon: s.icon,
-    customIcon: s.customIcon ?? null,
-    route: s.path,
-    total: errors.value[s.key] ? '—'
-         : s.apiPath ? (data.value[s.key]?.length ?? '…')
-         : '—',
-    lines: errors.value[s.key] || !s.apiPath ? [] : buildKpiLines(s.key),
+// ── Dashboard data ────────────────────────────────────────────────────
+const kpiData = ref(null)
+const filterOptions = ref({ projects: [], operators: [] })
+const activity = ref([])
+const production = ref([])
+const graphData = ref({ nodes: [], edges: [] })
+const funnelData = ref([])
+const materialsUsage = ref([])
+const allTapes = ref([])
+const allBatches = ref([])
+const allElectrodeBatches = ref([])
+const loading = ref(true)
+
+// ── Filters ───────────────────────────────────────────────────────────
+const selectedPeriod = ref('30d')
+const selectedProjects = ref([])
+const selectedOperators = ref([])
+const customDateFrom = ref('')
+const customDateTo = ref('')
+
+const periodOptions = [
+  { label: '7 дней', value: '7d' },
+  { label: '30 дней', value: '30d' },
+  { label: '90 дней', value: '90d' },
+  { label: 'Всё время', value: 'all' },
+  { label: 'Интервал...', value: 'custom' },
+]
+
+// ── Reference counts ──────────────────────────────────────────────────
+const refCounts = ref({})
+
+// ── Recent data for tables ────────────────────────────────────────────
+const recentData = ref({})
+const recentErrors = ref({})
+
+// ── Fetch ─────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  loading.value = true
+  const period = selectedPeriod.value
+
+  try {
+    const projectParam = selectedProjects.value.length === 1 ? `&project_id=${selectedProjects.value[0]}` : ''
+    const operatorParam = selectedOperators.value.length === 1 ? `&operator_id=${selectedOperators.value[0]}` : ''
+
+    const [kpi, filters, act, prod, graph, funnel, matUsage, tapesRes, batchesRes, batteriesRes] = await Promise.allSettled([
+      api.get(`/api/dashboard/kpi?period=${period}${projectParam}${operatorParam}`),
+      api.get('/api/dashboard/filter-options'),
+      api.get('/api/dashboard/activity?limit=15'),
+      api.get(`/api/dashboard/production?weeks=12`),
+      api.get(`/api/dashboard/graph?limit=200${projectParam}${operatorParam}`),
+      api.get(`/api/dashboard/funnel?period=${period}`),
+      api.get('/api/dashboard/materials-usage'),
+      api.get('/api/tapes'),
+      api.get('/api/electrodes/electrode-cut-batches'),
+      api.get('/api/batteries'),
+    ])
+
+    if (kpi.status === 'fulfilled') kpiData.value = kpi.value.data
+    if (filters.status === 'fulfilled') filterOptions.value = filters.value.data
+    if (act.status === 'fulfilled') activity.value = act.value.data
+    if (prod.status === 'fulfilled') production.value = prod.value.data
+    if (graph.status === 'fulfilled') graphData.value = graph.value.data
+    if (funnel.status === 'fulfilled') funnelData.value = funnel.value.data
+    if (matUsage.status === 'fulfilled') materialsUsage.value = matUsage.value.data
+    if (tapesRes.status === 'fulfilled') allTapes.value = tapesRes.value.data
+    if (batchesRes.status === 'fulfilled') allElectrodeBatches.value = batchesRes.value.data
+    if (batteriesRes.status === 'fulfilled') allBatches.value = batteriesRes.value.data
+  } catch { /* individual errors handled above */ }
+
+  // Reference counts (lightweight)
+  const refFetches = referenceSections
+    .filter(s => s.apiPath)
+    .map(async s => {
+      try {
+        const res = await api.get(s.apiPath)
+        refCounts.value = { ...refCounts.value, [s.key]: Array.isArray(res.data) ? res.data.length : 0 }
+      } catch { /* silent */ }
+    })
+
+  // Recent items for workflow sections
+  const workflowFetches = workflowSections
+    .filter(s => s.apiPath)
+    .map(async s => {
+      try {
+        const res = await api.get(s.apiPath)
+        recentData.value = { ...recentData.value, [s.key]: res.data }
+      } catch {
+        recentErrors.value = { ...recentErrors.value, [s.key]: true }
+      }
+    })
+
+  await Promise.allSettled([...refFetches, ...workflowFetches])
+  loading.value = false
+}
+
+onMounted(loadDashboard)
+
+// Reload when period changes
+function onPeriodChange() { loadDashboard() }
+
+// ── Computed ──────────────────────────────────────────────────────────
+const kpis = computed(() => {
+  if (!kpiData.value) return workflowSections.map(s => ({ key: s.key, label: s.shortLabel || s.label, icon: s.icon, customIcon: s.customIcon ?? null, route: s.path, total: '…', lines: [] }))
+  // Use filtered client-side data for accurate counts
+  const ft = filteredTapes.value
+  const fe = filteredElectrodeBatches.value
+  const fb = filteredBatteries.value
+  const tapeComplete = ft.filter(t => t.workflow_complete).length
+  const tapeInProgress = ft.filter(t => !t.workflow_complete).length
+  const battAssembled = fb.filter(b => b.status === 'assembled').length
+  const battTesting = fb.filter(b => b.status === 'testing').length
+  return [
+    { key: 'tapes', label: 'Ленты', icon: 'pi pi-bars', route: '/tapes', total: ft.length, lines: [`Завершено: ${tapeComplete}`, `В работе: ${tapeInProgress}`] },
+    { key: 'electrodes', label: 'Электроды', icon: 'pi pi-clone', route: '/electrodes', total: fe.length, lines: [`Партий: ${fe.length}`] },
+    { key: 'assembly', label: 'Аккумуляторы', icon: 'pi pi-box', route: '/assembly', total: fb.length, lines: [`Собрано: ${battAssembled}`, `Тестируется: ${battTesting}`] },
+    { key: 'modules', label: 'Модули', icon: 'pi pi-th-large', route: '/modules', total: '—', lines: [] },
+  ]
+})
+
+const refLinks = computed(() =>
+  referenceSections.map(s => ({
+    ...s,
+    count: kpiData.value
+      ? (s.key === 'materials' ? kpiData.value.materials?.total
+        : s.key === 'recipes' ? kpiData.value.recipes?.total
+        : refCounts.value[s.key] ?? null)
+      : refCounts.value[s.key] ?? null,
   }))
 )
 
-function buildKpiLines(key) {
-  const items = data.value[key] ?? []
-  if (!items.length) return []
-  const processing = items.filter(i => i.status === 'processing').length
-  const draft      = items.filter(i => !i.status || i.status === 'draft').length
-  return [
-    `В работе: ${processing}`,
-    `Черновик: ${draft}`,
-  ]
-}
-
-// ── Recent tables — only workflow sections with apiPath ─────────────────
 const recentSections = computed(() =>
   workflowSections.map(s => ({
     ...s,
@@ -49,79 +155,175 @@ const recentSections = computed(() =>
     recentLabel: `Последние ${(s.shortLabel || s.label).toLowerCase()}`,
     hasApi: !!s.apiPath,
     items: s.apiPath
-      ? [...(data.value[s.key] ?? [])]
+      ? [...(recentData.value[s.key] ?? [])]
           .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
           .slice(0, 3)
       : [],
-    hasError: !!errors.value[s.key],
+    hasError: !!recentErrors.value[s.key],
   }))
 )
 
-// ── Reference counts — for quick-link badges ───────────────────────────
-const refLinks = computed(() =>
-  referenceSections.map(s => ({
-    ...s,
-    count: counts.value[s.key] ?? null,
-    hasError: !!errors.value[s.key],
-  }))
-)
+function goTo(path) { router.push(path) }
 
-// ── Fetch data on mount ────────────────────────────────────────────────
-onMounted(async () => {
-  // 1. Workflow data (full arrays for KPI + recent tables)
-  const workflowFetches = workflowSections
-    .filter(s => s.apiPath)
-    .map(async s => {
-      try {
-        const res = await api.get(s.apiPath)
-        data.value = { ...data.value, [s.key]: res.data }
-      } catch {
-        errors.value = { ...errors.value, [s.key]: true }
-      }
-    })
-
-  // 2. Reference data (just counts for badges)
-  const refFetches = referenceSections
-    .filter(s => s.apiPath)
-    .map(async s => {
-      try {
-        const res = await api.get(s.apiPath)
-        const items = Array.isArray(res.data) ? res.data : []
-        counts.value = { ...counts.value, [s.key]: items.length }
-      } catch {
-        errors.value = { ...errors.value, [s.key]: true }
-      }
-    })
-
-  await Promise.allSettled([...workflowFetches, ...refFetches])
-})
-
-function goTo(path) {
-  router.push(path)
+function activityIcon(action) {
+  if (action === 'create') return 'pi pi-plus-circle'
+  if (action === 'update') return 'pi pi-pencil'
+  if (action === 'delete') return 'pi pi-trash'
+  return 'pi pi-circle'
 }
+
+function activityColor(action) {
+  if (action === 'create') return '#52C9A6'
+  if (action === 'delete') return '#E74C3C'
+  return '#003274'
+}
+
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const now = new Date()
+  const diff = now - d
+  if (diff < 60000) return 'только что'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)} мин назад`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)} ч назад`
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+}
+
+// ── Client-side filtering (all tabs) ─────────────────────────────────
+function getDateRange() {
+  const period = selectedPeriod.value
+  if (period === 'custom') {
+    return {
+      from: customDateFrom.value ? new Date(customDateFrom.value) : null,
+      to: customDateTo.value ? new Date(customDateTo.value + 'T23:59:59') : null,
+    }
+  }
+  if (period === 'all') return { from: null, to: null }
+  const days = { '7d': 7, '30d': 30, '90d': 90 }
+  const d = days[period]
+  return { from: d ? new Date(Date.now() - d * 86400000) : null, to: null }
+}
+
+function applyFilters(items, projectField = 'project_id', operatorField = 'created_by') {
+  let filtered = items
+  if (selectedProjects.value.length > 0) {
+    const pset = new Set(selectedProjects.value.map(String))
+    filtered = filtered.filter(i => pset.has(String(i[projectField])))
+  }
+  if (selectedOperators.value.length > 0) {
+    const oset = new Set(selectedOperators.value.map(String))
+    filtered = filtered.filter(i => oset.has(String(i[operatorField])))
+  }
+  const { from, to } = getDateRange()
+  if (from) filtered = filtered.filter(i => new Date(i.created_at) >= from)
+  if (to) filtered = filtered.filter(i => new Date(i.created_at) <= to)
+  return filtered
+}
+
+const filteredTapes = computed(() => applyFilters(allTapes.value))
+const filteredElectrodeBatches = computed(() => applyFilters(allElectrodeBatches.value))
+const filteredBatteries = computed(() => applyFilters(allBatches.value))
+const filteredActivity = computed(() => {
+  const { from, to } = getDateRange()
+  let items = activity.value
+  if (from) items = items.filter(i => new Date(i.created_at) >= from)
+  if (to) items = items.filter(i => new Date(i.created_at) <= to)
+  if (selectedOperators.value.length > 0) {
+    const oset = new Set(selectedOperators.value.map(String))
+    items = items.filter(i => oset.has(String(i.user_id)))
+  }
+  return items
+})
+const filteredProduction = computed(() => {
+  const { from, to } = getDateRange()
+  if (!from && !to) return production.value
+  return production.value.filter(w => {
+    const d = new Date(w.week_start)
+    if (from && d < from) return false
+    if (to && d > to) return false
+    return true
+  })
+})
 </script>
 
 <template>
   <div class="home-page">
     <PageHeader title="Главная" icon="pi pi-home" />
 
-    <!-- KPI cards — from workflowSections -->
+    <!-- ── Tab switcher ── -->
+    <div class="tab-switcher">
+      <button :class="['tab-btn', activeTab === 'overview' ? 'active' : '']" @click="activeTab = 'overview'">
+        <i class="pi pi-chart-bar"></i> Обзор
+      </button>
+      <button :class="['tab-btn', activeTab === 'pipeline' ? 'active' : '']" @click="activeTab = 'pipeline'">
+        <i class="pi pi-arrow-right-arrow-left"></i> Pipeline
+      </button>
+      <button :class="['tab-btn', activeTab === 'graph' ? 'active' : '']" @click="activeTab = 'graph'">
+        <i class="pi pi-sitemap"></i> Граф
+      </button>
+      <button :class="['tab-btn', activeTab === 'analytics' ? 'active' : '']" @click="activeTab = 'analytics'">
+        <i class="pi pi-chart-line"></i> Аналитика
+      </button>
+    </div>
+
+    <!-- ── Filter bar ── -->
+    <div class="glass-card filter-bar">
+      <div class="filter-bar-left">
+        <Select
+          v-model="selectedPeriod"
+          :options="periodOptions"
+          optionLabel="label"
+          optionValue="value"
+          size="small"
+          @change="onPeriodChange"
+          class="filter-period"
+        />
+        <template v-if="selectedPeriod === 'custom'">
+          <input type="date" v-model="customDateFrom" class="filter-date-input" @change="onPeriodChange" />
+          <span class="filter-date-sep">—</span>
+          <input type="date" v-model="customDateTo" class="filter-date-input" @change="onPeriodChange" />
+        </template>
+        <MultiSelect
+          v-model="selectedProjects"
+          :options="filterOptions.projects"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Проекты"
+          size="small"
+          class="filter-project"
+          :maxSelectedLabels="2"
+          selectedItemsLabel="{0} проектов"
+          @change="loadDashboard()"
+        />
+        <MultiSelect
+          v-model="selectedOperators"
+          :options="filterOptions.operators"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Операторы"
+          size="small"
+          class="filter-operator"
+          :maxSelectedLabels="2"
+          selectedItemsLabel="{0} операторов"
+          @change="loadDashboard()"
+        />
+      </div>
+      <div class="filter-presets">
+        <button :class="['preset-chip', selectedPeriod === '7d' ? 'active' : '']" @click="selectedPeriod = '7d'; onPeriodChange()">Неделя</button>
+        <button :class="['preset-chip', selectedPeriod === '30d' ? 'active' : '']" @click="selectedPeriod = '30d'; onPeriodChange()">Месяц</button>
+        <button :class="['preset-chip', selectedPeriod === 'all' ? 'active' : '']" @click="selectedPeriod = 'all'; onPeriodChange()">Всё</button>
+        <button v-if="selectedProjects.length || selectedOperators.length || selectedPeriod !== '30d'" class="preset-chip preset-chip--reset" @click="selectedProjects = []; selectedOperators = []; selectedPeriod = '30d'; onPeriodChange()">Сбросить</button>
+      </div>
+    </div>
+
+    <!-- ════════ OVERVIEW TAB ════════ -->
+    <template v-if="activeTab === 'overview'">
+
+    <!-- ── KPI cards ── -->
     <div class="kpi-grid">
-      <div
-        v-for="kpi in kpis"
-        :key="kpi.key"
-        class="glass-card kpi-card"
-        @click="goTo(kpi.route)"
-      >
+      <div v-for="kpi in kpis" :key="kpi.key" class="glass-card kpi-card" @click="goTo(kpi.route)">
         <div class="kpi-label">
-          <!-- Custom SVG: droplet -->
-          <svg v-if="kpi.customIcon === 'droplet'" class="kpi-icon-svg" viewBox="0 0 18 18">
-            <path d="M9 1.5 C9 1.5, 3.5 8, 3.5 11.5 C3.5 14.8, 6 16.5, 9 16.5 C12 16.5, 14.5 14.8, 14.5 11.5 C14.5 8, 9 1.5, 9 1.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <!-- Custom: vertical line -->
-          <span v-else-if="kpi.customIcon === 'vline'" class="kpi-icon-vline"></span>
-          <!-- Standard PrimeIcon -->
-          <i v-else :class="kpi.icon" class="kpi-icon"></i>
+          <i :class="kpi.icon" class="kpi-icon"></i>
           {{ kpi.label }}
         </div>
         <div class="kpi-number">{{ kpi.total }}</div>
@@ -129,62 +331,56 @@ function goTo(path) {
       </div>
     </div>
 
-    <!-- СПРАВОЧНИКИ — compact quick-links -->
+    <!-- ── Reference quick-links ── -->
     <div class="glass-card ref-card">
       <div class="ref-card-title">Справочники</div>
       <div class="ref-grid">
-        <div
-          v-for="r in refLinks"
-          :key="r.key"
-          class="ref-link"
-          @click="goTo(r.path)"
-        >
-          <!-- Custom SVG: droplet -->
-          <svg v-if="r.customIcon === 'droplet'" class="ref-icon-svg" viewBox="0 0 18 18">
-            <path d="M9 1.5 C9 1.5, 3.5 8, 3.5 11.5 C3.5 14.8, 6 16.5, 9 16.5 C12 16.5, 14.5 14.8, 14.5 11.5 C14.5 8, 9 1.5, 9 1.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <!-- Custom: vertical line -->
-          <span v-else-if="r.customIcon === 'vline'" class="ref-icon-vline"></span>
-          <!-- Standard PrimeIcon -->
-          <i v-else :class="r.icon" class="ref-icon"></i>
+        <div v-for="r in refLinks" :key="r.key" class="ref-link" @click="goTo(r.path)">
+          <i :class="r.icon" class="ref-icon"></i>
           <span class="ref-label">{{ r.label }}</span>
           <span v-if="r.count !== null" class="ref-count">{{ r.count }}</span>
-          <span v-else-if="r.hasError" class="ref-count ref-count--error">—</span>
         </div>
       </div>
     </div>
 
-    <!-- Recent records — from workflowSections with API -->
-    <div class="recent-grid">
-      <div
-        v-for="sec in recentSections"
-        :key="sec.key"
-        class="glass-card recent-card"
-      >
-        <div class="recent-card-title">{{ sec.recentLabel }}</div>
-        <div v-if="!sec.hasApi" class="empty-state empty-state--soon">
-          <i class="pi pi-clock"></i>
-          <span>Скоро</span>
+    <!-- ── Activity timeline ── -->
+    <div class="glass-card timeline-card">
+        <div class="timeline-title">Активность</div>
+        <div v-if="filteredActivity.length === 0" class="empty-state">Нет событий</div>
+        <div v-else class="timeline-list">
+          <div v-for="evt in filteredActivity" :key="evt.id" class="timeline-item">
+            <div class="timeline-dot" :style="{ background: activityColor(evt.action) }"></div>
+            <div class="timeline-content">
+              <span class="timeline-action">{{ evt.action }}</span>
+              <span class="timeline-entity">{{ evt.entity }} #{{ evt.entity_id }}</span>
+              <span class="timeline-user">{{ evt.user_name }}</span>
+              <span class="timeline-time">{{ formatTime(evt.created_at) }}</span>
+            </div>
+          </div>
         </div>
-        <p v-else-if="!sec.items.length && !sec.hasError" class="empty-state">Нет записей</p>
-        <p v-else-if="sec.hasError" class="empty-state">Не удалось загрузить</p>
-        <DataTable
-          v-else
-          :value="sec.items"
-          rowHover
-          @rowClick="e => goTo(`${sec.path}/${e.data[sec.idField]}`)"
-          class="recent-table"
-          style="cursor: pointer"
-        >
-          <Column :field="sec.nameField" header="Название">
-            <template #body="{ data: row }">{{ row[sec.nameField] || '— без названия —' }}</template>
-          </Column>
-          <Column field="status" header="Статус" style="width: 120px">
-            <template #body="{ data: row }"><StatusBadge :status="row.status ?? 'draft'" /></template>
-          </Column>
-        </DataTable>
       </div>
-    </div>
+
+    </template><!-- /overview -->
+
+    <!-- ════════ PIPELINE TAB ════════ -->
+    <template v-if="activeTab === 'pipeline'">
+      <div class="glass-card pipeline-section">
+        <DashboardPipeline :tapes="filteredTapes" :electrodeBatches="filteredElectrodeBatches" :batteries="filteredBatteries" @refresh="loadDashboard()" />
+      </div>
+    </template>
+
+    <!-- ════════ GRAPH TAB ════════ -->
+    <template v-if="activeTab === 'graph'">
+      <div class="glass-card graph-section">
+        <DashboardGraph :graphData="graphData" />
+      </div>
+    </template>
+
+    <!-- ════════ ANALYTICS TAB ════════ -->
+    <template v-if="activeTab === 'analytics'">
+      <DashboardAnalytics :production="filteredProduction" :funnel="funnelData" :materialsUsage="materialsUsage" />
+    </template>
+
   </div>
 </template>
 
@@ -197,18 +393,102 @@ function goTo(path) {
   flex-direction: column;
   gap: 1.25rem;
 }
-/* Override PageHeader margin — container gap handles spacing */
-.home-page :deep(.page-header) {
-  margin-bottom: 3px !important;
-}
+.home-page :deep(.page-header) { margin-bottom: 3px !important; }
 
-/* ── KPI grid ─────────────────────────────────────────────────────────── */
+/* ── Tab switcher ── */
+.tab-switcher {
+  display: flex;
+  gap: 0.25rem;
+  background: rgba(0, 50, 116, 0.04);
+  padding: 4px;
+  border-radius: 10px;
+  width: fit-content;
+}
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.45rem 1rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #6B7280;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.tab-btn:hover { color: #003274; background: rgba(255, 255, 255, 0.5); }
+.tab-btn.active {
+  background: rgba(255, 255, 255, 0.85);
+  color: #003274;
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 50, 116, 0.1);
+}
+.tab-btn i { font-size: 13px; }
+
+/* ── Pipeline section ── */
+.pipeline-section { padding: 1rem; }
+
+/* ── Graph section ── */
+.graph-section { padding: 0; min-height: 500px; overflow: hidden; }
+
+/* ── Filter bar ── */
+.filter-bar {
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.filter-bar-left {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+.filter-period { width: 140px; }
+.filter-project { width: 210px; }
+.filter-operator { width: 210px; }
+.filter-date-input {
+  width: 130px;
+  height: 30px;
+  padding: 2px 8px;
+  border: 1px solid rgba(180, 210, 255, 0.55);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #333;
+  background: white;
+}
+.filter-date-input:focus { border-color: #003274; outline: none; }
+.filter-date-sep { color: #9CA3AF; font-size: 12px; }
+.filter-presets {
+  display: flex;
+  gap: 0.4rem;
+}
+.preset-chip {
+  padding: 4px 12px;
+  border: 0.5px solid rgba(180, 210, 255, 0.55);
+  border-radius: 20px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  color: #6B7280;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.preset-chip:hover { border-color: rgba(82, 201, 166, 0.45); color: #003274; }
+.preset-chip.active { background: rgba(0, 50, 116, 0.08); border-color: #003274; color: #003274; font-weight: 600; }
+.preset-chip--reset { color: #E74C3C !important; border-color: rgba(231, 76, 60, 0.3) !important; }
+.preset-chip--reset:hover { background: rgba(231, 76, 60, 0.08); }
+
+/* ── KPI grid ── */
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 1.25rem;
 }
-
 .kpi-card {
   padding: 1.5rem;
   cursor: pointer;
@@ -218,7 +498,6 @@ function goTo(path) {
   transform: translateY(-2px);
   box-shadow: 0 4px 16px rgba(0, 50, 116, 0.1);
 }
-
 .kpi-label {
   display: flex;
   align-items: center;
@@ -229,174 +508,64 @@ function goTo(path) {
   letter-spacing: 0.05em;
   color: rgba(0, 50, 116, 0.5);
 }
-
 .kpi-icon { font-size: 13px; }
+.kpi-number { font-size: 28px; font-weight: 700; color: #003274; margin: 6px 0 4px; }
+.kpi-detail { font-size: 12px; color: #6B7280; }
 
-.kpi-icon-svg {
-  width: 14px; height: 14px; flex-shrink: 0;
-  color: rgba(0, 50, 116, 0.5);
-}
-
-.kpi-icon-vline {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 14px; height: 14px; flex-shrink: 0;
-}
-.kpi-icon-vline::after {
-  content: ''; display: block;
-  width: 2px; height: 12px;
-  background: rgba(0, 50, 116, 0.5); border-radius: 1px;
-}
-
-.kpi-number {
-  font-size: 28px;
-  font-weight: 700;
-  color: #003274;
-  margin: 6px 0 4px;
-}
-
-.kpi-detail {
-  font-size: 12px;
-  color: #6B7280;
-}
-
-/* ── Reference quick-links ────────────────────────────────────────────── */
+/* ── Reference ── */
 .ref-card { padding: 1.5rem; }
-
 .ref-card-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: rgba(0, 50, 116, 0.5);
-  margin-bottom: 0.85rem;
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: rgba(0, 50, 116, 0.5); margin-bottom: 0.85rem;
 }
-
-.ref-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
+.ref-grid { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .ref-link {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0.45rem 0.85rem;
-  border-radius: 8px;
-  background: rgba(0, 50, 116, 0.04);
-  border: 1px solid rgba(180, 210, 255, 0.25);
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
-  font-size: 0.83rem;
-  color: #333;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0.45rem 0.85rem; border-radius: 8px;
+  background: rgba(0, 50, 116, 0.04); border: 1px solid rgba(180, 210, 255, 0.25);
+  cursor: pointer; transition: background 0.12s, border-color 0.12s;
+  font-size: 0.83rem; color: #333;
 }
-.ref-link:hover {
-  background: rgba(0, 50, 116, 0.08);
-  border-color: rgba(0, 50, 116, 0.2);
-}
-
+.ref-link:hover { background: rgba(0, 50, 116, 0.08); border-color: rgba(0, 50, 116, 0.2); }
 .ref-icon { font-size: 0.85rem; color: #003274; opacity: 0.7; }
-
-.ref-icon-svg {
-  width: 13px; height: 13px; flex-shrink: 0;
-  color: #003274; opacity: 0.7;
-}
-
-.ref-icon-vline {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 13px; flex-shrink: 0;
-}
-.ref-icon-vline::after {
-  content: ''; display: block;
-  width: 2px; height: 12px;
-  background: #003274; opacity: 0.7; border-radius: 1px;
-}
-
 .ref-label { font-weight: 500; }
-
 .ref-count {
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: #003274;
-  background: rgba(0, 50, 116, 0.08);
-  padding: 1px 6px;
-  border-radius: 10px;
-  min-width: 20px;
-  text-align: center;
-}
-.ref-count--error { color: #9CA3AF; background: rgba(0, 0, 0, 0.04); }
-
-/* ── Recent records grid ──────────────────────────────────────────────── */
-.recent-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1.25rem;
+  font-size: 0.7rem; font-weight: 700; color: #003274;
+  background: rgba(0, 50, 116, 0.08); padding: 1px 6px;
+  border-radius: 10px; min-width: 20px; text-align: center;
 }
 
-.recent-card {
-  padding: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.recent-card :deep(.p-datatable),
-.recent-card .empty-state {
-  flex: 1;
-}
-
-.recent-card-title {
-  padding: 1rem 1.5rem 0.7rem;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: rgba(0, 50, 116, 0.5);
+/* ── Timeline ── */
+.timeline-card { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.timeline-title {
+  padding: 1rem 1.25rem 0.7rem; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em; color: rgba(0, 50, 116, 0.5);
   border-bottom: 1px solid rgba(180, 210, 255, 0.25);
 }
+.timeline-list { padding: 0.5rem 0; overflow-y: auto; max-height: 500px; }
+.timeline-item {
+  display: flex; align-items: flex-start; gap: 0.75rem;
+  padding: 0.5rem 1.25rem;
+  transition: background 0.12s;
+}
+.timeline-item:hover { background: rgba(0, 50, 116, 0.03); }
+.timeline-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px;
+}
+.timeline-content {
+  display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; color: #333; line-height: 1.4;
+}
+.timeline-action { font-weight: 600; color: #003274; }
+.timeline-entity { color: #6B7280; }
+.timeline-user { color: #6B7280; font-style: italic; }
+.timeline-time { color: #9CA3AF; margin-left: auto; font-size: 11px; white-space: nowrap; }
 
-.empty-state {
-  text-align: center;
-  padding: 2rem 1rem;
-  color: #6B7280;
-  font-size: 13px;
-}
-.empty-state--soon {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  color: rgba(0, 50, 116, 0.3);
-}
-.empty-state--soon i {
-  font-size: 1.5rem;
-}
-
-/* DataTable inside glass-card — transparent background */
-.recent-card :deep(.p-datatable-table-container),
-.recent-card :deep(.p-datatable) {
-  background: transparent;
-}
-
-.recent-card :deep(.p-datatable-thead > tr > th) {
-  background: rgba(0, 50, 116, 0.055);
-  color: #003274;
-  font-weight: 700;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border-bottom: 1px solid rgba(180, 210, 255, 0.35);
-}
-
-.recent-card :deep(.p-datatable-tbody > tr) {
-  background: transparent;
-  border-bottom: 1px solid rgba(180, 210, 255, 0.18);
-}
-
-.recent-card :deep(.p-datatable-tbody > tr:last-child) {
-  border-bottom: none;
-}
-
-.recent-card :deep(.p-datatable-tbody > tr:hover) {
-  background: rgba(0, 50, 116, 0.04) !important;
+/* ── Mobile ── */
+@media (max-width: 768px) {
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .bottom-grid { grid-template-columns: 1fr; }
+  .filter-bar { flex-direction: column; align-items: stretch; }
+  .filter-bar-left { flex-wrap: wrap; }
+  .filter-period, .filter-project, .filter-operator { width: 100%; }
 }
 </style>

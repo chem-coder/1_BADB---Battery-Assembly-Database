@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -11,7 +13,7 @@ router.get('/test', async (req, res) => {
 
 // CREATE electrolyte
 // POST /api/electrolytes
-router.post('/', async (req, res) => {
+router.post('/', auth, async (req, res) => {
   const {
     name,
     electrolyte_type,
@@ -72,7 +74,7 @@ router.post('/', async (req, res) => {
 
 // READ all electrolytes (global list)
 // GET /api/electrolytes
-router.get('/', async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
@@ -80,16 +82,20 @@ router.get('/', async (req, res) => {
         e.name,
         e.electrolyte_type,
         e.created_by,
-        u.name AS created_by_name,
+        u_created.name AS created_by_name,
         e.created_at,
         e.status,
         e.solvent_system,
         e.salts,
         e.concentration,
         e.additives,
-        e.notes
+        e.notes,
+        e.updated_by,
+        e.updated_at,
+        u_updated.name AS updated_by_name
       FROM electrolytes e
-      JOIN users u ON u.user_id = e.created_by
+      LEFT JOIN users u_created ON u_created.user_id = e.created_by
+      LEFT JOIN users u_updated ON u_updated.user_id = e.updated_by
       ORDER BY e.name ASC;
     `);
 
@@ -100,7 +106,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/:id/files', async (req, res) => {
+router.get('/:id/files', auth, async (req, res) => {
   const electrolyteId = Number(req.params.id);
 
   if (!Number.isInteger(electrolyteId)) {
@@ -135,7 +141,7 @@ router.get('/:id/files', async (req, res) => {
   }
 });
 
-router.get('/files/:fileId/download', async (req, res) => {
+router.get('/files/:fileId/download', auth, async (req, res) => {
   const fileId = Number(req.params.fileId);
 
   if (!Number.isInteger(fileId)) {
@@ -173,7 +179,7 @@ router.get('/files/:fileId/download', async (req, res) => {
   }
 });
 
-router.post('/:id/files', async (req, res) => {
+router.post('/:id/files', auth, async (req, res) => {
   const electrolyteId = Number(req.params.id);
   const { entries } = req.body;
 
@@ -246,7 +252,7 @@ router.post('/:id/files', async (req, res) => {
   }
 });
 
-router.delete('/files/:fileId', async (req, res) => {
+router.delete('/files/:fileId', auth, async (req, res) => {
   const fileId = Number(req.params.fileId);
 
   if (!Number.isInteger(fileId)) {
@@ -276,7 +282,7 @@ router.delete('/files/:fileId', async (req, res) => {
 
 // UPDATE electrolyte
 // PUT /api/electrolytes/:id
-router.put('/:id', async (req, res) => {
+router.put('/:id', auth, async (req, res) => {
   const electrolyteId = Number(req.params.id);
 
   if (!Number.isInteger(electrolyteId)) {
@@ -295,6 +301,16 @@ router.put('/:id', async (req, res) => {
   } = req.body;
 
   try {
+    const current = await pool.query(
+      'SELECT name, electrolyte_type, solvent_system, salts, concentration, additives, notes, status FROM electrolytes WHERE electrolyte_id = $1',
+      [electrolyteId]
+    );
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Электролит не найден' });
+    }
+
+    const newVals = { name, electrolyte_type, solvent_system: solvent_system || null, salts: salts || null, concentration: concentration || null, additives: additives || null, notes: notes || null, status: status != null ? status : current.rows[0].status };
+
     const result = await pool.query(
       `
       UPDATE electrolytes
@@ -306,8 +322,10 @@ router.put('/:id', async (req, res) => {
         concentration = $5,
         additives = $6,
         notes = $7,
-        status = COALESCE($8, status)
-      WHERE electrolyte_id = $9
+        status = COALESCE($8, status),
+        updated_by = $9,
+        updated_at = now()
+      WHERE electrolyte_id = $10
       RETURNING *
       `,
       [
@@ -319,9 +337,12 @@ router.put('/:id', async (req, res) => {
         additives || null,
         notes || null,
         status,
+        req.user.userId,
         electrolyteId
       ]
     );
+
+    await trackChanges(pool, 'electrolyte', 'electrolytes', 'electrolyte_id', electrolyteId, current.rows[0], newVals, req.user.userId);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -332,7 +353,7 @@ router.put('/:id', async (req, res) => {
 
 // DELETE electrolyte
 // DELETE /api/electrolytes/:id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   const electrolyteId = Number(req.params.id);
 
   if (!Number.isInteger(electrolyteId)) {

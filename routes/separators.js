@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -11,7 +13,7 @@ router.get('/test', async (req, res) => {
 // -------- SEPARATORS --------
 
 // CREATE
-router.post('/', async (req, res) => {
+router.post('/', auth, async (req, res) => {
   const {
     name,
     supplier,
@@ -71,10 +73,10 @@ router.post('/', async (req, res) => {
         brand || null,
         batch || null,
         structure_id,
-        air_perm || null,
+        air_perm ?? null,
         air_perm_units || null,
-        thickness_um || null,
-        porosity || null,
+        thickness_um ?? null,
+        porosity ?? null,
         comments || null,
         status,
         depleted_at || null,
@@ -91,26 +93,32 @@ router.post('/', async (req, res) => {
 });
 
 // READ
-router.get('/', async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        sep_id,
-        name,
-        supplier,
-        brand,
-        batch,
-        structure_id,
-        air_perm,
-        air_perm_units,
-        thickness_um,
-        porosity,
-        comments,
-        status,
-        depleted_at,
-        created_by
-      FROM separators
-      ORDER BY name;
+        s.sep_id,
+        s.name,
+        s.supplier,
+        s.brand,
+        s.batch,
+        s.structure_id,
+        s.air_perm,
+        s.air_perm_units,
+        s.thickness_um,
+        s.porosity,
+        s.comments,
+        s.status,
+        s.depleted_at,
+        s.created_by,
+        u_created.name AS created_by_name,
+        s.updated_by,
+        s.updated_at,
+        u_updated.name AS updated_by_name
+      FROM separators s
+      LEFT JOIN users u_created ON u_created.user_id = s.created_by
+      LEFT JOIN users u_updated ON u_updated.user_id = s.updated_by
+      ORDER BY s.name;
     `);
 
     res.json(result.rows);
@@ -120,7 +128,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/:id/files', async (req, res) => {
+router.get('/:id/files', auth, async (req, res) => {
   const separatorId = Number(req.params.id);
 
   if (!Number.isInteger(separatorId)) {
@@ -155,7 +163,7 @@ router.get('/:id/files', async (req, res) => {
   }
 });
 
-router.get('/files/:fileId/download', async (req, res) => {
+router.get('/files/:fileId/download', auth, async (req, res) => {
   const fileId = Number(req.params.fileId);
 
   if (!Number.isInteger(fileId)) {
@@ -193,7 +201,7 @@ router.get('/files/:fileId/download', async (req, res) => {
   }
 });
 
-router.post('/:id/files', async (req, res) => {
+router.post('/:id/files', auth, async (req, res) => {
   const separatorId = Number(req.params.id);
   const { entries } = req.body;
 
@@ -266,7 +274,7 @@ router.post('/:id/files', async (req, res) => {
   }
 });
 
-router.delete('/files/:fileId', async (req, res) => {
+router.delete('/files/:fileId', auth, async (req, res) => {
   const fileId = Number(req.params.fileId);
 
   if (!Number.isInteger(fileId)) {
@@ -295,7 +303,7 @@ router.delete('/files/:fileId', async (req, res) => {
 });
 
 // UPDATE
-router.put('/:id', async (req, res) => {
+router.put('/:id', auth, async (req, res) => {
   const { id } = req.params;
 
   const {
@@ -330,6 +338,16 @@ router.put('/:id', async (req, res) => {
     status === 'available' ? null : (depleted_at || null);
 
   try {
+    const current = await pool.query(
+      'SELECT name, supplier, brand, batch, structure_id, air_perm, air_perm_units, thickness_um, porosity, comments, status, depleted_at, file_path FROM separators WHERE sep_id = $1',
+      [id]
+    );
+    if (current.rowCount === 0) {
+      return res.status(404).json({ error: 'Сепаратор не найден' });
+    }
+
+    const newVals = { name: cleanName, supplier: supplier || null, brand: brand || null, batch: batch || null, structure_id, air_perm: air_perm ?? null, air_perm_units: air_perm_units || null, thickness_um: thickness_um ?? null, porosity: porosity ?? null, comments: comments || null, status: status || 'available', depleted_at: cleanDepletedAt, file_path: file_path || null };
+
     const result = await pool.query(
       `
       UPDATE separators
@@ -346,31 +364,26 @@ router.put('/:id', async (req, res) => {
         comments = $10,
         status = $11,
         depleted_at = $12,
-        file_path = $13
-      WHERE sep_id = $14
+        file_path = $13,
+        updated_by = $14,
+        updated_at = now()
+      WHERE sep_id = $15
       RETURNING *
       `,
       [
-        cleanName,
-        supplier || null,
-        brand || null,
-        batch || null,
-        structure_id,
-        air_perm || null,
-        air_perm_units || null,
-        thickness_um || null,
-        porosity || null,
-        comments || null,
-        status || 'available',
-        cleanDepletedAt,
-        file_path || null,
-        id
+        newVals.name, newVals.supplier, newVals.brand, newVals.batch,
+        newVals.structure_id, newVals.air_perm, newVals.air_perm_units,
+        newVals.thickness_um, newVals.porosity, newVals.comments,
+        newVals.status, newVals.depleted_at, newVals.file_path,
+        req.user.userId, id
       ]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Сепаратор не найден' });
     }
+
+    await trackChanges(pool, 'separator', 'separators', 'sep_id', Number(id), current.rows[0], newVals, req.user.userId);
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -380,7 +393,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   const { id } = req.params;
 
   try {

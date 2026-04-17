@@ -7,7 +7,12 @@
     "start": "node server.js",
     "dev": "concurrently \"nodemon server.js\" \"npm run dev --prefix client-web\"",
     "dev:bypass": "concurrently \"AUTH_BYPASS=true BYPASS_LOGIN=dsmenyaylov nodemon server.js\" \"npm run dev --prefix client-web\"",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "backup": "node scripts/backup.js",
+    "backup:plain": "node scripts/backup.js --format=plain",
+    "backup:list": "node scripts/backup.js --list",
+    "backup:verify": "node scripts/backup.js --verify latest",
+    "restore": "node scripts/backup.js --restore latest"
   },
   "keywords": [],
   "author": "",
@@ -17,9 +22,14 @@
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "bcryptjs": "^2.4.3",
+    "chart.js": "^4.5.1",
+    "cytoscape-cxtmenu": "^3.5.0",
+    "cytoscape-dagre": "^2.5.0",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
-    "pg": "^8.17.2"
+    "multer": "^2.1.1",
+    "pg": "^8.17.2",
+    "vue-chartjs": "^5.3.3"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",

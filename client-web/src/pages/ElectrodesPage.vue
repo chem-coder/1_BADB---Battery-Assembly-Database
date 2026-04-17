@@ -1,13 +1,14 @@
 <script setup>
 /**
  * ElectrodesPage — "Электроды"
- * Cascade filters (Role → Project → Tape) + CrudTable of cut batches + inline Constructor.
- * Follows TapesPage pattern: CrudTable + TapeConstructor (parametrized for electrodes).
+ * Shows ALL electrode cut batches with optional filters (Role, Project, Tape).
+ * Follows TapesPage pattern: CrudTable + TapeConstructor.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
+import Select from 'primevue/select'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
@@ -17,65 +18,106 @@ import { ELECTRODE_STAGES } from '@/config/electrodeStages'
 import { useElectrodeState } from '@/composables/useElectrodeState'
 
 const router = useRouter()
+const route = useRoute()
 const toast = useToast()
 const crudTable = ref(null)
 
-const roleRu = { cathode: 'Катод', anode: 'Анод' }
-
 // ── Reference data ──
-const tapes = ref([])
+const allBatches = ref([])
 const projects = ref([])
-
-// ── Selection (cascade filters) ──
-const selectedRole = ref('')
-const selectedProjectId = ref('')
-const selectedTapeId = ref('')
-
-// ── Cut batches ──
-const cutBatches = ref([])
 const loading = ref(false)
+
+// ── Filters (optional, not blocking) ──
+const selectedRole = ref(null)
+const selectedProjectId = ref(null)
+const selectedTapeId = ref(null)
 
 // ── Columns ──
 const columns = [
   { field: '_constructor', header: '🔧', minWidth: '45px', width: '45px', sortable: false, filterable: false },
-  { field: 'cut_batch_id', header: '№ партии', minWidth: '70px', width: '90px' },
-  { field: 'created_at', header: 'Дата', minWidth: '90px', width: '120px' },
-  { field: 'shape_display', header: 'Форма', minWidth: '80px', width: '130px' },
-  { field: 'electrode_count', header: 'Электродов', minWidth: '80px', width: '100px' },
+  { field: 'cut_batch_id', header: '№', minWidth: '55px', width: '65px' },
+  { field: 'tape_name', header: 'Лента', minWidth: '120px' },
+  { field: 'project_name', header: 'Проект', minWidth: '100px' },
+  { field: 'role_display', header: 'Роль', minWidth: '60px', width: '75px' },
+  { field: 'shape_display', header: 'Форма', minWidth: '80px', width: '120px' },
+  { field: 'electrode_count', header: 'Эл-дов', minWidth: '65px', width: '75px' },
   { field: 'status_display', header: 'Статус', minWidth: '80px', width: '100px' },
+  { field: 'created_at', header: 'Дата', minWidth: '90px', width: '110px' },
+  { field: 'created_by_name', header: 'Оператор', minWidth: '100px' },
 ]
 
-// ── Computed ──
-const filteredTapes = computed(() => {
-  return tapes.value.filter(t =>
-    (!selectedRole.value || t.role === selectedRole.value) &&
-    (!selectedProjectId.value || String(t.project_id) === String(selectedProjectId.value))
-  )
+// ── Computed: unique tapes for filter dropdown ──
+const tapeOptions = computed(() => {
+  const map = new Map()
+  for (const b of allBatches.value) {
+    if (!map.has(b.tape_id)) {
+      map.set(b.tape_id, { id: b.tape_id, name: `#${b.tape_id} — ${b.tape_name || '?'}`, role: b.tape_role })
+    }
+  }
+  let opts = [...map.values()]
+  if (selectedRole.value) opts = opts.filter(t => t.role === selectedRole.value)
+  if (selectedProjectId.value) opts = opts.filter(t => {
+    const batch = allBatches.value.find(b => b.tape_id === t.id)
+    return batch && String(batch.project_id) === String(selectedProjectId.value)
+  })
+  return opts
 })
 
-const cathodeTapes = computed(() => filteredTapes.value.filter(t => t.role === 'cathode'))
-const anodeTapes = computed(() => filteredTapes.value.filter(t => t.role === 'anode'))
+// ── Computed: filtered + enriched data ──
+const tableData = computed(() => {
+  let items = allBatches.value
 
-// Enrich cutBatches for CrudTable
-const tableData = computed(() =>
-  cutBatches.value.map(b => ({
+  if (selectedRole.value) items = items.filter(b => b.tape_role === selectedRole.value)
+  if (selectedProjectId.value) items = items.filter(b => String(b.project_id) === String(selectedProjectId.value))
+  if (selectedTapeId.value) items = items.filter(b => String(b.tape_id) === String(selectedTapeId.value))
+
+  return items.map(b => ({
     ...b,
-    shape_display: b.shape === 'circle'
-      ? (b.diameter_mm ? `Круг ⌀${b.diameter_mm}` : 'Круг')
-      : b.shape === 'rectangle'
-        ? (b.length_mm && b.width_mm ? `${b.length_mm}×${b.width_mm}` : 'Прямоуг.')
-        : '—',
+    role_display: b.tape_role === 'cathode' ? 'К' : b.tape_role === 'anode' ? 'А' : '—',
+    shape_display: formatShapeDisplay(b),
     status_display: batchStatus(b),
   }))
-)
+})
+
+function formatShapeDisplay(b) {
+  const ff = b.target_form_factor
+  const cc = b.target_config_code === 'other'
+    ? (b.target_config_other || 'другое')
+    : b.target_config_code
+  const ffLabel = ff === 'coin' ? 'Монета'
+    : ff === 'pouch' ? 'Пакет'
+    : ff === 'cylindrical' ? 'Цилиндр'
+    : ''
+
+  // Shape measurement (diameter or length×width)
+  const dims = b.shape === 'circle'
+    ? (b.diameter_mm ? `⌀${b.diameter_mm}` : '')
+    : b.shape === 'rectangle'
+      ? (b.length_mm && b.width_mm ? `${b.length_mm}×${b.width_mm}` : '')
+      : ''
+
+  // Combine: "Монета 2032 ⌀18" or "Пакет 103x83 50×50" or just dims if no form factor
+  if (ffLabel && cc) return dims ? `${ffLabel} ${cc} ${dims}` : `${ffLabel} ${cc}`
+  if (ffLabel) return dims ? `${ffLabel} ${dims}` : ffLabel
+  if (dims) return dims
+  return b.shape === 'circle' ? 'Круг' : b.shape === 'rectangle' ? 'Прямоуг.' : '—'
+}
+
+const roleOptions = [
+  { label: 'Катоды', value: 'cathode' },
+  { label: 'Аноды', value: 'anode' },
+]
 
 // ── API ──
-async function loadTapes() {
+async function loadAllBatches() {
+  loading.value = true
   try {
-    const { data } = await api.get('/api/tapes/for-electrodes')
-    tapes.value = data
+    const { data } = await api.get('/api/electrodes/electrode-cut-batches')
+    allBatches.value = data
   } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить ленты', life: 3000 })
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить партии', life: 3000 })
+  } finally {
+    loading.value = false
   }
 }
 
@@ -86,36 +128,10 @@ async function loadProjects() {
   } catch {}
 }
 
-async function loadCutBatches(tapeId) {
-  loading.value = true
-  try {
-    const { data } = await api.get(`/api/tapes/${tapeId}/electrode-cut-batches`)
-    cutBatches.value = data
-  } catch {
-    cutBatches.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
-function onTapeChange() {
-  const tape = tapes.value.find(t => String(t.tape_id) === String(selectedTapeId.value))
-  if (tape) {
-    selectedRole.value = tape.role || selectedRole.value
-    selectedProjectId.value = String(tape.project_id) || selectedProjectId.value
-  }
-  constructorIds.value = []
-  if (selectedTapeId.value && selectedProjectId.value) {
-    loadCutBatches(Number(selectedTapeId.value))
-  } else {
-    cutBatches.value = []
-  }
-}
-
-function onRoleOrProjectChange() {
-  selectedTapeId.value = ''
-  cutBatches.value = []
-  constructorIds.value = []
+function batchStatus(batch) {
+  if (batch.drying_end) return 'готово'
+  if (batch.drying_start) return 'сушится'
+  return 'в работе'
 }
 
 function formatDate(dateStr) {
@@ -123,15 +139,20 @@ function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString('ru-RU')
 }
 
-function batchStatus(batch) {
-  if (batch.drying_end) return 'готово'
-  if (batch.drying_start) return 'сушится'
-  return 'в работе'
+function onRoleChange() {
+  selectedTapeId.value = null
+}
+
+function onProjectChange() {
+  selectedTapeId.value = null
 }
 
 function createBatch() {
-  if (!selectedTapeId.value) return
-  router.push(`/electrodes/new?tape=${selectedTapeId.value}`)
+  if (selectedTapeId.value) {
+    router.push(`/electrodes/new?tape=${selectedTapeId.value}`)
+  } else {
+    toast.add({ severity: 'warn', summary: 'Выберите ленту', detail: 'Для создания партии нужно выбрать ленту', life: 3000 })
+  }
 }
 
 // ── Constructor (same pattern as TapesPage) ──
@@ -156,7 +177,6 @@ function toggleAllConstructor() {
   }
 }
 
-// State factory for TapeConstructor
 function electrodeStateFactory(id) {
   return useElectrodeState({ batchId: id })
 }
@@ -178,7 +198,7 @@ async function confirmSave() {
     }
     pendingDelete.value = []
     crudTable.value?.clearSelection()
-    if (selectedTapeId.value) await loadCutBatches(Number(selectedTapeId.value))
+    await loadAllBatches()
     saveState.value = 'saved'
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
@@ -193,8 +213,14 @@ function discardChanges() {
   saveState.value = 'idle'
 }
 
+// ── Deep link: /electrodes/:id ──
 onMounted(async () => {
-  await Promise.allSettled([loadTapes(), loadProjects()])
+  await Promise.allSettled([loadAllBatches(), loadProjects()])
+
+  const batchId = Number(route.params.id)
+  if (batchId && Number.isInteger(batchId)) {
+    constructorIds.value = [batchId]
+  }
 })
 onUnmounted(() => clearTimeout(saveTimer))
 </script>
@@ -212,49 +238,53 @@ onUnmounted(() => clearTimeout(saveTimer))
       </template>
     </PageHeader>
 
-    <!-- Cascade filters -->
+    <!-- Optional filters -->
     <div class="filter-bar">
       <div class="filter-group">
         <label>Тип</label>
-        <select v-model="selectedRole" @change="onRoleOrProjectChange">
-          <option value="">Все</option>
-          <option value="cathode">Катоды</option>
-          <option value="anode">Аноды</option>
-        </select>
+        <Select
+          v-model="selectedRole"
+          :options="roleOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Все"
+          showClear
+          size="small"
+          class="filter-select"
+          @change="onRoleChange"
+        />
       </div>
       <div class="filter-group">
         <label>Проект</label>
-        <select v-model="selectedProjectId" @change="onRoleOrProjectChange">
-          <option value="">Все</option>
-          <option v-for="p in projects" :key="p.project_id" :value="p.project_id">{{ p.name }}</option>
-        </select>
+        <Select
+          v-model="selectedProjectId"
+          :options="projects"
+          optionLabel="name"
+          optionValue="project_id"
+          placeholder="Все"
+          showClear
+          size="small"
+          class="filter-select filter-project"
+          @change="onProjectChange"
+        />
       </div>
       <div class="filter-group">
         <label>Лента</label>
-        <select v-model="selectedTapeId" @change="onTapeChange">
-          <option value="">— выбрать —</option>
-          <optgroup v-if="cathodeTapes.length" label="Катоды">
-            <option v-for="t in cathodeTapes" :key="t.tape_id" :value="t.tape_id">
-              #{{ t.tape_id }} — {{ t.name }}
-            </option>
-          </optgroup>
-          <optgroup v-if="anodeTapes.length" label="Аноды">
-            <option v-for="t in anodeTapes" :key="t.tape_id" :value="t.tape_id">
-              #{{ t.tape_id }} — {{ t.name }}
-            </option>
-          </optgroup>
-        </select>
+        <Select
+          v-model="selectedTapeId"
+          :options="tapeOptions"
+          optionLabel="name"
+          optionValue="id"
+          placeholder="Все"
+          showClear
+          size="small"
+          class="filter-select filter-tape"
+        />
       </div>
     </div>
 
-    <!-- Empty state -->
-    <div v-if="!selectedTapeId" class="empty-hint">
-      <i class="pi pi-info-circle"></i> Выберите ленту для просмотра партий электродов
-    </div>
-
-    <!-- Batch table -->
+    <!-- Batch table — always visible -->
     <CrudTable
-      v-if="selectedTapeId"
       ref="crudTable"
       :columns="columns"
       :data="tableData"
@@ -279,6 +309,11 @@ onUnmounted(() => clearTimeout(saveTimer))
       <template #col-cut_batch_id="{ data }">
         <span class="batch-id">#{{ data.cut_batch_id }}</span>
       </template>
+      <template #col-role_display="{ data }">
+        <span :class="['role-badge', data.tape_role === 'cathode' ? 'role-badge--cathode' : 'role-badge--anode']">
+          {{ data.role_display }}
+        </span>
+      </template>
       <template #col-created_at="{ data }">{{ formatDate(data.created_at) }}</template>
       <template #col-electrode_count="{ data }">{{ Number(data.electrode_count) || 0 }}</template>
       <template #col-status_display="{ data }">
@@ -288,14 +323,14 @@ onUnmounted(() => clearTimeout(saveTimer))
       </template>
     </CrudTable>
 
-    <!-- Constructor (same component as TapesPage, parametrized for electrodes) -->
+    <!-- Constructor -->
     <TapeConstructor
-      v-if="selectedTapeId"
       :selectedTapeIds="constructorIds"
       :tapeList="tableData"
       :stageConfigs="ELECTRODE_STAGES"
       :stateFactory="electrodeStateFactory"
       idField="cut_batch_id"
+      entityType="electrode_cut_batch"
       title="КОНСТРУКТОР ЭЛЕКТРОДОВ"
       emptyHint="Отметьте партии в таблице для работы в конструкторе"
     />
@@ -313,7 +348,7 @@ onUnmounted(() => clearTimeout(saveTimer))
 }
 .electrodes-page :deep(.page-header) { margin-bottom: 3px !important; }
 
-/* ── Cascade filter bar ── */
+/* ── Filter bar ── */
 .filter-bar {
   display: flex;
   gap: 1rem;
@@ -332,21 +367,23 @@ onUnmounted(() => clearTimeout(saveTimer))
   letter-spacing: 0.05em;
   color: rgba(0, 50, 116, 0.5);
 }
-.filter-group select {
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #D1D7DE;
-  border-radius: 6px;
-  font-size: 13px;
-  min-width: 180px;
-}
-.filter-group select:focus {
-  border-color: #003274;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
-}
+.filter-select { min-width: 150px; }
+.filter-project { min-width: 200px; }
+.filter-tape { min-width: 250px; }
 
 /* ── Table cells ── */
 .batch-id { color: #003274; font-weight: 600; }
+
+.role-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.role-badge--cathode { background: rgba(82, 201, 166, 0.15); color: #1d7a5f; }
+.role-badge--anode { background: rgba(0, 50, 116, 0.08); color: #003274; }
+
 .status-badge {
   display: inline-block;
   padding: 2px 10px;
@@ -358,13 +395,8 @@ onUnmounted(() => clearTimeout(saveTimer))
 .status-badge--drying { background: rgba(211, 167, 84, 0.15); color: #9a7030; }
 .status-badge--work { background: rgba(0, 50, 116, 0.08); color: #003274; }
 
-.empty-hint {
-  color: #6B7280;
-  font-size: 13px;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 2rem 0;
-  justify-content: center;
+@media (max-width: 768px) {
+  .filter-bar { flex-direction: column; align-items: stretch; }
+  .filter-select, .filter-project, .filter-tape { min-width: 100%; }
 }
 </style>

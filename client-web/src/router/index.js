@@ -50,7 +50,11 @@ const adminRoutes = adminSections.map((s) => {
         ? () => import('@/pages/ActivityPage.vue')
         : s.key === 'audit'
           ? () => import('@/pages/AuditPage.vue')
-          : () => import('@/pages/PlaceholderPage.vue')
+          : s.key === 'feedback'
+            ? () => import('@/pages/FeedbackPage.vue')
+            : s.key === 'access'
+              ? () => import('@/pages/AccessPage.vue')
+              : () => import('@/pages/PlaceholderPage.vue')
   return {
     path: s.path.slice(1),
     component: page,
@@ -78,6 +82,12 @@ const routes = [
       // (Constructor is now inline on TapesPage)
       { path: 'tapes/new', redirect: '/tapes' },
       { path: 'tapes/:id', redirect: '/tapes' },
+
+      // /assembly/:id → AssemblyPage with constructor auto-open (reads route.params.id)
+      { path: 'assembly/new', redirect: '/assembly' },
+      { path: 'assembly/:id',
+        component: () => import('@/pages/AssemblyPage.vue'),
+        meta: { title: 'Аккумулятор', crumbs: [{ label: 'Аккумуляторы', to: '/assembly' }] } },
 
       ...referenceRoutes,
       ...adminRoutes,
@@ -109,7 +119,13 @@ router.beforeEach(async (to, from, next) => {
   }
 
   if (!auth.isAuthenticated) return next('/login')
-  if (to.meta.role && auth.user?.role !== to.meta.role) return next('/')
+  if (to.meta.role) {
+    // Role hierarchy: admin > lead > employee. Admin always passes.
+    const userRole = auth.user?.role
+    const required = to.meta.role
+    const allowed = userRole === 'admin' || userRole === required
+    if (!allowed) return next('/')
+  }
   next()
 })
 

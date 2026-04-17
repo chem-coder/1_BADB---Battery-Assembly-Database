@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
+const { auth } = require('../middleware/auth');
+const { trackChanges } = require('../middleware/trackChanges');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -12,7 +14,7 @@ router.get('/test', async (req, res) => {
 // -------- RECIPES --------
 
 // CREATE: new recipe + lines
-router.post('/', async (req, res) => {
+router.post('/', auth, async (req, res) => {
   const {
     role,
     name,
@@ -122,7 +124,7 @@ router.post('/', async (req, res) => {
 });
 
 // COPY: duplicate recipe + lines
-router.post('/:id/duplicate', async (req, res) => {
+router.post('/:id/duplicate', auth, async (req, res) => {
   const sourceRecipeId = Number(req.params.id);
   const { created_by } = req.body;
   const createdBy = Number(created_by);
@@ -203,7 +205,7 @@ router.post('/:id/duplicate', async (req, res) => {
 });
 
 // READ
-router.get('/', async (req, res) => {
+router.get('/', auth, async (req, res) => {
   const role = req.query.role ? String(req.query.role) : null;
 
   if (req.query.role && role !== 'cathode' && role !== 'anode') {
@@ -222,9 +224,13 @@ router.get('/', async (req, res) => {
         r.created_at,
         act.active_material_name,
         act.active_percent,
-        u.name AS created_by_name
+        u_created.name AS created_by_name,
+        r.updated_by,
+        r.updated_at,
+        u_updated.name AS updated_by_name
       FROM tape_recipes r
-      JOIN users u ON u.user_id = r.created_by
+      LEFT JOIN users u_created ON u_created.user_id = r.created_by
+      LEFT JOIN users u_updated ON u_updated.user_id = r.updated_by
       LEFT JOIN LATERAL (
         SELECT
           m.name AS active_material_name,
@@ -261,7 +267,7 @@ router.get('/', async (req, res) => {
 });
 
 // READ: recipe details (header only)
-router.get('/:id', async (req, res) => {
+router.get('/:id', auth, async (req, res) => {
   const recipeId = Number(req.params.id);
 
   if (!Number.isInteger(recipeId)) {
@@ -297,7 +303,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // READ: recipe lines (composition)
-router.get('/:id/lines', async (req, res) => {
+router.get('/:id/lines', auth, async (req, res) => {
   const recipeId = Number(req.params.id);
 
   if (!Number.isInteger(recipeId)) {
@@ -334,7 +340,7 @@ router.get('/:id/lines', async (req, res) => {
 });
 
 // UPDATE: recipe header + replace-all lines
-router.put('/:id', async (req, res) => {
+router.put('/:id', auth, async (req, res) => {
   const recipeId = Number(req.params.id);
 
   const {
@@ -360,6 +366,19 @@ router.put('/:id', async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Snapshot current header for changelog
+    const current = await client.query(
+      'SELECT role, name, variant_label, notes FROM tape_recipes WHERE tape_recipe_id = $1',
+      [recipeId]
+    );
+    if (current.rowCount === 0) {
+      await client.query('ROLLBACK');
+      client.release();
+      return res.status(404).json({ error: 'Рецепт не найден' });
+    }
+
+    const newVals = { role, name, variant_label: variant_label || null, notes: notes || null };
+
     const updateResult = await client.query(
       `
       UPDATE tape_recipes
@@ -367,7 +386,9 @@ router.put('/:id', async (req, res) => {
         role = $2,
         name = $3,
         variant_label = $4,
-        notes = $5
+        notes = $5,
+        updated_by = $6,
+        updated_at = now()
       WHERE tape_recipe_id = $1
       `,
       [
@@ -375,7 +396,8 @@ router.put('/:id', async (req, res) => {
         role,
         name,
         variant_label || null,
-        notes || null
+        notes || null,
+        req.user.userId
       ]
     );
 
@@ -451,6 +473,8 @@ router.put('/:id', async (req, res) => {
       );
     }
 
+    await trackChanges(client, 'recipe', 'tape_recipes', 'tape_recipe_id', recipeId, current.rows[0], newVals, req.user.userId);
+
     await client.query('COMMIT');
     res.json({ success: true });
 
@@ -464,7 +488,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE recipe (header + cascade lines)
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   const recipeId = Number(req.params.id);
 
   if (!Number.isInteger(recipeId)) {

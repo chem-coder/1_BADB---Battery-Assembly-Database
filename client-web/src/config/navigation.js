@@ -33,9 +33,10 @@ export const workflowSections = [
     label: 'Электроды',                 // Дали: "Электроды | Вырезание электродов"
     shortLabel: 'Электроды',
     path: '/electrodes',
-    apiPath: '/api/electrodes',
+    apiPath: '/api/electrodes/electrode-cut-batches',
     idField: 'cut_batch_id',
-    nameField: 'batch_label',
+    nameField: 'cut_batch_id',
+    nameFormat: (row) => `#${row.cut_batch_id} ${row.tape_name || ''}`.trim(),
     icon: 'pi pi-clone',
     listPage: () => import('@/pages/ElectrodesPage.vue'),
     formPage: () => import('@/pages/ElectrodeFormPage.vue'),
@@ -48,11 +49,26 @@ export const workflowSections = [
     path: '/assembly',
     apiPath: '/api/batteries',
     idField: 'battery_id',
-    nameField: 'battery_label',
+    nameField: 'battery_id',
+    nameFormat: (row) => `${row.form_factor || 'Аккум.'} #${row.battery_id}${row.project_name ? ` — ${row.project_name}` : ''}`,
     icon: 'pi pi-box',
     listPage: () => import('@/pages/AssemblyPage.vue'),
-    formPage: () => import('@/pages/AssemblyFormPage.vue'),
-    formTitles: { new: 'Новый аккумулятор', edit: 'Аккумулятор' },
+    formPage: null,  // Constructor is now inline on AssemblyPage
+    formTitles: null,
+  },
+  {
+    key: 'cycling',
+    label: 'Циклирование',
+    shortLabel: 'Циклирование',
+    path: '/cycling',
+    apiPath: '/api/cycling/sessions',
+    idField: 'session_id',
+    nameField: 'session_id',
+    nameFormat: (row) => `Сессия #${row.session_id}`,
+    icon: 'pi pi-sync',
+    listPage: () => import('@/pages/CyclingPage.vue'),
+    formPage: null,
+    formTitles: null,
   },
   {
     key: 'modules',
@@ -85,9 +101,10 @@ export const referenceSections = [
 // --- АДМИНИСТРИРОВАНИЕ (расширение Vue — нет в Далином public/) ---
 export const adminSections = [
   { key: 'users',       label: 'Пользователи',   path: '/reference/users', icon: 'pi pi-users',    role: 'admin' },
+  { key: 'access',      label: 'Управление доступом', path: '/access',     icon: 'pi pi-shield',   role: 'lead' },
   { key: 'activity',    label: 'Журнал действий', path: '/activity',        icon: 'pi pi-history' },
   { key: 'audit',       label: 'Журнал входов',   path: '/audit',           icon: 'pi pi-sign-in' },
-  { key: 'submissions', label: 'Журнал подач',    path: '/submissions',     icon: 'pi pi-upload' },
+  { key: 'feedback',    label: 'Обратная связь',   path: '/feedback',        icon: 'pi pi-comments' },
   { key: 'design',      label: 'Дизайн код',      path: '/design-system',   icon: 'pi pi-palette',  role: 'admin' },
 ]
 
