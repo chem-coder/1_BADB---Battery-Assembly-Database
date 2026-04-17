@@ -14,7 +14,6 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
-import FileUpload from 'primevue/fileupload'
 
 const CyclingCharts = defineAsyncComponent(() => import('@/components/CyclingCharts.vue'))
 
@@ -38,16 +37,29 @@ const loadingCycles = ref([])
 const MAX_SELECTED_CYCLES = 6
 
 // ── Upload dialog ──
+// Multi-file upload model:
+//   - files[] — one row per picked file, with its own battery assignment
+//   - defaultBatteryId — optional "apply to all" shortcut when uploading many
+//     files for the same cell; per-file Select overrides this
+//   - uploadForm — metadata shared across all files in this batch
 const showUpload = ref(false)
+const files = ref([])  // [{ file: File, battery_id: number|null, state, error, session_id }]
+const defaultBatteryId = ref(null)
 const uploadForm = ref({
-  battery_id: null,
   equipment_type: 'auto',
   channel: null,
   protocol: '',
   notes: '',
 })
 const uploading = ref(false)
-const uploadFileRef = ref(null)
+const fileInputRef = ref(null)
+
+const FILE_STATES = {
+  pending: { icon: 'pi pi-file', label: 'Ожидает' },
+  uploading: { icon: 'pi pi-spin pi-spinner', label: 'Загрузка...' },
+  done: { icon: 'pi pi-check-circle', label: 'Готово' },
+  error: { icon: 'pi pi-times-circle', label: 'Ошибка' },
+}
 
 // "Determine automatically" is the default — the parser peeks at the file
 // and picks the right format. Only pick manually if autodetect fails or you
@@ -60,6 +72,61 @@ const equipmentOptions = [
   { label: 'Arbin MITS Pro — скоро', value: 'arbin' },
   { label: 'BioLogic EC-Lab — скоро', value: 'biologic' },
 ]
+
+// ── Multi-file helpers ──────────────────────────────────────────────────
+function onFilesPicked(event) {
+  const picked = Array.from(event.target?.files || [])
+  // Dedupe by name+size against already-staged files so picking the same
+  // file twice doesn't create duplicate upload rows.
+  const existing = new Set(files.value.map(f => `${f.file.name}|${f.file.size}`))
+  for (const file of picked) {
+    const key = `${file.name}|${file.size}`
+    if (existing.has(key)) continue
+    files.value.push({
+      file,
+      battery_id: defaultBatteryId.value,
+      state: 'pending',
+      error: null,
+      session_id: null,
+    })
+  }
+  // Reset input so picking the same file after removing it works again.
+  if (event.target) event.target.value = ''
+}
+
+function removeFileAt(idx) {
+  if (files.value[idx]?.state === 'uploading') return
+  files.value.splice(idx, 1)
+}
+
+function applyDefaultBatteryToAll() {
+  if (!defaultBatteryId.value) return
+  for (const f of files.value) {
+    // Don't override rows that already uploaded successfully.
+    if (f.state !== 'done') f.battery_id = defaultBatteryId.value
+  }
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} Б`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`
+  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
+}
+
+function resetUploadDialog() {
+  files.value = []
+  defaultBatteryId.value = null
+  uploadForm.value = { equipment_type: 'auto', channel: null, protocol: '', notes: '' }
+}
+
+// Progress helpers for the dynamic "Загрузить (N)" / "Загрузка... (K/N)" button
+const uploadStats = computed(() => {
+  const total = files.value.length
+  const done = files.value.filter(f => f.state === 'done').length
+  const err  = files.value.filter(f => f.state === 'error').length
+  const pend = files.value.filter(f => f.state === 'pending').length
+  return { total, done, err, pend }
+})
 
 const columns = [
   { field: 'session_id', header: '#', width: 60, sortable: true },
@@ -164,50 +231,80 @@ async function toggleCycle(cycleNum) {
   }
 }
 
-// ── Upload ──
-async function doUpload(event) {
-  const file = event.files?.[0]
-  if (!file) return
-
-  if (!uploadForm.value.battery_id) {
-    toast.add({ severity: 'warn', summary: 'Ошибка', detail: 'Выберите аккумулятор', life: 3000 })
+// ── Upload ──────────────────────────────────────────────────────────────
+// Sequential upload — each file becomes its own cycling_sessions row. We
+// don't parallelize because:
+//   (a) parser spawns a python subprocess (CPU) — parallel slams the server
+//   (b) UX: clear per-file progress + stable ordering
+// Files that already succeeded (state='done') are skipped on retry, so the
+// user can fix a battery_id for the failed row and re-click "Загрузить".
+async function doUpload() {
+  if (files.value.length === 0) {
+    toast.add({ severity: 'warn', summary: 'Нет файлов', detail: 'Выберите хотя бы один файл', life: 3000 })
+    return
+  }
+  // Validate: every pending file must have a battery assigned.
+  const missing = files.value.filter(f => f.state !== 'done' && !f.battery_id)
+  if (missing.length) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Не все аккумуляторы выбраны',
+      detail: `Осталось выбрать: ${missing.length} файл(ов)`,
+      life: 4000,
+    })
     return
   }
 
   uploading.value = true
-  const formData = new FormData()
-  formData.append('file', file)
-  formData.append('battery_id', uploadForm.value.battery_id)
-  formData.append('equipment_type', uploadForm.value.equipment_type)
-  if (uploadForm.value.channel) formData.append('channel', uploadForm.value.channel)
-  if (uploadForm.value.protocol) formData.append('protocol', uploadForm.value.protocol)
-  if (uploadForm.value.notes) formData.append('notes', uploadForm.value.notes)
+  for (const f of files.value) {
+    if (f.state === 'done') continue
+    f.state = 'uploading'
+    f.error = null
 
-  try {
-    const { data } = await api.post('/api/cycling/upload', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
+    const formData = new FormData()
+    formData.append('file', f.file)
+    formData.append('battery_id', f.battery_id)
+    formData.append('equipment_type', uploadForm.value.equipment_type)
+    if (uploadForm.value.channel) formData.append('channel', uploadForm.value.channel)
+    if (uploadForm.value.protocol) formData.append('protocol', uploadForm.value.protocol)
+    if (uploadForm.value.notes) formData.append('notes', uploadForm.value.notes)
+
+    try {
+      const { data } = await api.post('/api/cycling/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      f.state = 'done'
+      f.session_id = data.session_id
+      f.duplicate = !!data.duplicate
+    } catch (err) {
+      f.state = 'error'
+      f.error = err.response?.data?.error || 'Не удалось загрузить файл'
+    }
+  }
+  uploading.value = false
+
+  const { done, err } = uploadStats.value
+  if (err === 0) {
     toast.add({
       severity: 'success',
-      summary: 'Загружено',
-      detail: `Сессия #${data.session_id} создана${data.duplicate ? ' (дубликат!)' : ''}`,
+      summary: 'Загрузка завершена',
+      detail: `Создано ${done} сессий`,
       life: 4000,
     })
     showUpload.value = false
-    uploadForm.value = { battery_id: null, equipment_type: 'auto', channel: null, protocol: '', notes: '' }
-    // Reload after processing delay
-    setTimeout(loadData, 2000)
-    setTimeout(loadData, 6000)
-  } catch (err) {
+    resetUploadDialog()
+  } else {
     toast.add({
-      severity: 'error',
-      summary: 'Ошибка',
-      detail: err.response?.data?.error || 'Не удалось загрузить файл',
-      life: 5000,
+      severity: 'warn',
+      summary: 'Загрузка с ошибками',
+      detail: `Готово: ${done}, ошибок: ${err}. Проверьте файлы в списке.`,
+      life: 6000,
     })
-  } finally {
-    uploading.value = false
+    // Keep dialog open so user can see per-file errors and retry.
   }
+  // Reload sessions list so newly processed ones show up (parser is async).
+  setTimeout(loadData, 2000)
+  setTimeout(loadData, 6000)
 }
 
 async function deleteSession(items) {
@@ -314,65 +411,145 @@ const batteryOptions = computed(() =>
       <div v-else class="charts-empty">Нет данных</div>
     </div>
 
-    <!-- Upload dialog -->
-    <Dialog v-model:visible="showUpload" header="Загрузить файл циклирования" :modal="true" style="width: 500px">
+    <!-- Upload dialog — multi-file -->
+    <Dialog v-model:visible="showUpload" header="Загрузить файлы циклирования"
+            :modal="true" style="width: 760px" :closable="!uploading">
       <div class="upload-form">
+
+        <!-- File picker: hidden native <input>, custom Button triggers it -->
         <div class="upload-field">
-          <label>Аккумулятор *</label>
-          <Select
-            v-model="uploadForm.battery_id"
-            :options="batteryOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="Выберите аккумулятор"
-            :filter="true"
-            size="small"
-            style="width: 100%"
-          />
-        </div>
-        <div class="upload-field">
-          <label>Оборудование</label>
-          <Select
-            v-model="uploadForm.equipment_type"
-            :options="equipmentOptions"
-            optionLabel="label"
-            optionValue="value"
-            size="small"
-            style="width: 100%"
-          />
-        </div>
-        <div class="upload-row">
-          <div class="upload-field">
-            <label>Канал</label>
-            <input v-model.number="uploadForm.channel" type="number" class="upload-input" placeholder="—" />
-          </div>
-          <div class="upload-field">
-            <label>Протокол</label>
-            <input v-model="uploadForm.protocol" class="upload-input" placeholder="—" />
+          <div class="file-picker-row">
+            <input
+              ref="fileInputRef"
+              type="file"
+              multiple
+              accept=".csv,.xlsx,.xls,.txt"
+              @change="onFilesPicked"
+              style="display:none"
+            />
+            <Button
+              label="Выбрать файлы"
+              icon="pi pi-folder-open"
+              outlined
+              :disabled="uploading"
+              @click="fileInputRef?.click()"
+            />
+            <span v-if="files.length" class="file-picker-count">
+              {{ files.length }} файл(ов) выбрано
+              <span v-if="uploadStats.done > 0" class="file-picker-done">· {{ uploadStats.done }} готово</span>
+              <span v-if="uploadStats.err > 0"  class="file-picker-err">· {{ uploadStats.err }} с ошибкой</span>
+            </span>
+            <span v-else class="file-picker-hint">Можно выбрать несколько файлов сразу (Ctrl/⌘ + клик)</span>
           </div>
         </div>
-        <div class="upload-field">
-          <label>Заметки</label>
-          <textarea v-model="uploadForm.notes" class="upload-input upload-textarea" rows="2" placeholder="—"></textarea>
+
+        <!-- Per-file list with per-file battery Select -->
+        <div v-if="files.length" class="file-list">
+          <div v-for="(f, idx) in files" :key="f.file.name + '|' + f.file.size"
+               class="file-row" :class="`file-row--${f.state}`">
+            <i class="file-row-icon" :class="FILE_STATES[f.state].icon" :title="FILE_STATES[f.state].label"></i>
+            <div class="file-row-name">
+              <div class="file-row-title" :title="f.file.name">{{ f.file.name }}</div>
+              <div class="file-row-sub">
+                {{ formatFileSize(f.file.size) }}
+                <span v-if="f.session_id" class="file-row-session">· сессия #{{ f.session_id }}</span>
+                <span v-if="f.duplicate" class="file-row-dup">· дубликат</span>
+                <span v-if="f.error" class="file-row-error">· {{ f.error }}</span>
+              </div>
+            </div>
+            <Select
+              v-model="f.battery_id"
+              :options="batteryOptions"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Акк."
+              :filter="true"
+              size="small"
+              style="width: 200px; flex-shrink: 0"
+              :disabled="uploading || f.state === 'done'"
+            />
+            <Button
+              icon="pi pi-times"
+              severity="secondary"
+              text
+              rounded
+              size="small"
+              :disabled="uploading && f.state === 'uploading'"
+              @click="removeFileAt(idx)"
+            />
+          </div>
         </div>
-        <div class="upload-field">
-          <label>Файл (.csv, .xlsx, .txt) *</label>
-          <FileUpload
-            ref="uploadFileRef"
-            mode="basic"
-            accept=".csv,.xlsx,.xls,.txt"
-            :maxFileSize="104857600"
-            :auto="false"
-            chooseLabel="Выбрать файл"
-            :customUpload="true"
-            @uploader="doUpload"
-            :disabled="uploading"
-          />
-        </div>
+
+        <!-- Shared settings: apply to every file in this batch -->
+        <fieldset class="upload-shared">
+          <legend>Общие параметры</legend>
+
+          <div class="upload-field">
+            <label>Аккумулятор по умолчанию</label>
+            <div class="default-battery-row">
+              <Select
+                v-model="defaultBatteryId"
+                :options="batteryOptions"
+                optionLabel="label"
+                optionValue="value"
+                placeholder="Новым файлам — этот аккумулятор..."
+                :filter="true"
+                size="small"
+                :disabled="uploading"
+                style="flex: 1"
+              />
+              <Button
+                label="Применить ко всем"
+                size="small"
+                severity="secondary"
+                :disabled="!defaultBatteryId || !files.length || uploading"
+                @click="applyDefaultBatteryToAll"
+              />
+            </div>
+          </div>
+
+          <div class="upload-field">
+            <label>Формат</label>
+            <Select
+              v-model="uploadForm.equipment_type"
+              :options="equipmentOptions"
+              optionLabel="label"
+              optionValue="value"
+              size="small"
+              :disabled="uploading"
+              style="width: 100%"
+            />
+          </div>
+
+          <div class="upload-row">
+            <div class="upload-field">
+              <label>Канал</label>
+              <input v-model.number="uploadForm.channel" type="number" class="upload-input" placeholder="—" :disabled="uploading" />
+            </div>
+            <div class="upload-field">
+              <label>Протокол</label>
+              <input v-model="uploadForm.protocol" class="upload-input" placeholder="—" :disabled="uploading" />
+            </div>
+          </div>
+
+          <div class="upload-field">
+            <label>Заметки</label>
+            <textarea v-model="uploadForm.notes" class="upload-input upload-textarea" rows="2" placeholder="—" :disabled="uploading"></textarea>
+          </div>
+        </fieldset>
+
       </div>
       <template #footer>
-        <Button label="Отмена" severity="secondary" text @click="showUpload = false" />
-        <Button label="Загрузить" icon="pi pi-upload" :loading="uploading" @click="uploadFileRef?.upload()" />
+        <Button label="Отмена" severity="secondary" text :disabled="uploading" @click="showUpload = false" />
+        <Button
+          :label="uploading
+            ? `Загрузка... (${uploadStats.done + uploadStats.err}/${uploadStats.total})`
+            : (uploadStats.err > 0 ? `Повторить (${uploadStats.err})` : `Загрузить${files.length ? ' (' + files.length + ')' : ''}`)"
+          icon="pi pi-upload"
+          :loading="uploading"
+          :disabled="uploading || files.length === 0"
+          @click="doUpload"
+        />
       </template>
     </Dialog>
   </div>
@@ -448,4 +625,107 @@ const batteryOptions = computed(() =>
 }
 .upload-input:focus { border-color: #003274; outline: none; }
 .upload-textarea { resize: vertical; min-height: 48px; }
+
+/* ── Multi-file upload ── */
+.file-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.file-picker-count {
+  font-size: 12px;
+  color: #4B5563;
+  font-weight: 500;
+}
+.file-picker-done { color: #27AE60; margin-left: 4px; }
+.file-picker-err  { color: #E74C3C; margin-left: 4px; }
+.file-picker-hint { font-size: 12px; color: #9CA3AF; font-style: italic; }
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid rgba(0, 50, 116, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 50, 116, 0.02);
+}
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: white;
+  border: 1px solid rgba(0, 50, 116, 0.06);
+  transition: background 0.15s;
+}
+.file-row-icon {
+  width: 1.1rem;
+  font-size: 0.95rem;
+  text-align: center;
+  flex-shrink: 0;
+  color: #6B7280;
+}
+.file-row--uploading { background: #fff8e1; border-color: rgba(241, 196, 15, 0.4); }
+.file-row--uploading .file-row-icon { color: #F39C12; }
+.file-row--done      { background: #e8f5e9; border-color: rgba(39, 174, 96, 0.4); }
+.file-row--done .file-row-icon { color: #27AE60; }
+.file-row--error     { background: #fdecea; border-color: rgba(231, 76, 60, 0.4); }
+.file-row--error .file-row-icon { color: #E74C3C; }
+
+.file-row-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.file-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1F2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-row-sub {
+  font-size: 11px;
+  color: #6B7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-row-session { color: #003274; font-weight: 500; }
+.file-row-dup     { color: #F39C12; }
+.file-row-error   { color: #E74C3C; font-weight: 500; }
+
+/* ── Shared settings block ── */
+.upload-shared {
+  border: 1px solid rgba(0, 50, 116, 0.1);
+  border-radius: 8px;
+  padding: 0.75rem 1rem 1rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: rgba(0, 50, 116, 0.015);
+}
+.upload-shared legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4B5563;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.default-battery-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.default-battery-row > :first-child { flex: 1; min-width: 0; }
 </style>

@@ -47,7 +47,9 @@ function buildSectionRoutes(sections, baseCrumbs = []) {
 const workflowRoutes = buildSectionRoutes(workflowSections)
 // Testing (Испытания): same shape as workflow, different sidebar group.
 // Primary URL keeps s.path unchanged (e.g. /cycling) so existing bookmarks work.
-const testRoutes = buildSectionRoutes(testSections, [{ label: 'Испытания' }])
+// No breadcrumb prefix — the sidebar already groups this section, adding a
+// "Главная › Испытания › Циклирование" trail in the page header is noise.
+const testRoutes = buildSectionRoutes(testSections)
 
 const referenceRoutes = referenceSections.map((s) => ({
   path: s.path.slice(1),
