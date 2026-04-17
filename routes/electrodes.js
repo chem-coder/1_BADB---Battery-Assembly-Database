@@ -490,10 +490,14 @@ router.delete('/electrode-cut-batches/:id', auth, async (req, res) => {
   }
 
   try {
-    await pool.query(
+    const result = await pool.query(
       `DELETE FROM electrode_cut_batches WHERE cut_batch_id = $1`,
       [cutBatchId]
     );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Партия нарезки не найдена' });
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -664,10 +668,14 @@ router.delete('/foil-measurements/:id', auth, async (req, res) => {
   }
 
   try {
-    await pool.query(
+    const result = await pool.query(
       `DELETE FROM foil_mass_measurements WHERE foil_measurement_id = $1`,
       [measurementId]
     );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Замер не найден' });
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -1046,10 +1054,14 @@ router.delete('/electrode-drying/:id', auth, async (req, res) => {
   }
 
   try {
-    await pool.query(
+    const result = await pool.query(
       `DELETE FROM electrode_drying WHERE drying_id = $1`,
       [dryingId]
     );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Запись сушки не найдена' });
+    }
 
     res.json({ success: true });
   } catch (err) {

@@ -177,10 +177,48 @@ export function useBatteryState({ batteryId }) {
     return steps[stageCode]?.[fieldKey] ?? ''
   }
 
+  // Fields that belong to each form factor's subtype config. Listed
+  // explicitly (rather than introspecting steps.config) so the clear
+  // stays surgical — header-level and shared fields never get wiped.
+  const COIN_CONFIG_FIELDS = [
+    'coin_cell_mode', 'coin_size_code', 'half_cell_type', 'coin_layout',
+    'spacer_thickness_mm', 'spacer_count', 'spacer_notes', 'li_foil_notes',
+  ]
+  const POUCH_CONFIG_FIELDS = [
+    'pouch_case_size_code', 'pouch_case_size_other', 'pouch_notes',
+  ]
+  const CYL_CONFIG_FIELDS = ['cyl_size_code', 'cyl_notes']
+
+  function _clearFormFactorSiblings(newFormFactor) {
+    // Wipe fields belonging to the OTHER form factors so their stale data
+    // doesn't silently persist in state (and doesn't accidentally get
+    // serialized to a future save if the user switches back). Matches the
+    // in-stage cascade pattern already used for pouch_case_size_code →
+    // pouch_case_size_other above.
+    if (newFormFactor !== 'coin') {
+      for (const k of COIN_CONFIG_FIELDS) steps.config[k] = ''
+    }
+    if (newFormFactor !== 'pouch') {
+      for (const k of POUCH_CONFIG_FIELDS) steps.config[k] = ''
+    }
+    if (newFormFactor !== 'cylindrical') {
+      for (const k of CYL_CONFIG_FIELDS) steps.config[k] = ''
+    }
+  }
+
   function setFieldValue(stageCode, fieldKey, value) {
     pushHistoryDebounced()
     if (stageCode === 'general') {
+      const prevFormFactor = general.form_factor
       general[fieldKey] = value
+      // Form factor changed → clear stale config fields from OTHER form
+      // factors. Otherwise switching coin→pouch→coin preserves pouch data
+      // hidden in state, which could leak into the next config save or
+      // re-appear unexpectedly if the user switches back.
+      if (fieldKey === 'form_factor' && value !== prevFormFactor) {
+        _clearFormFactorSiblings(value)
+        setDirty('config')
+      }
       setDirty('general')
       _scheduleAutoSave('general')
     } else if (steps[stageCode]) {
