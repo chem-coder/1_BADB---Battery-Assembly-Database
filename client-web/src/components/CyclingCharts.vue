@@ -10,6 +10,7 @@
  */
 import { ref, computed } from 'vue'
 import { Line, Scatter } from 'vue-chartjs'
+import Select from 'primevue/select'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -80,10 +81,12 @@ const voltageChartRef = ref(null)
 const dqdvChartRef = ref(null)
 
 // ── Session label helper (shown in chart legends) ──
+// "Акк. №5" when battery_id known (the user-facing anchor), falls back to
+// session id when the session isn't attached to a battery. Russian № is
+// preferred over `#` in UI text throughout BADB.
 function sessionShortLabel(s) {
-  // Prefer a concise "#42 Акк#5" when battery_id known, else just #42
-  if (s.battery_id) return `#${s.session_id} Акк#${s.battery_id}`
-  return `#${s.session_id}`
+  if (s.battery_id) return `Акк. №${s.battery_id}`
+  return `Сессия №${s.session_id}`
 }
 
 // Translucent fill for the capacity fill-under-line (session.color + alpha).
@@ -302,7 +305,7 @@ const voltageChartData = computed(() => {
 
       if (charge.length) {
         datasets.push({
-          label: `${sessionShortLabel(s)} Ц${cycleNum} · заряд`,
+          label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge.map(p => ({
             x: useCapacity ? p.capacity_ah : p.time_s,
             y: p.voltage_v,
@@ -317,7 +320,7 @@ const voltageChartData = computed(() => {
       }
       if (discharge.length) {
         datasets.push({
-          label: `${sessionShortLabel(s)} Ц${cycleNum} · разряд`,
+          label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge.map(p => ({
             x: useCapacity ? p.capacity_ah : p.time_s,
             y: p.voltage_v,
@@ -425,7 +428,7 @@ const dqdvChartData = computed(() => {
 
       if (charge.length) {
         datasets.push({
-          label: `${sessionShortLabel(s)} Ц${cycleNum} · заряд`,
+          label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge,
           borderColor: s.color,
           backgroundColor: s.color,
@@ -437,7 +440,7 @@ const dqdvChartData = computed(() => {
       }
       if (discharge.length) {
         datasets.push({
-          label: `${sessionShortLabel(s)} Ц${cycleNum} · разряд`,
+          label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge,
           borderColor: s.color,
           backgroundColor: s.color,
@@ -489,6 +492,24 @@ const allCycleNumbers = computed(() => mergedSummary.value.map(s => s.cycle_numb
 const rangeOpen = ref(false)
 const rangeFrom = ref(null)
 const rangeTo = ref(null)
+
+// "Каждый N-й" dropdown. editable: user can pick a preset OR type any int.
+// `everyNStep` holds the current chosen/typed value (number or string).
+const everyNStep = ref(null)
+const everyNOptions = computed(() => {
+  const presets = [2, 3, 4, 5, 7, 10, 15, 20]
+  // Live count of how many cycles each preset would pick — useful so user
+  // sees "каждый 10-й (3)" before applying.
+  return presets.map(n => ({
+    value: n,
+    label: `каждый ${n}-й (${countEveryNth(n)})`,
+  }))
+})
+function onEveryNChange() {
+  const n = Number(everyNStep.value)
+  if (!Number.isFinite(n) || n < 1) return
+  selectEveryNth(Math.round(n))
+}
 
 function clampToMax(list) {
   if (list.length <= props.maxSelected) return list
@@ -620,16 +641,19 @@ function exportChartPNG(chartRef, name) {
       <button class="filter-btn" @click="selectAll">
         Все ({{ Math.min(allCycleNumbers.length, maxSelected) }})
       </button>
-      <button
-        v-for="n in [2, 5, 10]"
-        :key="n"
-        class="filter-btn"
-        :disabled="allCycleNumbers.length <= n"
-        :title="`1, ${1 + n}, ${1 + 2 * n}, ...`"
-        @click="selectEveryNth(n)"
-      >
-        Каждый {{ n }}й ({{ countEveryNth(n) }})
-      </button>
+      <Select
+        v-model="everyNStep"
+        :options="everyNOptions"
+        optionLabel="label"
+        optionValue="value"
+        editable
+        placeholder="каждый N-й…"
+        size="small"
+        class="filter-select"
+        :disabled="allCycleNumbers.length < 2"
+        :title="'1, 1+N, 1+2N... Можно выбрать пресет или ввести свой шаг'"
+        @change="onEveryNChange"
+      />
       <!-- Custom range popover -->
       <div class="filter-range" :class="{ 'is-open': rangeOpen }">
         <button class="filter-btn" @click="rangeOpen = !rangeOpen">
@@ -798,6 +822,21 @@ function exportChartPNG(chartRef, name) {
   background: #003274;
   color: white;
   border-color: #003274;
+}
+
+/* Editable Select for "каждый N-й" — sized to match the filter-btn row */
+.filter-select {
+  min-width: 180px;
+  font-size: 12px;
+}
+/* Tighten PrimeVue default size inside the filters bar */
+.filter-select :deep(.p-select) {
+  font-size: 12px;
+  min-height: 28px;
+}
+.filter-select :deep(.p-select-label) {
+  padding: 3px 10px;
+  font-size: 12px;
 }
 
 /* Range popover — inline bubble */

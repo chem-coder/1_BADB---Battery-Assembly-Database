@@ -550,7 +550,7 @@ function formatDate(dt) {
 
 const batteryOptions = computed(() =>
   batteries.value.map(b => ({
-    label: `#${b.battery_id} ${b.form_factor || ''} ${b.project_name || ''}`.trim(),
+    label: `№${b.battery_id} ${b.form_factor || ''} ${b.project_name || ''}`.trim(),
     value: b.battery_id,
   }))
 )
@@ -560,6 +560,15 @@ const batteryOptions = computed(() =>
   <div class="cycling-page">
     <PageHeader title="Циклирование" icon="pi pi-sync">
       <template #actions>
+        <Button
+          v-if="activeSessionViews.length"
+          :label="`Убрать с графиков (${activeSessionViews.length})`"
+          icon="pi pi-times"
+          severity="secondary"
+          text
+          size="small"
+          @click="clearAllActive"
+        />
         <Button label="Загрузить файл" icon="pi pi-upload" size="small" @click="showUpload = true" />
       </template>
     </PageHeader>
@@ -598,7 +607,7 @@ const batteryOptions = computed(() =>
       </template>
       <template #col-battery_id="{ data }">
         <span class="battery-link" @click.stop="router.push(`/assembly/${data.battery_id}`)">
-          Акк. #{{ data.battery_id }}
+          Акк. №{{ data.battery_id }}
         </span>
       </template>
       <template #col-uploaded_at="{ data }">
@@ -610,51 +619,6 @@ const batteryOptions = computed(() =>
         </span>
       </template>
     </CrudTable>
-
-    <!-- Active sessions bar (chips above charts). Compact by default:
-         color swatch + #id + Акк# — file name in tooltip. When > 8 active,
-         chips shrink further (id-only) to fit more per row. Header has a
-         count + "Убрать все" action. -->
-    <div v-if="activeSessionViews.length" class="active-sessions-bar glass-card">
-      <div class="active-sessions-head">
-        <span class="active-label">
-          <i class="pi pi-chart-line"></i>
-          На графиках:
-          <strong>{{ activeSessionViews.length }}</strong>
-          <span v-if="activeSessionViews.length >= 10" class="active-hint">· наведите на чип для полного имени файла</span>
-        </span>
-        <button
-          class="clear-all-btn"
-          :disabled="!activeSessionViews.length"
-          title="Убрать все сессии с графиков"
-          @click="clearAllActive"
-        >
-          <i class="pi pi-times-circle"></i>
-          Убрать все
-        </button>
-      </div>
-      <div class="chips-wrap" :class="{ 'chips-wrap--dense': activeSessionViews.length > 8 }">
-        <div
-          v-for="s in activeSessionViews"
-          :key="s.session_id"
-          class="session-chip"
-          :style="{ borderColor: s.color, boxShadow: `inset 3px 0 0 ${s.color}` }"
-          :title="`#${s.session_id} · Акк #${s.battery_id || '?'}${s.file_name ? ' · ' + s.file_name : ''}`"
-        >
-          <span class="chip-dot" :style="{ background: s.color }"></span>
-          <span class="chip-label">
-            <strong>#{{ s.session_id }}</strong>
-            <span v-if="s.battery_id && activeSessionViews.length <= 8"> · Акк#{{ s.battery_id }}</span>
-          </span>
-          <span v-if="s.loadingCycles.length" class="chip-loading">
-            <i class="pi pi-spin pi-spinner" style="font-size:9px"></i>
-          </span>
-          <button class="chip-close" title="Убрать с графиков" @click="removeActiveSession(s.session_id)">
-            <i class="pi pi-times" style="font-size:10px"></i>
-          </button>
-        </div>
-      </div>
-    </div>
 
     <!-- Charts area (multi-session) -->
     <div v-if="activeSessionViews.length" class="charts-area glass-card">
@@ -712,7 +676,7 @@ const batteryOptions = computed(() =>
               <div class="file-row-title" :title="f.file.name">{{ f.file.name }}</div>
               <div class="file-row-sub">
                 {{ formatFileSize(f.file.size) }}
-                <span v-if="f.session_id" class="file-row-session">· сессия #{{ f.session_id }}</span>
+                <span v-if="f.session_id" class="file-row-session">· сессия №{{ f.session_id }}</span>
                 <span v-if="f.duplicate" class="file-row-dup">· дубликат</span>
                 <span v-if="f.error" class="file-row-error">· {{ f.error }}</span>
               </div>
