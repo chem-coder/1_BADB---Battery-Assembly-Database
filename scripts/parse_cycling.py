@@ -226,26 +226,46 @@ def parse_elitech_txt(filepath):
         mean_i = sum(currents) / len(currents) if currents else 0.0
         step_type = _classify_step_type(work_mode, mean_i)
 
-        # Integrate capacity (A·h) across the step: ∫ |I| dt / 3600. We store
-        # running capacity (resets to 0 at step start). Sign convention:
-        # charge + discharge are both positive magnitudes, matching how
-        # cycling_cycle_summary interprets them.
+        # Integrate per-step:
+        #   capacity_ah = ∫ |I| dt / 3600  (Ah)
+        #   energy_wh   = ∫ |I|·V dt / 3600 (Wh, signed per direction absorbed
+        #                                     into magnitude — EE compares
+        #                                     charge vs discharge magnitudes)
+        # ELITECH doesn't export energy_wh directly; without this integration
+        # the Energy Efficiency (EE%) column in the per-cycle summary stays
+        # empty. Both are reset to 0 at step start (per-step basis); the
+        # total_energy() aggregator sums per-step maxes across steps of the
+        # same type within a cycle (same pattern as total_capacity).
         running_ah = 0.0
+        running_wh = 0.0
         prev_time = None
         prev_current = None
+        prev_voltage = None
+        is_faradic = step_type in ('charge', 'discharge', 'cccv')
         for i in step_indices:
             dp = datapoints[i]
             dp['step_type'] = step_type
             t = dp.get('time_s')
             c = dp.get('current_a')
-            if t is not None and c is not None and prev_time is not None and prev_current is not None:
+            v = dp.get('voltage_v')
+            if (t is not None and c is not None and
+                prev_time is not None and prev_current is not None):
                 dt = t - prev_time
                 if dt > 0:
-                    # Trapezoidal integration of |I| over dt (in seconds) / 3600 → Ah
+                    # |I| trapezoid → Ah
                     running_ah += (abs(c) + abs(prev_current)) * 0.5 * dt / 3600.0
-            dp['capacity_ah'] = round(running_ah, 9) if step_type in ('charge', 'discharge', 'cccv') else None
+                    # |I|·V trapezoid → Wh (energy always positive, direction
+                    # inferred by step_type — mirrors how battery testers
+                    # report charge/discharge energies as magnitudes)
+                    if v is not None and prev_voltage is not None:
+                        p_now = abs(c) * v
+                        p_prev = abs(prev_current) * prev_voltage
+                        running_wh += (p_now + p_prev) * 0.5 * dt / 3600.0
+            dp['capacity_ah'] = round(running_ah, 9) if is_faradic else None
+            dp['energy_wh']   = round(running_wh, 9) if is_faradic else None
             prev_time = t
             prev_current = c
+            prev_voltage = v
 
     for raw in lines:
         line = raw.rstrip('\r\n')

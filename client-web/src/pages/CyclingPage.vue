@@ -65,6 +65,46 @@ const stepFilter = ref('both')
 // works when every active session has active_mass_mg populated —
 // availability is a computed guard, UI auto-falls back to 'Ah' otherwise.
 const capacityUnit = ref('Ah')
+
+// Mass editor dialog — opens when user clicks mAh/g while some active
+// sessions lack an active_mass_mg value. Lets them fill the mass inline
+// and PATCHes each session; on success the mAh/g toggle auto-unlocks.
+const showMassEditor = ref(false)
+const massEditorRows = ref([])  // [{ session_id, battery_id, file_name, mass }]
+
+function openMassEditor() {
+  massEditorRows.value = activeSessionIds.value.map(sid => {
+    const row = sessions.value.find(s => s.session_id === sid) || {}
+    return {
+      session_id: sid,
+      battery_id: row.battery_id,
+      file_name: row.file_name,
+      mass: row.active_mass_mg != null ? Number(row.active_mass_mg) : null,
+    }
+  })
+  showMassEditor.value = true
+}
+
+async function saveMasses() {
+  const savers = massEditorRows.value
+    .filter(r => Number.isFinite(Number(r.mass)) && Number(r.mass) > 0)
+    .map(r => api.patch(`/api/cycling/sessions/${r.session_id}`, {
+      active_mass_mg: Number(r.mass),
+    }))
+  if (!savers.length) {
+    toast.add({ severity: 'warn', summary: 'Нет данных', detail: 'Введите массу хотя бы для одной сессии', life: 3000 })
+    return
+  }
+  try {
+    await Promise.all(savers)
+    await loadData()
+    showMassEditor.value = false
+    capacityUnit.value = 'mAh_per_g'
+    toast.add({ severity: 'success', summary: 'Масса сохранена', detail: `Обновлено: ${savers.length}`, life: 3000 })
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Не удалось сохранить', life: 4000 })
+  }
+}
 const specificAvailable = computed(() => {
   if (!activeSessionIds.value.length) return false
   return activeSessionIds.value.every(sid => {
@@ -653,7 +693,7 @@ const batteryOptions = computed(() =>
           />
         </div>
         <div class="toolbar-pubmode">
-          <label class="toolbar-label" title="Показывать только заряд, только разряд или оба">Показать</label>
+          <label class="toolbar-label" title="Фильтр применяется к профилю напряжения и dQ/dV ниже">Показать ↓</label>
           <div class="pubmode-row">
             <button
               class="pubmode-btn"
@@ -682,7 +722,7 @@ const batteryOptions = computed(() =>
         </div>
         <div class="toolbar-pubmode">
           <label class="toolbar-label">Единицы ёмкости</label>
-          <div class="pubmode-row" :title="specificAvailable ? '' : 'Укажите массу активного материала для режима mAh/g'">
+          <div class="pubmode-row">
             <button
               class="pubmode-btn"
               :class="{ 'is-active': capacityUnit === 'Ah' }"
@@ -693,10 +733,13 @@ const batteryOptions = computed(() =>
             <button
               class="pubmode-btn"
               :class="{ 'is-active': capacityUnit === 'mAh_per_g' }"
-              :disabled="!specificAvailable"
-              @click="capacityUnit = 'mAh_per_g'"
+              :title="specificAvailable
+                ? 'Удельная ёмкость — нормирована на массу активного материала'
+                : 'Кликните, чтобы ввести массу активного материала'"
+              @click="specificAvailable ? (capacityUnit = 'mAh_per_g') : openMassEditor()"
             >
               mAh/g
+              <i v-if="!specificAvailable" class="pi pi-pencil" style="font-size:10px;margin-left:4px"></i>
             </button>
           </div>
         </div>

@@ -10,7 +10,6 @@
  */
 import { ref, computed } from 'vue'
 import { Line, Scatter } from 'vue-chartjs'
-import Dialog from 'primevue/dialog'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -18,13 +17,14 @@ import {
   PointElement,
   LineElement,
   Title,
+  SubTitle,
   Tooltip,
   Legend,
   Filler,
   ScatterController,
 } from 'chart.js'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler, ScatterController)
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, SubTitle, Tooltip, Legend, Filler, ScatterController)
 
 // Multi-session props — each session carries its own summary + cycleDataMap
 // + color. See CyclingPage.activeSessionViews for the shape.
@@ -71,9 +71,11 @@ function convertCapacity(ah, session) {
   return (ah * 1_000_000) / massMg
 }
 
-// Axis labels match the active unit.
+// Axis labels match the active unit. English, publication style
+// ("Capacity, Ah" / "C, mAh/g") — matches the lab colleague's Excel
+// output and the convention in Li-ion journals.
 function capacityAxisLabel() {
-  return props.capacityUnit === 'mAh_per_g' ? 'C, mAh/g' : 'Ёмкость (Ah)'
+  return props.capacityUnit === 'mAh_per_g' ? 'C, mAh/g' : 'Capacity, Ah'
 }
 
 // Format a capacity number for table cells. mAh/g gets 2 decimal places
@@ -91,39 +93,69 @@ function formatVolt(v) {
   return (v == null || !Number.isFinite(v)) ? '—' : v.toFixed(3)
 }
 
-// ── Raw datapoints viewer (modal) ───────────────────────────────────────
-// Click a row in the per-cycle summary table to open this modal and
-// inspect every datapoint of that cycle. Loads cycle data if not cached
-// (reuses the same /cycles/:n endpoint the voltage profile uses).
-const rawModalOpen = ref(false)
-const rawModalSession = ref(null)
-const rawModalCycle = ref(null)
+// ── Raw datapoints viewer (inline panel, always visible) ───────────────
+// Replaces the earlier modal — users missed the "click row → opens modal"
+// affordance. The panel sits under the summary tables with explicit
+// session + cycle pickers, filter, search, and paginated raw point view.
+//
+// rawSession / rawCycle track the currently-inspected (session, cycle).
+// First user interaction with a summary row auto-selects it here; the
+// user can then change session/cycle via the dropdowns above the table.
+const rawSession = ref(null)
+const rawCycle = ref(null)
 const rawFilter = ref('all')        // 'all' | 'charge' | 'discharge' | 'rest' | 'cccv'
 const rawSearchMin = ref(null)      // voltage range lo
 const rawSearchMax = ref(null)      // voltage range hi
 const rawPage = ref(0)
-const RAW_PAGE_SIZE = 200
+const RAW_PAGE_SIZE = 500
 
-function openRawPoints(session, cycleNumber) {
-  rawModalSession.value = session
-  rawModalCycle.value = cycleNumber
+function selectRawView(session, cycleNumber) {
+  rawSession.value = session
+  rawCycle.value = cycleNumber
   rawPage.value = 0
-  rawFilter.value = 'all'
-  rawSearchMin.value = null
-  rawSearchMax.value = null
-  rawModalOpen.value = true
 }
 
-// Source points for the modal (from the already-cached cycleDataMap)
-const rawModalPoints = computed(() => {
-  const s = rawModalSession.value
-  const c = rawModalCycle.value
+// Auto-select first active session + first cycle when none is chosen yet
+// and data arrives. Keeps the panel useful out-of-the-box without a click.
+const rawAutoSession = computed(() => {
+  if (rawSession.value && props.sessions.some(s => s.session_id === rawSession.value.session_id)) {
+    return rawSession.value
+  }
+  return props.sessions[0] || null
+})
+const rawAutoCycle = computed(() => {
+  const s = rawAutoSession.value
+  if (!s?.summary?.length) return null
+  // Use user-chosen cycle if valid, else first cycle with data, else first
+  // cycle from summary.
+  if (rawCycle.value != null && s.summary.some(r => r.cycle_number === rawCycle.value)) {
+    return rawCycle.value
+  }
+  const loaded = Object.keys(s.cycleDataMap || {}).map(Number).filter(n => !isNaN(n))
+  if (loaded.length) return loaded.sort((a, b) => a - b)[0]
+  return s.summary[0]?.cycle_number ?? null
+})
+
+// All cycles available for the dropdown — based on the active session's summary.
+const rawCycleOptions = computed(() => {
+  const s = rawAutoSession.value
+  if (!s?.summary) return []
+  return s.summary.map(r => {
+    const hasData = !!(s.cycleDataMap?.[r.cycle_number]?.length)
+    return { value: r.cycle_number, loaded: hasData }
+  })
+})
+
+// Source points — filtered + paginated
+const rawPoints = computed(() => {
+  const s = rawAutoSession.value
+  const c = rawAutoCycle.value
   if (!s || c == null) return []
   return s.cycleDataMap?.[c] || []
 })
 
-const rawModalFiltered = computed(() => {
-  let pts = rawModalPoints.value
+const rawFiltered = computed(() => {
+  let pts = rawPoints.value
   if (rawFilter.value !== 'all') {
     pts = pts.filter(p => p.step_type === rawFilter.value)
   }
@@ -134,13 +166,25 @@ const rawModalFiltered = computed(() => {
   return pts
 })
 
-const rawModalPageCount = computed(() =>
-  Math.max(1, Math.ceil(rawModalFiltered.value.length / RAW_PAGE_SIZE))
+const rawPageCount = computed(() =>
+  Math.max(1, Math.ceil(rawFiltered.value.length / RAW_PAGE_SIZE))
 )
-const rawModalPagePoints = computed(() => {
+const rawPagePoints = computed(() => {
   const start = rawPage.value * RAW_PAGE_SIZE
-  return rawModalFiltered.value.slice(start, start + RAW_PAGE_SIZE)
+  return rawFiltered.value.slice(start, start + RAW_PAGE_SIZE)
 })
+
+// Emit when user wants to fetch a cycle that isn't cached yet — parent
+// already has the fetch machinery via toggle-cycle / replace-cycles.
+function requestRawCycle(cycleNumber) {
+  if (cycleNumber == null) return
+  rawCycle.value = cycleNumber
+  rawPage.value = 0
+  const s = rawAutoSession.value
+  if (s && !s.cycleDataMap?.[cycleNumber]?.length) {
+    emit('toggle-cycle', cycleNumber)
+  }
+}
 
 // Panel "📐 Как считаем" — collapsed by default
 const formulasOpen = ref(false)
@@ -251,15 +295,24 @@ function decimate(points) {
 // Default (1000ms) made multi-session toggles feel sluggish.
 const FAST_ANIM = { duration: 150, easing: 'easeOutQuad' }
 
-// Legend dedup: by default Chart.js generates one legend entry per
-// dataset — which means per session × {discharge, charge} = 2 entries.
-// Past ~5 sessions the legend hogs the chart. We collapse into one entry
-// per session; the solid-vs-dashed convention is stable and explained
-// once in the chip bar tooltip.
+// Legend dedup + adaptive sort.
+//
+// Dedup: one entry per unique "anchor" (everything before " · "). For
+// voltage profile / dQ/dV that's "Ц{N}_Акк. №X" — one entry per cycle
+// per session. For capacity+CE that's "Акк. №X" — one entry per session.
+//
+// Sort (voltage/dQdV only): cycle number first, then session label.
+// Without sorting, datasets are ordered "all cycles of session 1, then
+// all cycles of session 2, …" which makes comparing the same cycle
+// across sessions tedious (user has to scan back and forth across the
+// whole legend). Sorted output puts "Ц1_Акк№1а, Ц1_Акк№1б, Ц2_Акк№1а,
+// Ц2_Акк№1б, …" — same cycle adjacent, session pairs grouped visually.
+//
+// Session-only labels (capacity+CE chart) are kept in original insertion
+// order (which matches the activeSessionIds order, the user's anchor).
 function dedupeLegend(chart) {
   const seen = new Map()
   chart.data.datasets.forEach((ds, idx) => {
-    // Extract session prefix: "#42 Акк#5 · разряд" → "#42 Акк#5"
     const sessionKey = (ds.label || '').split(' · ')[0] || ds.label
     if (seen.has(sessionKey)) return
     seen.set(sessionKey, {
@@ -271,48 +324,92 @@ function dedupeLegend(chart) {
       datasetIndex: idx,
     })
   })
-  return Array.from(seen.values())
+  const entries = Array.from(seen.values())
+
+  // Parse "Ц{N}_..." prefix. Entries without the prefix stay at the top
+  // in their original (insertion) order.
+  const parseCycle = (text) => {
+    const m = (text || '').match(/^Ц(\d+)_(.+)/)
+    return m ? { cycle: Number(m[1]), rest: m[2] } : null
+  }
+  entries.sort((a, b) => {
+    const ap = parseCycle(a.text)
+    const bp = parseCycle(b.text)
+    if (!ap && !bp) return 0          // both are session-only, keep order
+    if (!ap) return -1                 // non-cycle stays first
+    if (!bp) return 1
+    if (ap.cycle !== bp.cycle) return ap.cycle - bp.cycle
+    return ap.rest.localeCompare(bp.rest, 'ru')
+  })
+  return entries
 }
 
 // ── Capacity + CE (combined plot, dual Y-axis) ─────────────────────────
 // Standard publication layout (see reference images from lab colleague):
-//   Left Y  — discharge capacity (Ah), solid line with markers
+//   Left Y  — capacity (Ah or mAh/g) as solid line with markers
 //   Right Y — Coulombic efficiency (%), thinner dotted line
-// One line pair per session, both sharing the session's color so they
-// read as "that cell's fade × that cell's CE". Showing them on one
-// canvas instead of two saves horizontal space and matches how real
-// Li-ion papers present it.
+//
+// stepFilter respected:
+//   'discharge' (default) — discharge capacity only (standard capacity-fade
+//                           view), incomplete cycles with only charge data
+//                           show a gap
+//   'charge'              — charge capacity only (useful for formation
+//                           analysis + recovers incomplete cycles whose
+//                           discharge was truncated)
+//   'both'                — overlay discharge (solid) + charge (dashed)
 const capacityChartData = computed(() => {
   const datasets = []
   const selectedSet = new Set(props.selectedCycles)
   const isSolo = props.sessions.length === 1
+  const showDischarge = props.stepFilter !== 'charge'
+  const showCharge = props.stepFilter === 'charge' || props.stepFilter === 'both'
 
   for (const s of props.sessions) {
     if (!s.summary?.length) continue
 
-    // Line 1: discharge capacity (left Y). Fill-under-line in solo mode.
-    datasets.push({
-      label: sessionShortLabel(s),
-      data: s.summary.map(row => ({
-        x: row.cycle_number,
-        y: convertCapacity(row.discharge_capacity_ah, s),
-      })),
-      yAxisID: 'y',
-      borderColor: s.color,
-      backgroundColor: isSolo ? fillColor(s.color, 0.08) : 'transparent',
-      fill: isSolo,
-      tension: 0.2,
-      pointRadius: s.summary.map(row => selectedSet.has(row.cycle_number) ? 5 : 2.5),
-      pointBackgroundColor: s.summary.map(row =>
-        selectedSet.has(row.cycle_number) ? '#D3A754' : s.color
-      ),
-      pointHoverRadius: 6,
-      borderWidth: 1.8,
-    })
+    // Discharge line (left Y)
+    if (showDischarge) {
+      datasets.push({
+        label: sessionShortLabel(s),
+        data: s.summary.map(row => ({
+          x: row.cycle_number,
+          y: convertCapacity(row.discharge_capacity_ah, s),
+        })),
+        yAxisID: 'y',
+        borderColor: s.color,
+        backgroundColor: isSolo && !showCharge ? fillColor(s.color, 0.08) : 'transparent',
+        fill: isSolo && !showCharge,
+        tension: 0.2,
+        pointRadius: s.summary.map(row => selectedSet.has(row.cycle_number) ? 5 : 2.5),
+        pointBackgroundColor: s.summary.map(row =>
+          selectedSet.has(row.cycle_number) ? '#D3A754' : s.color
+        ),
+        pointHoverRadius: 6,
+        borderWidth: 1.8,
+      })
+    }
 
-    // Line 2: Coulombic efficiency (right Y). Faded shade so the eye
-    // reads capacity as primary. Dotted dash so it's visually distinct
-    // from the solid capacity line even when colors overlap.
+    // Charge line (left Y, dashed) — shown when filter includes charge.
+    // Recovers incomplete cycles where only the charge half was recorded.
+    if (showCharge) {
+      datasets.push({
+        label: showDischarge ? `${sessionShortLabel(s)} · заряд` : sessionShortLabel(s),
+        data: s.summary.map(row => ({
+          x: row.cycle_number,
+          y: convertCapacity(row.charge_capacity_ah, s),
+        })),
+        yAxisID: 'y',
+        borderColor: s.color,
+        backgroundColor: 'transparent',
+        borderDash: [4, 2],
+        tension: 0.2,
+        pointRadius: 2,
+        pointStyle: 'triangle',
+        borderWidth: 1.4,
+      })
+    }
+
+    // CE line (right Y). Faded shade so the eye reads capacity as primary.
     datasets.push({
       label: `${sessionShortLabel(s)} · CE`,
       data: s.summary.map(row => ({
@@ -364,7 +461,22 @@ const capacityOptions = computed(() => ({
             : 'Ёмкость и Кулоновская эффективность'),
       font: { size: 13, weight: 600 },
       color: '#003274',
-      padding: { bottom: 10 },
+      padding: { bottom: 4 },
+    },
+    subtitle: {
+      display: true,
+      text: (() => {
+        // Describe line styles so the user can decode what's on the plot
+        // without reading the (deduped) legend. Adapts to current filter.
+        const parts = []
+        if (props.stepFilter !== 'charge') parts.push('── discharge')
+        if (props.stepFilter === 'charge' || props.stepFilter === 'both') parts.push('▵▵ charge')
+        parts.push('⋯ CE (right axis)')
+        return parts.join('   ')
+      })(),
+      font: { size: 10, style: 'italic' },
+      color: '#6B7280',
+      padding: { bottom: 8 },
     },
     tooltip: {
       callbacks: { afterBody: () => 'Клик по ёмкости — добавить/убрать цикл' },
@@ -387,7 +499,7 @@ const capacityOptions = computed(() => ({
     y1: {
       type: 'linear',
       position: 'right',
-      title: { display: true, text: 'CE (%)', font: { size: 10 } },
+      title: { display: true, text: 'Coulombic efficiency, %', font: { size: 10 } },
       suggestedMin: 70,
       suggestedMax: 101,
       ticks: { font: { size: 10 } },
@@ -395,7 +507,7 @@ const capacityOptions = computed(() => ({
     },
     x: {
       type: 'linear',
-      title: { display: true, text: 'Цикл', font: { size: 10 } },
+      title: { display: true, text: 'Cycle number', font: { size: 10 } },
       ticks: { font: { size: 10 }, stepSize: 1 },
       grid: { display: false },
     },
@@ -526,7 +638,7 @@ const voltageOptions = computed(() => ({
       type: 'linear',
       title: {
         display: true,
-        text: hasCapacity.value ? capacityAxisLabel() : 'Время (с)',
+        text: hasCapacity.value ? capacityAxisLabel() : 'Time, s',
         font: { size: 10 },
       },
       ticks: { font: { size: 10 } },
@@ -653,7 +765,7 @@ const dqdvOptions = computed(() => ({
     },
   },
   scales: {
-    y: { title: { display: true, text: '|dQ/dV| (Ah/V)', font: { size: 10 } }, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
+    y: { title: { display: true, text: '|dQ/dV|, Ah/V', font: { size: 10 } }, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
     x: {
       type: 'linear',
       title: { display: true, text: 'E, V', font: { size: 10 } },
@@ -869,8 +981,9 @@ function exportChartPNG(chartRef, name) {
                 v-for="row in s.summary"
                 :key="row.cycle_number"
                 class="summary-row"
-                :title="'Открыть сырые точки цикла ' + row.cycle_number"
-                @click="openRawPoints(s, row.cycle_number)"
+                :class="{ 'summary-row--active': rawAutoSession?.session_id === s.session_id && rawAutoCycle === row.cycle_number }"
+                :title="'Показать сырые точки этого цикла ниже'"
+                @click="selectRawView(s, row.cycle_number)"
               >
                 <td class="cell-cycle">{{ row.cycle_number }}</td>
                 <td>{{ formatCap(row.charge_capacity_ah, s) }}</td>
@@ -883,6 +996,116 @@ function exportChartPNG(chartRef, name) {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <!-- 🔍 Raw datapoints panel — always visible, lets the user paginate
+         through every point of a chosen (session, cycle) for verification.
+         Defaults to the first active session + first cycle with data.
+         Row click in the summary table above updates the selection. -->
+    <div v-if="sessions.length" class="raw-panel">
+      <div class="raw-panel-head">
+        <span class="raw-panel-title">🔍 Сырые точки</span>
+
+        <!-- Session picker (only shown when > 1 active) -->
+        <template v-if="sessions.length > 1">
+          <label class="raw-label">Измерение:</label>
+          <select
+            class="raw-select"
+            :value="rawAutoSession?.session_id"
+            @change="e => selectRawView(sessions.find(x => x.session_id === Number(e.target.value)), rawAutoCycle)"
+          >
+            <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">
+              {{ sessionShortLabel(s) }}
+            </option>
+          </select>
+        </template>
+
+        <label class="raw-label">Цикл:</label>
+        <select
+          class="raw-select"
+          :value="rawAutoCycle"
+          @change="e => requestRawCycle(Number(e.target.value))"
+        >
+          <option v-for="opt in rawCycleOptions" :key="opt.value" :value="opt.value">
+            Ц{{ opt.value }}{{ opt.loaded ? '' : ' (не загружен)' }}
+          </option>
+        </select>
+
+        <label class="raw-label">Шаг:</label>
+        <div class="raw-filter-btns">
+          <button
+            v-for="opt in [
+              { v: 'all',       l: 'Все' },
+              { v: 'charge',    l: 'Заряд' },
+              { v: 'discharge', l: 'Разряд' },
+              { v: 'cccv',      l: 'CCCV' },
+              { v: 'rest',      l: 'Отдых' },
+            ]"
+            :key="opt.v"
+            class="raw-filter-btn"
+            :class="{ 'is-active': rawFilter === opt.v }"
+            @click="rawFilter = opt.v; rawPage = 0"
+          >{{ opt.l }}</button>
+        </div>
+
+        <label class="raw-label">V от</label>
+        <input v-model.number="rawSearchMin" type="number" step="0.01" class="raw-range" placeholder="—"
+               @input="rawPage = 0" />
+        <label class="raw-label">до</label>
+        <input v-model.number="rawSearchMax" type="number" step="0.01" class="raw-range" placeholder="—"
+               @input="rawPage = 0" />
+
+        <span class="raw-count">
+          <strong>{{ rawFiltered.length }}</strong>
+          <span class="raw-count-total">/ {{ rawPoints.length }} точек</span>
+        </span>
+      </div>
+
+      <!-- Points table or hint to pick a cycle -->
+      <div v-if="rawPoints.length" class="raw-table-scroll">
+        <table class="raw-table">
+          <thead>
+            <tr>
+              <th class="c-idx">#</th>
+              <th>t (с)</th>
+              <th>V</th>
+              <th>I (A)</th>
+              <th>Q (Ah)</th>
+              <th>step</th>
+              <th>type</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(p, idx) in rawPagePoints" :key="rawPage * 500 + idx">
+              <td class="c-idx">{{ rawPage * 500 + idx + 1 }}</td>
+              <td>{{ p.time_s == null ? '—' : p.time_s.toFixed(2) }}</td>
+              <td>{{ p.voltage_v == null ? '—' : p.voltage_v.toFixed(5) }}</td>
+              <td>{{ p.current_a == null ? '—' : p.current_a.toExponential(4) }}</td>
+              <td>{{ p.capacity_ah == null ? '—' : p.capacity_ah.toExponential(4) }}</td>
+              <td>{{ p.step_number ?? '—' }}</td>
+              <td>
+                <span class="raw-type-chip" :data-type="p.step_type">{{ p.step_type || '—' }}</span>
+              </td>
+            </tr>
+            <tr v-if="!rawPagePoints.length">
+              <td colspan="7" class="raw-empty">Нет точек под фильтр</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else class="raw-empty-panel">
+        Цикл не загружен. Выберите цикл выше или в блоке «Циклы» — данные
+        подгрузятся и появятся здесь.
+      </div>
+
+      <!-- Pagination -->
+      <div v-if="rawPageCount > 1" class="raw-pagination">
+        <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage = 0">« первая</button>
+        <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage--">‹ назад</button>
+        <span class="raw-pg-info">Страница {{ rawPage + 1 }} из {{ rawPageCount }}</span>
+        <button class="raw-pg-btn" :disabled="rawPage >= rawPageCount - 1" @click="rawPage++">вперёд ›</button>
+        <button class="raw-pg-btn" :disabled="rawPage >= rawPageCount - 1" @click="rawPage = rawPageCount - 1">последняя »</button>
       </div>
     </div>
 
@@ -1030,96 +1253,6 @@ function exportChartPNG(chartRef, name) {
       </div>
     </div>
 
-    <!-- Raw datapoints viewer modal — opens when user clicks a row in
-         the summary table. Shows every point of that cycle with filter
-         by step_type and voltage-range search. -->
-    <Dialog
-      v-model:visible="rawModalOpen"
-      :modal="true"
-      :dismissableMask="true"
-      :style="{ width: '880px', maxWidth: '95vw' }"
-      :header="rawModalSession && rawModalCycle != null
-        ? `Сырые точки · ${sessionShortLabel(rawModalSession)} · Цикл ${rawModalCycle}`
-        : 'Сырые точки'"
-    >
-      <div v-if="rawModalSession" class="raw-modal">
-        <!-- Filter row -->
-        <div class="raw-filter-row">
-          <div class="raw-filter-group">
-            <label>Тип шага:</label>
-            <div class="raw-filter-btns">
-              <button
-                v-for="opt in [
-                  { v: 'all',       l: 'Все'       },
-                  { v: 'charge',    l: 'Заряд'    },
-                  { v: 'discharge', l: 'Разряд'   },
-                  { v: 'cccv',      l: 'CCCV'     },
-                  { v: 'rest',      l: 'Отдых'    },
-                ]"
-                :key="opt.v"
-                class="raw-filter-btn"
-                :class="{ 'is-active': rawFilter === opt.v }"
-                @click="rawFilter = opt.v; rawPage = 0"
-              >{{ opt.l }}</button>
-            </div>
-          </div>
-          <div class="raw-filter-group">
-            <label>V от</label>
-            <input v-model.number="rawSearchMin" type="number" step="0.01" class="raw-range" placeholder="—"
-                   @input="rawPage = 0" />
-            <label>до</label>
-            <input v-model.number="rawSearchMax" type="number" step="0.01" class="raw-range" placeholder="—"
-                   @input="rawPage = 0" />
-          </div>
-          <div class="raw-count">
-            Показано: <strong>{{ rawModalFiltered.length }}</strong>
-            из {{ rawModalPoints.length }} точек
-          </div>
-        </div>
-
-        <!-- Points table -->
-        <div class="raw-table-scroll">
-          <table class="raw-table">
-            <thead>
-              <tr>
-                <th class="c-idx">#</th>
-                <th>t (s)</th>
-                <th>V</th>
-                <th>I (A)</th>
-                <th>Q (Ah)</th>
-                <th>step</th>
-                <th>type</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(p, idx) in rawModalPagePoints" :key="rawPage * 200 + idx">
-                <td class="c-idx">{{ rawPage * 200 + idx + 1 }}</td>
-                <td>{{ p.time_s?.toFixed(2) ?? '—' }}</td>
-                <td>{{ p.voltage_v?.toFixed(5) ?? '—' }}</td>
-                <td>{{ p.current_a == null ? '—' : p.current_a.toExponential(4) }}</td>
-                <td>{{ p.capacity_ah == null ? '—' : p.capacity_ah.toExponential(4) }}</td>
-                <td>{{ p.step_number ?? '—' }}</td>
-                <td>
-                  <span class="raw-type-chip" :data-type="p.step_type">{{ p.step_type || '—' }}</span>
-                </td>
-              </tr>
-              <tr v-if="!rawModalPagePoints.length">
-                <td colspan="7" class="raw-empty">Нет точек под фильтр</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <!-- Pagination -->
-        <div v-if="rawModalPageCount > 1" class="raw-pagination">
-          <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage = 0">« первая</button>
-          <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage--">‹ назад</button>
-          <span class="raw-pg-info">Страница {{ rawPage + 1 }} из {{ rawModalPageCount }}</span>
-          <button class="raw-pg-btn" :disabled="rawPage >= rawModalPageCount - 1" @click="rawPage++">вперёд ›</button>
-          <button class="raw-pg-btn" :disabled="rawPage >= rawModalPageCount - 1" @click="rawPage = rawModalPageCount - 1">последняя »</button>
-        </div>
-      </div>
-    </Dialog>
   </div>
 </template>
 
@@ -1481,28 +1614,53 @@ function exportChartPNG(chartRef, name) {
   font-size: 11px;
 }
 
-/* ── Raw datapoints modal ── */
-.raw-modal {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* ── Raw datapoints panel (inline, always visible) ── */
+.raw-panel {
+  border: 1px solid rgba(0, 50, 116, 0.08);
+  border-radius: 8px;
+  background: white;
+  overflow: hidden;
 }
-.raw-filter-row {
+.raw-panel-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   flex-wrap: wrap;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(0, 50, 116, 0.08);
+  padding: 8px 14px;
+  background: rgba(0, 50, 116, 0.02);
+  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
 }
-.raw-filter-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.raw-panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #003274;
+  margin-right: 4px;
+}
+.raw-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0, 50, 116, 0.55);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.raw-select {
+  padding: 3px 8px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 4px;
+  background: white;
   font-size: 12px;
-  color: rgba(0, 50, 116, 0.7);
+  font-family: inherit;
+  color: #003274;
+  cursor: pointer;
 }
-.raw-filter-group label { font-size: 11px; font-weight: 600; }
+.raw-select:focus { outline: none; border-color: #003274; box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12); }
+
+.raw-empty-panel {
+  padding: 2rem;
+  text-align: center;
+  color: rgba(0, 50, 116, 0.5);
+  font-size: 12px;
+}
 .raw-filter-btns {
   display: inline-flex;
   border: 1px solid rgba(0, 50, 116, 0.15);
