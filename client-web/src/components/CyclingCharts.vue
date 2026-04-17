@@ -86,14 +86,42 @@ function sessionShortLabel(s) {
   return `#${s.session_id}`
 }
 
-// Translucent fill for the capacity fill-under-line (session.color + alpha)
-function fillColor(hex, alpha = 0.08) {
-  // #RRGGBB → rgba(r,g,b,alpha)
-  const h = hex.replace('#', '')
+// Translucent fill for the capacity fill-under-line (session.color + alpha).
+// Supports both #RRGGBB and hsl() strings (we use HSL for auto-generated
+// colors beyond the curated palette).
+function fillColor(color, alpha = 0.08) {
+  if (color?.startsWith('hsl(')) {
+    // hsl(h, s%, l%) → hsla(h, s%, l%, alpha)
+    return color.replace(/^hsl\((.+)\)$/, `hsla($1, ${alpha})`)
+  }
+  const h = String(color || '#003274').replace('#', '')
   const r = parseInt(h.slice(0, 2), 16)
   const g = parseInt(h.slice(2, 4), 16)
   const b = parseInt(h.slice(4, 6), 16)
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+// Legend dedup: by default Chart.js generates one legend entry per
+// dataset — which means per session × {discharge, charge} = 2 entries.
+// Past ~5 sessions the legend hogs the chart. We collapse into one entry
+// per session; the solid-vs-dashed convention is stable and explained
+// once in the chip bar tooltip.
+function dedupeLegend(chart) {
+  const seen = new Map()
+  chart.data.datasets.forEach((ds, idx) => {
+    // Extract session prefix: "#42 Акк#5 · разряд" → "#42 Акк#5"
+    const sessionKey = (ds.label || '').split(' · ')[0] || ds.label
+    if (seen.has(sessionKey)) return
+    seen.set(sessionKey, {
+      text: sessionKey,
+      fillStyle: ds.borderColor,
+      strokeStyle: ds.borderColor,
+      lineWidth: 2,
+      hidden: false,
+      datasetIndex: idx,
+    })
+  })
+  return Array.from(seen.values())
 }
 
 // ── Capacity vs Cycle (one line per session × {discharge, charge}) ──
@@ -161,7 +189,10 @@ const capacityOptions = computed(() => ({
     }
   },
   plugins: {
-    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+    legend: {
+      position: 'bottom',
+      labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend },
+    },
     title: {
       display: true,
       text: props.sessions.length > 1
@@ -214,7 +245,7 @@ const efficiencyOptions = computed(() => ({
     legend: {
       display: props.sessions.length > 1,
       position: 'bottom',
-      labels: { boxWidth: 12, font: { size: 11 } },
+      labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend },
     },
     title: {
       display: true,
@@ -308,7 +339,10 @@ const voltageOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+    legend: {
+      position: 'bottom',
+      labels: { boxWidth: 12, font: { size: 10 }, generateLabels: dedupeLegend },
+    },
     title: {
       display: true,
       text: (() => {
@@ -422,7 +456,10 @@ const dqdvOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+    legend: {
+      position: 'bottom',
+      labels: { boxWidth: 12, font: { size: 10 }, generateLabels: dedupeLegend },
+    },
     title: {
       display: true,
       text: 'Дифференциальная ёмкость (|dQ/dV|)',

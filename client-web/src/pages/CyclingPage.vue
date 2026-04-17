@@ -49,35 +49,40 @@ const cycleDataBySession = ref({})
 const loadingCyclesBy = ref({})
 const selectedCycles = ref([])
 
-// Limits. MAX_ACTIVE_SESSIONS matches the palette size — 8 distinct
-// colors, 8 active sessions max. Above that, colors would repeat. Voltage
-// profile × dQ/dV can get busy (8 sessions × 20 cycles × 2 step types ≈
-// 320 lines worst case), but since user has to click each one explicitly,
-// the burden is self-imposed. For bigger comparisons, Excel export (Phase 3)
-// is the right tool — graphs stop being useful past ~6 overlayed cells anyway.
-const MAX_ACTIVE_SESSIONS = 8
+// Limits. No hard cap on active sessions — use filters + compact chips +
+// legend dedup to keep the UI manageable. Very large comparisons (30+)
+// will still work, just the voltage profile becomes visual clutter;
+// that's the user's call, not an artificial guardrail.
 const MAX_SELECTED_CYCLES = 20
 const FETCH_CONCURRENCY = 4
 
-// Stable color palette — each active session gets a color based on its
-// position in activeSessionIds (first = BADB blue, second = orange, ...).
-// We don't hash session_id because that risks collisions on adjacent ids
-// (mod 8 maps 42 and 50 to the same slot), and it gives the primary color
-// to whatever the user activated first — the intuitive anchor.
+// Stable color palette — first 8 sessions get a curated color from the
+// palette (BADB blue → ochre); beyond 8, we generate additional colors
+// using the golden-angle rotation in HSL space. Golden angle ≈ 137.508°
+// gives maximum visual separation between consecutive indices — this is
+// a well-known trick for generating N distinct colors without overlap.
 const SESSION_PALETTE = [
   '#003274', // 1st — BADB blue
   '#E67E22', // 2nd — orange
   '#52C9A6', // 3rd — green
-  '#8E44AD', // 4th — purple (palette trails into rarely-used slots)
+  '#8E44AD', // 4th — purple
   '#D3A754', // 5th — ochre
   '#16A085', // 6th — teal
   '#E74C3C', // 7th — red
   '#2C3E50', // 8th — slate
 ]
+const GOLDEN_ANGLE = 137.508
+
 function colorForSession(sessionId) {
   const idx = activeSessionIds.value.indexOf(sessionId)
   if (idx < 0) return SESSION_PALETTE[0]
-  return SESSION_PALETTE[idx % SESSION_PALETTE.length]
+  if (idx < SESSION_PALETTE.length) return SESSION_PALETTE[idx]
+  // Beyond palette: distribute evenly across the hue wheel. Starting hue
+  // (200°) is chosen to avoid clashing with the first palette colors.
+  const hue = (200 + (idx - SESSION_PALETTE.length) * GOLDEN_ANGLE) % 360
+  // Saturation + lightness alternate for secondary variation
+  const alt = (idx - SESSION_PALETTE.length) % 2
+  return `hsl(${hue.toFixed(0)}, ${alt ? 55 : 65}%, ${alt ? 50 : 42}%)`
 }
 function isSessionActive(sessionId) {
   return activeSessionIds.value.includes(sessionId)
@@ -247,15 +252,6 @@ async function toggleSession(row) {
     // leave it. Empty cycles for a session just don't plot.
     return
   }
-  if (activeSessionIds.value.length >= MAX_ACTIVE_SESSIONS) {
-    toast.add({
-      severity: 'warn',
-      summary: 'Лимит сессий',
-      detail: `Можно сравнивать до ${MAX_ACTIVE_SESSIONS} сессий одновременно`,
-      life: 3000,
-    })
-    return
-  }
 
   // Activate: push ID first so color assignment is stable before fetch.
   activeSessionIds.value = [...activeSessionIds.value, sid]
@@ -303,12 +299,11 @@ async function onTableHeaderClick(field) {
     return
   }
 
-  // Activate visible rows that aren't yet active, up to the overall cap.
-  const toAdd = []
-  for (const s of visibleSessions) {
-    if (activeSessionIds.value.length + toAdd.length >= MAX_ACTIVE_SESSIONS) break
-    if (!isSessionActive(s.session_id)) toAdd.push(s)
-  }
+  // Activate all visible rows that aren't yet active. No cap — if the user
+  // filtered the table to "40 visible sessions" and hits this, they get 40
+  // active. The legend dedup + compact chips + golden-angle palette handle
+  // crowding gracefully.
+  const toAdd = visibleSessions.filter(s => !isSessionActive(s.session_id))
   if (!toAdd.length) return
 
   activeSessionIds.value = [...activeSessionIds.value, ...toAdd.map(s => s.session_id)]
@@ -321,17 +316,12 @@ async function onTableHeaderClick(field) {
       activeSessionIds.value = activeSessionIds.value.filter(id => id !== s.session_id)
     }
   }))
+}
 
-  // If the visible list exceeded the cap, let the user know we truncated.
-  const couldActivateCount = visibleSessions.filter(s => !isSessionActive(s.session_id) || toAdd.includes(s)).length
-  if (couldActivateCount > toAdd.length) {
-    toast.add({
-      severity: 'info',
-      summary: 'Лимит сессий',
-      detail: `Показаны первые ${MAX_ACTIVE_SESSIONS} · лимит одновременного сравнения`,
-      life: 3500,
-    })
-  }
+// "Убрать все" button — clears every active session + resets cycle pick.
+function clearAllActive() {
+  activeSessionIds.value = []
+  selectedCycles.value = []
 }
 
 // Toggle a cycle across ALL active sessions. selectedCycles is a single
@@ -621,28 +611,48 @@ const batteryOptions = computed(() =>
       </template>
     </CrudTable>
 
-    <!-- Active sessions bar (chips above charts) -->
+    <!-- Active sessions bar (chips above charts). Compact by default:
+         color swatch + #id + Акк# — file name in tooltip. When > 8 active,
+         chips shrink further (id-only) to fit more per row. Header has a
+         count + "Убрать все" action. -->
     <div v-if="activeSessionViews.length" class="active-sessions-bar glass-card">
-      <span class="active-label">На графиках:</span>
-      <div
-        v-for="s in activeSessionViews"
-        :key="s.session_id"
-        class="session-chip"
-        :style="{ borderColor: s.color, boxShadow: `inset 3px 0 0 ${s.color}` }"
-      >
-        <span class="chip-dot" :style="{ background: s.color }"></span>
-        <span class="chip-label">
-          <strong>#{{ s.session_id }}</strong>
-          <span v-if="s.battery_id"> · Акк#{{ s.battery_id }}</span>
-          <span v-if="s.file_name" class="chip-file" :title="s.file_name">· {{ s.file_name }}</span>
+      <div class="active-sessions-head">
+        <span class="active-label">
+          <i class="pi pi-chart-line"></i>
+          На графиках:
+          <strong>{{ activeSessionViews.length }}</strong>
+          <span v-if="activeSessionViews.length >= 10" class="active-hint">· наведите на чип для полного имени файла</span>
         </span>
-        <span v-if="s.loadingCycles.length" class="chip-loading">
-          <i class="pi pi-spin pi-spinner" style="font-size:9px"></i>
-          {{ s.loadingCycles.length }}
-        </span>
-        <button class="chip-close" title="Убрать с графиков" @click="removeActiveSession(s.session_id)">
-          <i class="pi pi-times" style="font-size:10px"></i>
+        <button
+          class="clear-all-btn"
+          :disabled="!activeSessionViews.length"
+          title="Убрать все сессии с графиков"
+          @click="clearAllActive"
+        >
+          <i class="pi pi-times-circle"></i>
+          Убрать все
         </button>
+      </div>
+      <div class="chips-wrap" :class="{ 'chips-wrap--dense': activeSessionViews.length > 8 }">
+        <div
+          v-for="s in activeSessionViews"
+          :key="s.session_id"
+          class="session-chip"
+          :style="{ borderColor: s.color, boxShadow: `inset 3px 0 0 ${s.color}` }"
+          :title="`#${s.session_id} · Акк #${s.battery_id || '?'}${s.file_name ? ' · ' + s.file_name : ''}`"
+        >
+          <span class="chip-dot" :style="{ background: s.color }"></span>
+          <span class="chip-label">
+            <strong>#{{ s.session_id }}</strong>
+            <span v-if="s.battery_id && activeSessionViews.length <= 8"> · Акк#{{ s.battery_id }}</span>
+          </span>
+          <span v-if="s.loadingCycles.length" class="chip-loading">
+            <i class="pi pi-spin pi-spinner" style="font-size:9px"></i>
+          </span>
+          <button class="chip-close" title="Убрать с графиков" @click="removeActiveSession(s.session_id)">
+            <i class="pi pi-times" style="font-size:10px"></i>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -659,7 +669,7 @@ const batteryOptions = computed(() =>
     <div v-else class="charts-placeholder glass-card">
       <i class="pi pi-chart-line" style="font-size:24px;opacity:0.3"></i>
       <div>Выберите одну или несколько сессий в таблице — графики появятся здесь.</div>
-      <div class="placeholder-hint">Клик по строке или по кружку слева добавит сессию на графики. До {{ MAX_ACTIVE_SESSIONS }} сессий одновременно.</div>
+      <div class="placeholder-hint">Клик по строке (или по кружку в столбце «График») добавит сессию на графики. Клик по заголовку «График» — включить/выключить все видимые строки.</div>
     </div>
 
     <!-- Upload dialog — multi-file -->
@@ -854,30 +864,90 @@ const batteryOptions = computed(() =>
 /* ── Active sessions chips bar ── */
 .active-sessions-bar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
   padding: 0.6rem 1rem;
-  flex-wrap: wrap;
+}
+.active-sessions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .active-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: rgba(0, 50, 116, 0.5);
-  flex-shrink: 0;
+  color: rgba(0, 50, 116, 0.55);
 }
+.active-label strong {
+  color: #003274;
+  font-size: 14px;
+  font-weight: 800;
+  margin: 0 2px;
+}
+.active-label i { font-size: 12px; }
+.active-hint {
+  text-transform: none;
+  font-weight: 400;
+  font-size: 10px;
+  color: rgba(0, 50, 116, 0.35);
+  letter-spacing: 0;
+}
+
+.clear-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid rgba(231, 76, 60, 0.3);
+  border-radius: 6px;
+  background: transparent;
+  color: #E74C3C;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.clear-all-btn:hover:not(:disabled) { background: #E74C3C; color: white; }
+.clear-all-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Wrap chips. Scrollable vertical area prevents the bar from taking over
+   the viewport when user has many sessions active. */
+.chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 2px;
+}
+/* Dense mode (9+ active) — tighter chip padding + hide battery text for
+   per-chip economy. Full info is in the tooltip. */
+.chips-wrap--dense .session-chip {
+  padding: 2px 4px 2px 8px;
+  font-size: 11px;
+  max-width: 90px;
+}
+.chips-wrap--dense .chip-label { font-size: 11px; }
+.chips-wrap--dense .chip-dot { width: 6px; height: 6px; }
+
 .session-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px 4px 12px;
+  padding: 3px 6px 3px 10px;
   border: 1.5px solid;
   border-radius: 8px;
   background: white;
   font-size: 12px;
   color: #1F2937;
-  max-width: 300px;
+  max-width: 240px;
+  transition: max-width 0.15s ease;
 }
 .chip-dot {
   width: 8px;
@@ -896,14 +966,6 @@ const batteryOptions = computed(() =>
   flex: 1;
 }
 .chip-label strong { color: #003274; font-weight: 700; }
-.chip-file {
-  color: #6B7280;
-  font-size: 11px;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .chip-loading {
   display: inline-flex;
   align-items: center;
@@ -915,8 +977,8 @@ const batteryOptions = computed(() =>
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border: none;
   background: rgba(0, 50, 116, 0.06);
   color: rgba(0, 50, 116, 0.6);
