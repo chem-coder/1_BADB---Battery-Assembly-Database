@@ -159,10 +159,21 @@ const rawFiltered = computed(() => {
   if (rawFilter.value !== 'all') {
     pts = pts.filter(p => p.step_type === rawFilter.value)
   }
-  const lo = Number(rawSearchMin.value)
-  const hi = Number(rawSearchMax.value)
-  if (Number.isFinite(lo)) pts = pts.filter(p => (p.voltage_v ?? -Infinity) >= lo)
-  if (Number.isFinite(hi)) pts = pts.filter(p => (p.voltage_v ?? Infinity) <= hi)
+  // Range inputs: an empty field is null/''; Number(null) = 0 which
+  // *is* finite, so we MUST check for "has a real value" first — otherwise
+  // the filter becomes "voltage_v <= 0" and rejects every positive reading.
+  const loRaw = rawSearchMin.value
+  const hiRaw = rawSearchMax.value
+  const hasLo = loRaw !== null && loRaw !== '' && Number.isFinite(Number(loRaw))
+  const hasHi = hiRaw !== null && hiRaw !== '' && Number.isFinite(Number(hiRaw))
+  if (hasLo) {
+    const lo = Number(loRaw)
+    pts = pts.filter(p => (p.voltage_v ?? -Infinity) >= lo)
+  }
+  if (hasHi) {
+    const hi = Number(hiRaw)
+    pts = pts.filter(p => (p.voltage_v ?? Infinity) <= hi)
+  }
   return pts
 })
 
