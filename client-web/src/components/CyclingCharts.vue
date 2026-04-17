@@ -49,6 +49,13 @@ const props = defineProps({
   // raw numbers per cycle (matches colleague's Excel output, useful for
   // paper-ready reports and for copy-pasting into other tools).
   showTables: { type: Boolean, default: true },
+  // 'both' | 'charge' | 'discharge'. Standard filter in electrochemistry
+  // software (BTS / NOVA / EC-Lab): you often want to look at just the
+  // charge curve (phase-transition analysis on lithiation) or just the
+  // discharge curve (delithiation + capacity fade). Applied to voltage
+  // profile + dQ/dV. Capacity+CE chart is per-cycle summary and not
+  // filterable by step.
+  stepFilter: { type: String, default: 'both' },
 })
 
 // Convert a capacity value (Ah) to the current display unit based on
@@ -399,7 +406,12 @@ const voltageChartData = computed(() => {
       // is specific), or time if capacity data isn't available at all.
       const xOf = (p) => useCapacity ? convertCapacity(p.capacity_ah, s) : p.time_s
 
-      if (charge.length) {
+      // Step filter: 'charge' hides discharge lines, 'discharge' hides
+      // charge, 'both' keeps everything.
+      const showCharge = props.stepFilter !== 'discharge'
+      const showDischarge = props.stepFilter !== 'charge'
+
+      if (showCharge && charge.length) {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge.map(p => ({ x: xOf(p), y: p.voltage_v })),
@@ -411,7 +423,7 @@ const voltageChartData = computed(() => {
           showLine: true,
         })
       }
-      if (discharge.length) {
+      if (showDischarge && discharge.length) {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge.map(p => ({ x: xOf(p), y: p.voltage_v })),
@@ -533,8 +545,10 @@ const dqdvChartData = computed(() => {
       // Old cycles fade, new cycles vivid — same convention as voltage profile
       const alpha = cycleAlpha(cIdx, nCycles)
       const cycleColor = fillColor(s.color, alpha)
+      const showCharge = props.stepFilter !== 'discharge'
+      const showDischarge = props.stepFilter !== 'charge'
 
-      if (charge.length) {
+      if (showCharge && charge.length) {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge,
@@ -546,7 +560,7 @@ const dqdvChartData = computed(() => {
           showLine: true,
         })
       }
-      if (discharge.length) {
+      if (showDischarge && discharge.length) {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge,

@@ -56,6 +56,11 @@ const selectedCycles = ref([])
 const experimentLabel = ref('')
 const publicationMode = ref(false)
 
+// Step filter for voltage profile + dQ/dV: 'both' | 'charge' | 'discharge'
+// Standard toggle in electrochemistry software — lets the user focus on
+// one half-cycle (phase-transition analysis vs. delithiation fade).
+const stepFilter = ref('both')
+
 // Capacity unit: 'Ah' (absolute) or 'mAh_per_g' (specific). mAh/g only
 // works when every active session has active_mass_mg populated —
 // availability is a computed guard, UI auto-falls back to 'Ah' otherwise.
@@ -663,6 +668,34 @@ const batteryOptions = computed(() =>
           />
         </div>
         <div class="toolbar-pubmode">
+          <label class="toolbar-label" title="Показывать только заряд, только разряд или оба">Показать</label>
+          <div class="pubmode-row">
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': stepFilter === 'both' }"
+              @click="stepFilter = 'both'"
+            >
+              Оба
+            </button>
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': stepFilter === 'charge' }"
+              @click="stepFilter = 'charge'"
+              title="Только заряд (пунктир)"
+            >
+              Заряд
+            </button>
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': stepFilter === 'discharge' }"
+              @click="stepFilter = 'discharge'"
+              title="Только разряд (сплошная)"
+            >
+              Разряд
+            </button>
+          </div>
+        </div>
+        <div class="toolbar-pubmode">
           <label class="toolbar-label">Единицы ёмкости</label>
           <div class="pubmode-row" :title="specificAvailable ? '' : 'Укажите массу активного материала для режима mAh/g'">
             <button
@@ -709,6 +742,7 @@ const batteryOptions = computed(() =>
         :experimentLabel="experimentLabel"
         :publicationMode="publicationMode"
         :capacityUnit="capacityUnit"
+        :stepFilter="stepFilter"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"
       />
