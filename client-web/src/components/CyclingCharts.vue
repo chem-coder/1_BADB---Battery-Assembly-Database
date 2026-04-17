@@ -137,7 +137,14 @@ function dedupeLegend(chart) {
   return Array.from(seen.values())
 }
 
-// ── Capacity vs Cycle (one line per session × {discharge, charge}) ──
+// ── Capacity vs Cycle (one line per session, discharge only) ──────────
+// This is the classic "capacity fade" plot. We show discharge capacity
+// only by default — that's the scientific standard (most Li-ion papers
+// plot discharge C vs cycle). Charge capacity is implicit: the CE chart
+// already encodes charge/discharge ratio, and showing both lines on
+// capacity just clutters the overlay. If a user needs to see the charge
+// side explicitly, that belongs on a dedicated "irreversible capacity"
+// plot (which we can add later).
 const capacityChartData = computed(() => {
   const datasets = []
   const selectedSet = new Set(props.selectedCycles)
@@ -145,11 +152,10 @@ const capacityChartData = computed(() => {
   for (const s of props.sessions) {
     if (!s.summary?.length) continue
 
-    // Discharge — solid line, session color, fill only for single-session
-    // case (multi-session fill stacks ugly and obscures other lines).
+    // Fill-under-line only in solo mode — overlap stacks ugly otherwise.
     const isSolo = props.sessions.length === 1
     datasets.push({
-      label: `${sessionShortLabel(s)} · разряд`,
+      label: sessionShortLabel(s),
       data: s.summary.map(row => ({
         x: row.cycle_number,
         y: row.discharge_capacity_ah,
@@ -164,21 +170,6 @@ const capacityChartData = computed(() => {
       ),
       pointHoverRadius: 6,
       borderWidth: 1.8,
-    })
-
-    // Charge — dashed line, same color, thinner
-    datasets.push({
-      label: `${sessionShortLabel(s)} · заряд`,
-      data: s.summary.map(row => ({
-        x: row.cycle_number,
-        y: row.charge_capacity_ah,
-      })),
-      borderColor: s.color,
-      backgroundColor: 'transparent',
-      borderDash: [4, 2],
-      tension: 0.2,
-      pointRadius: 1,
-      borderWidth: 1.3,
     })
   }
 
