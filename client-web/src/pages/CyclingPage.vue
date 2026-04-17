@@ -238,9 +238,9 @@ onMounted(loadData)
 async function toggleSession(row) {
   if (!row || row.status !== 'ready') {
     if (row?.status === 'processing') {
-      toast.add({ severity: 'info', summary: 'Сессия ещё обрабатывается', life: 2500 })
+      toast.add({ severity: 'info', summary: 'Данные обрабатываются', life: 2500 })
     } else if (row?.status === 'error') {
-      toast.add({ severity: 'error', summary: 'Сессия с ошибкой', detail: row.error_message || '', life: 3500 })
+      toast.add({ severity: 'error', summary: 'Ошибка обработки', detail: row.error_message || '', life: 3500 })
     }
     return
   }
@@ -265,7 +265,7 @@ async function toggleSession(row) {
   } catch {
     // Rollback on failure so the user can retry.
     activeSessionIds.value = activeSessionIds.value.filter(x => x !== sid)
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить данные сессии', life: 3000 })
+    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить данные', life: 3000 })
   }
 }
 
@@ -494,7 +494,7 @@ async function doUpload() {
     toast.add({
       severity: 'success',
       summary: 'Загрузка завершена',
-      detail: `Создано ${done} сессий`,
+      detail: `Загружено файлов: ${done}`,
       life: 4000,
     })
     showUpload.value = false
@@ -632,8 +632,7 @@ const batteryOptions = computed(() =>
     </div>
     <div v-else class="charts-placeholder glass-card">
       <i class="pi pi-chart-line" style="font-size:24px;opacity:0.3"></i>
-      <div>Выберите одну или несколько сессий в таблице — графики появятся здесь.</div>
-      <div class="placeholder-hint">Клик по строке (или по кружку в столбце «График») добавит сессию на графики. Клик по заголовку «График» — включить/выключить все видимые строки.</div>
+      <div>Выберите одно или несколько измерений в таблице — графики появятся здесь.</div>
     </div>
 
     <!-- Upload dialog — multi-file -->
@@ -676,7 +675,7 @@ const batteryOptions = computed(() =>
               <div class="file-row-title" :title="f.file.name">{{ f.file.name }}</div>
               <div class="file-row-sub">
                 {{ formatFileSize(f.file.size) }}
-                <span v-if="f.session_id" class="file-row-session">· сессия №{{ f.session_id }}</span>
+                <span v-if="f.session_id" class="file-row-session">· №{{ f.session_id }}</span>
                 <span v-if="f.duplicate" class="file-row-dup">· дубликат</span>
                 <span v-if="f.error" class="file-row-error">· {{ f.error }}</span>
               </div>

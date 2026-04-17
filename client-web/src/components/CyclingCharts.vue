@@ -81,12 +81,22 @@ const voltageChartRef = ref(null)
 const dqdvChartRef = ref(null)
 
 // ── Session label helper (shown in chart legends) ──
-// "Акк. №5" when battery_id known (the user-facing anchor), falls back to
-// session id when the session isn't attached to a battery. Russian № is
-// preferred over `#` in UI text throughout BADB.
+// Primary format: "Акк. №5" — battery number is the scientific anchor.
+// If the user activates two cycling runs of the same cell (e.g. "Cell 5
+// at 25°C" and "Cell 5 at 45°C"), they get suffixed: "Акк. №5а" /
+// "Акк. №5б" — same anchor, differentiable. We use Cyrillic а-з first
+// (up to 8 runs of one cell is plenty), falling back to digits beyond.
+// If the session has no battery attached at all, show "№42" bare.
+const BATTERY_RUN_SUFFIX = ['', 'а', 'б', 'в', 'г', 'д', 'е', 'ж', 'з']
+
 function sessionShortLabel(s) {
-  if (s.battery_id) return `Акк. №${s.battery_id}`
-  return `Сессия №${s.session_id}`
+  if (!s.battery_id) return `№${s.session_id}`
+  // How many active sessions share this battery_id? Which index is this one?
+  const peers = props.sessions.filter(x => x.battery_id === s.battery_id)
+  if (peers.length <= 1) return `Акк. №${s.battery_id}`
+  const idx = peers.findIndex(x => x.session_id === s.session_id)
+  const suffix = BATTERY_RUN_SUFFIX[idx + 1] ?? String(idx + 1)
+  return `Акк. №${s.battery_id}${suffix}`
 }
 
 // Translucent fill for the capacity fill-under-line (session.color + alpha).
@@ -199,7 +209,7 @@ const capacityOptions = computed(() => ({
     title: {
       display: true,
       text: props.sessions.length > 1
-        ? `Ёмкость vs Цикл (${props.sessions.length} сессий)`
+        ? `Ёмкость vs Цикл · ${props.sessions.length} измерений`
         : 'Ёмкость vs Цикл',
       font: { size: 13, weight: 600 },
       color: '#003274',
@@ -253,7 +263,7 @@ const efficiencyOptions = computed(() => ({
     title: {
       display: true,
       text: props.sessions.length > 1
-        ? `Кулоновская эффективность (${props.sessions.length} сессий)`
+        ? `Кулоновская эффективность · ${props.sessions.length} измерений`
         : 'Кулоновская эффективность',
       font: { size: 13, weight: 600 },
       color: '#003274',
@@ -352,7 +362,7 @@ const voltageOptions = computed(() => ({
         if (!props.selectedCycles.length) return 'Профиль напряжения'
         const cLabel = `${props.selectedCycles.length} ${props.selectedCycles.length === 1 ? 'цикл' : 'циклов'}`
         if (props.sessions.length <= 1) return `Профиль напряжения — ${cLabel}`
-        return `Профиль напряжения — ${props.sessions.length} сессий × ${cLabel}`
+        return `Профиль напряжения — ${props.sessions.length} измерений × ${cLabel}`
       })(),
       font: { size: 13, weight: 600 },
       color: '#003274',
