@@ -259,22 +259,38 @@ async function processFile(sessionId, filePath, format) {
       `, params);
     }
 
-    // Insert cycle summary
+    // Insert cycle summary — including the publication-grade extras:
+    // energy_efficiency, avg_charge_voltage_v, avg_discharge_voltage_v
+    // (added in migration 019). ON CONFLICT updates all computed metrics
+    // so re-processing a session refreshes everything, not just the core
+    // three columns we originally overwrote.
     for (const s of summary) {
       await pool.query(`
         INSERT INTO cycling_cycle_summary (session_id, cycle_number,
           charge_capacity_ah, discharge_capacity_ah, coulombic_efficiency,
-          charge_energy_wh, discharge_energy_wh, max_voltage_v, min_voltage_v,
-          avg_temperature_c, duration_s)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          energy_efficiency, charge_energy_wh, discharge_energy_wh,
+          avg_charge_voltage_v, avg_discharge_voltage_v,
+          max_voltage_v, min_voltage_v, avg_temperature_c, duration_s)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         ON CONFLICT (session_id, cycle_number) DO UPDATE SET
-          charge_capacity_ah = EXCLUDED.charge_capacity_ah,
-          discharge_capacity_ah = EXCLUDED.discharge_capacity_ah,
-          coulombic_efficiency = EXCLUDED.coulombic_efficiency
+          charge_capacity_ah      = EXCLUDED.charge_capacity_ah,
+          discharge_capacity_ah   = EXCLUDED.discharge_capacity_ah,
+          coulombic_efficiency    = EXCLUDED.coulombic_efficiency,
+          energy_efficiency       = EXCLUDED.energy_efficiency,
+          charge_energy_wh        = EXCLUDED.charge_energy_wh,
+          discharge_energy_wh     = EXCLUDED.discharge_energy_wh,
+          avg_charge_voltage_v    = EXCLUDED.avg_charge_voltage_v,
+          avg_discharge_voltage_v = EXCLUDED.avg_discharge_voltage_v,
+          max_voltage_v           = EXCLUDED.max_voltage_v,
+          min_voltage_v           = EXCLUDED.min_voltage_v,
+          avg_temperature_c       = EXCLUDED.avg_temperature_c,
+          duration_s              = EXCLUDED.duration_s
       `, [
         sessionId, s.cycle_number,
         s.charge_capacity_ah, s.discharge_capacity_ah, s.coulombic_efficiency,
-        s.charge_energy_wh, s.discharge_energy_wh, s.max_voltage_v, s.min_voltage_v,
+        s.energy_efficiency, s.charge_energy_wh, s.discharge_energy_wh,
+        s.avg_charge_voltage_v, s.avg_discharge_voltage_v,
+        s.max_voltage_v, s.min_voltage_v,
         s.avg_temperature_c, s.duration_s,
       ]);
     }

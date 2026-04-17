@@ -50,10 +50,11 @@ const loadingCyclesBy = ref({})
 const selectedCycles = ref([])
 
 // Limits. No hard cap on active sessions — use filters + compact chips +
-// legend dedup to keep the UI manageable. Very large comparisons (30+)
-// will still work, just the voltage profile becomes visual clutter;
-// that's the user's call, not an artificial guardrail.
-const MAX_SELECTED_CYCLES = 20
+// legend dedup to keep the UI manageable. Cycle-selection cap is 100:
+// real cycling runs can be 500-10000 cycles, and 100 is the visual
+// ceiling where individual voltage-profile lines still tell a story.
+// For bigger studies, decimate ("каждый 50-й") rather than chart all.
+const MAX_SELECTED_CYCLES = 100
 const FETCH_CONCURRENCY = 4
 
 // Stable color palette — first 8 sessions get a curated color from the

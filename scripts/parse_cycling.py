@@ -361,7 +361,18 @@ def safe_int(val):
 
 
 def compute_summary(datapoints):
-    """Compute per-cycle summary metrics from raw datapoints."""
+    """Compute per-cycle summary metrics from raw datapoints.
+
+    Scientific convention (Li-ion cycling):
+      - charge_capacity_ah: total charge accepted during the charging
+        portion of a cycle, including both CC and CV sub-steps if present.
+      - discharge_capacity_ah: total charge delivered during discharge.
+      - coulombic_efficiency (CE): Q_discharge / Q_charge * 100% — the
+        single most common degradation metric besides capacity fade.
+      - charge_energy_wh / discharge_energy_wh: ∫V·I·dt integrated per half-cycle.
+      - avg_charge_voltage / avg_discharge_voltage: mean V across the
+        respective step — captures polarisation growth (overpotential).
+    """
     cycles = {}
     for dp in datapoints:
         cn = dp.get('cycle_number', 0)
@@ -377,24 +388,48 @@ def compute_summary(datapoints):
     summary = []
     for cn in sorted(cycles.keys()):
         c = cycles[cn]
-        charge_cap = max_capacity(c['charge'])
-        discharge_cap = max_capacity(c['discharge'])
-        charge_energy = max_energy(c['charge'])
-        discharge_energy = max_energy(c['discharge'])
+        charge_cap = total_capacity(c['charge'])
+        discharge_cap = total_capacity(c['discharge'])
+        charge_energy = total_energy(c['charge'])
+        discharge_energy = total_energy(c['discharge'])
 
         voltages = [dp.get('voltage_v') for dp in c['all'] if dp.get('voltage_v') is not None]
         temps = [dp.get('temperature_c') for dp in c['all'] if dp.get('temperature_c') is not None]
         times = [dp.get('time_s') for dp in c['all'] if dp.get('time_s') is not None]
 
-        ce = (discharge_cap / charge_cap * 100) if charge_cap and charge_cap > 0 and discharge_cap is not None else None
+        # Per-half-cycle average voltage — input signal to polarisation /
+        # average-voltage-vs-cycle plots. Only voltage (not weighted by
+        # current) — standard publication convention.
+        chg_volts = [dp.get('voltage_v') for dp in c['charge'] if dp.get('voltage_v') is not None]
+        dch_volts = [dp.get('voltage_v') for dp in c['discharge'] if dp.get('voltage_v') is not None]
+        avg_charge_v = sum(chg_volts) / len(chg_volts) if chg_volts else None
+        avg_discharge_v = sum(dch_volts) / len(dch_volts) if dch_volts else None
+
+        # CE = Q_discharge / Q_charge × 100. Guard: charge_cap must be >0
+        # (Li-ion never has discharge-first cycles outside of discharge
+        # priming). If discharge_cap is a valid 0 (dead cell), keep it —
+        # plotting 0% CE is a signal, not a blank.
+        ce = None
+        if charge_cap is not None and charge_cap > 0 and discharge_cap is not None:
+            ce = (discharge_cap / charge_cap) * 100
+
+        # Energy efficiency: E_discharge / E_charge × 100. Complementary
+        # to CE — CE is about Coulombs, EE about round-trip Wh (includes
+        # voltage hysteresis). Papers often show both.
+        ee = None
+        if charge_energy is not None and charge_energy > 0 and discharge_energy is not None:
+            ee = (discharge_energy / charge_energy) * 100
 
         summary.append({
             'cycle_number': cn,
             'charge_capacity_ah': charge_cap,
             'discharge_capacity_ah': discharge_cap,
-            'coulombic_efficiency': round(ce, 2) if ce else None,
+            'coulombic_efficiency': round(ce, 2) if ce is not None else None,
+            'energy_efficiency': round(ee, 2) if ee is not None else None,
             'charge_energy_wh': charge_energy,
             'discharge_energy_wh': discharge_energy,
+            'avg_charge_voltage_v': round(avg_charge_v, 4) if avg_charge_v is not None else None,
+            'avg_discharge_voltage_v': round(avg_discharge_v, 4) if avg_discharge_v is not None else None,
             'max_voltage_v': max(voltages) if voltages else None,
             'min_voltage_v': min(voltages) if voltages else None,
             'avg_temperature_c': round(sum(temps) / len(temps), 1) if temps else None,
@@ -404,23 +439,69 @@ def compute_summary(datapoints):
     return summary
 
 
-def max_capacity(points):
-    caps = [dp.get('capacity_ah') for dp in points if dp.get('capacity_ah') is not None]
-    return max(caps) if caps else None
+def total_capacity(points):
+    """Sum of per-step max capacities within the same cycle+step_type.
+
+    Previously we took max(all_points.capacity_ah), but ELITECH (and most
+    potentiostat exports) reset capacity_ah at the start of each step:
+    in a CCCV protocol the CC step integrates 0 → X_cc, then the CV step
+    restarts 0 → X_cv. max() catches only X_cc. Real total is X_cc + X_cv.
+
+    Computing per step_number, taking each step's max, then summing
+    reproduces the true half-cycle capacity regardless of how many
+    sub-steps the protocol uses.
+    """
+    per_step = {}
+    for dp in points:
+        sn = dp.get('step_number')
+        cap = dp.get('capacity_ah')
+        if cap is None or sn is None:
+            continue
+        if sn not in per_step or cap > per_step[sn]:
+            per_step[sn] = cap
+    if not per_step:
+        return None
+    return sum(per_step.values())
 
 
-def max_energy(points):
-    energies = [dp.get('energy_wh') for dp in points if dp.get('energy_wh') is not None]
-    return max(energies) if energies else None
+def total_energy(points):
+    """Same logic as total_capacity but for energy (Wh).
+
+    ELITECH typically doesn't export energy_wh directly (we integrate it
+    on the client later), so this function is usually summing Nones in
+    current exports. Kept structurally parallel for future formats that
+    do emit energy per step.
+    """
+    per_step = {}
+    for dp in points:
+        sn = dp.get('step_number')
+        e = dp.get('energy_wh')
+        if e is None or sn is None:
+            continue
+        if sn not in per_step or e > per_step[sn]:
+            per_step[sn] = e
+    if not per_step:
+        return None
+    return sum(per_step.values())
 
 
 def extract_meta(datapoints, summary):
-    """Extract session metadata from parsed data."""
+    """Extract session metadata from parsed data.
+
+    total_cycles is the number of distinct cycle_numbers, computed as
+    max-min+1. This works for both 1-based (ELITECH: Cycle 1..N) and
+    0-based (generic CSV: 0..N-1) conventions — previously we wrote
+    max+1 which off-by-oned ELITECH files (10 cycles → 11 in the DB).
+    """
     times = [dp.get('time_s') for dp in datapoints if dp.get('time_s') is not None]
-    cycles = [dp.get('cycle_number') or 0 for dp in datapoints]
+    cycles = [dp.get('cycle_number') for dp in datapoints if dp.get('cycle_number') is not None]
+
+    total = 0
+    if cycles:
+        total = max(cycles) - min(cycles) + 1
 
     return {
-        'total_cycles': (max(cycles) + 1) if cycles else 0,
+        'total_cycles': total,
         'total_datapoints': len(datapoints),
         'started_at': None,  # Would need absolute timestamps from equipment
         'ended_at': None,

@@ -10,7 +10,6 @@
  */
 import { ref, computed } from 'vue'
 import { Line, Scatter } from 'vue-chartjs'
-import Select from 'primevue/select'
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -400,6 +399,13 @@ function computeDQDV(points) {
     if (steps.length < 2) return []
     const raw = []
     for (let i = 1; i < steps.length; i++) {
+      // Skip pairs spanning a step boundary. ELITECH resets capacity_ah
+      // at the start of each step; if we compute dQ = Q[i] - Q[i-1] across
+      // the CC→CV (or any multi-step) seam, dQ is a large negative number
+      // not representing real charge transfer — it's an integration reset.
+      // |dQ/dV| at that seam is a false peak. Same guard helps any file
+      // with rest steps interleaved between charge sub-steps.
+      if (steps[i].step_number !== steps[i - 1].step_number) continue
       const dV = steps[i].voltage_v - steps[i - 1].voltage_v
       const dQ = steps[i].capacity_ah - steps[i - 1].capacity_ah
       if (Math.abs(dV) < 0.002) continue  // skip nearly-flat regions (mV noise)
@@ -510,19 +516,14 @@ const rangeOpen = ref(false)
 const rangeFrom = ref(null)
 const rangeTo = ref(null)
 
-// "Каждый N-й" dropdown. editable: user can pick a preset OR type any int.
-// `everyNStep` holds the current chosen/typed value (number or string).
+// "Каждый N-й" — plain number input + a few preset buttons next to it.
+// PrimeVue's Select kept fighting our height overrides, and users want
+// to enter arbitrary values anyway (N = 50 on a 10000-cycle run is
+// common), so a native <input type="number"> is both simpler and more
+// scalable. `everyNStep` holds the current value.
 const everyNStep = ref(null)
-const everyNOptions = computed(() => {
-  const presets = [2, 3, 4, 5, 7, 10, 15, 20]
-  // Live count of how many cycles each preset would pick — useful so user
-  // sees "каждый 10-й (3)" before applying.
-  return presets.map(n => ({
-    value: n,
-    label: `каждый ${n}-й (${countEveryNth(n)})`,
-  }))
-})
-function onEveryNChange() {
+
+function onEveryNApply() {
   const n = Number(everyNStep.value)
   if (!Number.isFinite(n) || n < 1) return
   selectEveryNth(Math.round(n))
@@ -658,19 +659,22 @@ function exportChartPNG(chartRef, name) {
       <button class="filter-btn" @click="selectAll">
         Все ({{ Math.min(allCycleNumbers.length, maxSelected) }})
       </button>
-      <Select
-        v-model="everyNStep"
-        :options="everyNOptions"
-        optionLabel="label"
-        optionValue="value"
-        editable
-        placeholder="каждый N-й…"
-        size="small"
-        class="filter-select"
-        :disabled="allCycleNumbers.length < 2"
-        :title="'1, 1+N, 1+2N... Можно выбрать пресет или ввести свой шаг'"
-        @change="onEveryNChange"
-      />
+      <span class="filter-every-group">
+        <span class="filter-every-prefix">каждый</span>
+        <input
+          v-model.number="everyNStep"
+          type="number"
+          min="1"
+          :max="allCycleNumbers.length"
+          class="filter-input"
+          placeholder="N"
+          :disabled="allCycleNumbers.length < 2"
+          :title="'1, 1+N, 1+2N, ...'"
+          @change="onEveryNApply"
+          @keydown.enter="onEveryNApply"
+        />
+        <span class="filter-every-suffix">-й</span>
+      </span>
       <!-- Custom range popover -->
       <div class="filter-range" :class="{ 'is-open': rangeOpen }">
         <button class="filter-btn" @click="rangeOpen = !rangeOpen">
@@ -696,7 +700,7 @@ function exportChartPNG(chartRef, name) {
         Очистить
       </button>
       <span class="cycle-hint">
-        {{ selectedCycles.length }} из {{ allCycleNumbers.length }} · лимит {{ maxSelected }}
+        выбрано {{ selectedCycles.length }} из {{ allCycleNumbers.length }}
       </span>
     </div>
 
@@ -841,92 +845,51 @@ function exportChartPNG(chartRef, name) {
   border-color: #003274;
 }
 
-/* Editable Select for "каждый N-й" — forced to match filter-btn height
-   exactly. PrimeVue's default .p-select has its own line-height, padding
-   and min-height that win over our earlier overrides; we pin everything
-   with !important to get a uniform 24px pill. */
-.filter-select {
-  min-width: 160px;
-  max-width: 200px;
+/* "каждый N-й" — plain inline group: label text + number input + "-й" text.
+   Native <input> sizes naturally to match the filter-btn pills (same
+   padding, border, font), so there's nothing to fight. */
+.filter-every-group {
   display: inline-flex;
   align-items: center;
-}
-/* Root container */
-.filter-select :deep(.p-select) {
-  display: inline-flex !important;
-  align-items: center !important;
-  height: 24px !important;
-  min-height: 0 !important;
-  padding: 0 !important;
-  border: 1px solid rgba(0, 50, 116, 0.15) !important;
-  border-radius: 6px !important;
-  background: white !important;
-  box-shadow: none !important;
-  font-family: inherit;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 6px;
+  background: white;
   font-size: 12px;
-  transition: border-color 0.15s;
-}
-.filter-select :deep(.p-select:hover) {
-  border-color: rgba(0, 50, 116, 0.4) !important;
-}
-.filter-select :deep(.p-select.p-focus),
-.filter-select :deep(.p-select:focus-within) {
-  border-color: #003274 !important;
-  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12) !important;
-  outline: none !important;
-}
-
-/* Label cell — readonly mode */
-.filter-select :deep(.p-select-label) {
-  padding: 0 0 0 8px !important;
-  margin: 0 !important;
-  height: 22px !important;
-  min-height: 0 !important;
-  line-height: 22px !important;
-  font-size: 12px !important;
-  font-weight: 500;
   color: #003274;
-  display: flex;
-  align-items: center;
 }
-.filter-select :deep(.p-select-label.p-placeholder) {
-  color: rgba(0, 50, 116, 0.45);
-  font-weight: 400;
-}
-
-/* Editable input — PrimeVue renders an <input> directly under .p-select */
-.filter-select :deep(.p-select > input),
-.filter-select :deep(input.p-select-label),
-.filter-select :deep(.p-inputtext) {
-  height: 22px !important;
-  min-height: 0 !important;
-  padding: 0 0 0 8px !important;
-  margin: 0 !important;
-  line-height: 22px !important;
-  border: none !important;
-  background: transparent !important;
-  outline: none !important;
-  box-shadow: none !important;
-  font-size: 12px !important;
+.filter-every-prefix,
+.filter-every-suffix {
   font-weight: 500;
+  color: rgba(0, 50, 116, 0.6);
+}
+.filter-input {
+  width: 60px;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
   color: #003274;
   font-family: inherit;
+  padding: 0 2px;
+  outline: none;
+  text-align: center;
+  /* Hide browser default number spinners for a cleaner inline look */
+  -moz-appearance: textfield;
 }
-
-/* Dropdown chevron on the right */
-.filter-select :deep(.p-select-dropdown) {
-  width: 22px !important;
-  padding: 0 !important;
-  color: rgba(0, 50, 116, 0.55);
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.filter-input::-webkit-outer-spin-button,
+.filter-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
-.filter-select :deep(.p-select-dropdown svg),
-.filter-select :deep(.p-select-dropdown-icon) {
-  width: 10px !important;
-  height: 10px !important;
+.filter-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.filter-every-group:focus-within {
+  border-color: #003274;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.12);
 }
 
 /* Range popover — inline bubble */
