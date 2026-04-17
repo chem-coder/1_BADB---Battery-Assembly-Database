@@ -114,6 +114,15 @@ function fillColor(color, alpha = 0.08) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
+// Cycle-index alpha gradient. For voltage profile + dQ/dV we want old
+// cycles faded (they're context / "what was") and new cycles vivid
+// (they're the current state of the cell). Linear interp 0.35 → 1.0
+// across the selected cycles. When only one cycle is picked, full alpha.
+function cycleAlpha(cycleIdx, totalCycles) {
+  if (totalCycles <= 1) return 1.0
+  return 0.35 + (cycleIdx / (totalCycles - 1)) * 0.65
+}
+
 // Legend dedup: by default Chart.js generates one legend entry per
 // dataset — which means per session × {discharge, charge} = 2 entries.
 // Past ~5 sessions the legend hogs the chart. We collapse into one entry
@@ -304,6 +313,10 @@ const voltageChartData = computed(() => {
       // Thickness grows from 1.0 (first cycle) to ~2.2 (last cycle)
       const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.2 : 0.6)
 
+      // Old cycles fade, new cycles vivid — within the session's color
+      const alpha = cycleAlpha(cIdx, nCycles)
+      const cycleColor = fillColor(s.color, alpha)
+
       if (charge.length) {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
@@ -311,8 +324,8 @@ const voltageChartData = computed(() => {
             x: useCapacity ? p.capacity_ah : p.time_s,
             y: p.voltage_v,
           })),
-          borderColor: s.color,
-          backgroundColor: s.color,
+          borderColor: cycleColor,
+          backgroundColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
           borderDash: [4, 2],
@@ -326,8 +339,8 @@ const voltageChartData = computed(() => {
             x: useCapacity ? p.capacity_ah : p.time_s,
             y: p.voltage_v,
           })),
-          borderColor: s.color,
-          backgroundColor: s.color,
+          borderColor: cycleColor,
+          backgroundColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
           showLine: true,
@@ -426,13 +439,16 @@ const dqdvChartData = computed(() => {
 
       const { charge, discharge } = computeDQDV(points)
       const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.0 : 0.5)
+      // Old cycles fade, new cycles vivid — same convention as voltage profile
+      const alpha = cycleAlpha(cIdx, nCycles)
+      const cycleColor = fillColor(s.color, alpha)
 
       if (charge.length) {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge,
-          borderColor: s.color,
-          backgroundColor: s.color,
+          borderColor: cycleColor,
+          backgroundColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
           borderDash: [4, 2],
@@ -443,8 +459,8 @@ const dqdvChartData = computed(() => {
         datasets.push({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge,
-          borderColor: s.color,
-          backgroundColor: s.color,
+          borderColor: cycleColor,
+          backgroundColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
           showLine: true,
