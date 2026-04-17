@@ -1026,116 +1026,6 @@ function exportChartPNG(chartRef, name) {
       </div>
     </div>
 
-    <!-- 🔍 Raw datapoints panel — always visible, lets the user paginate
-         through every point of a chosen (session, cycle) for verification.
-         Defaults to the first active session + first cycle with data.
-         Row click in the summary table above updates the selection. -->
-    <div v-if="sessions.length" class="raw-panel">
-      <div class="raw-panel-head">
-        <span class="raw-panel-title">🔍 Сырые точки</span>
-
-        <!-- Session picker (only shown when > 1 active) -->
-        <template v-if="sessions.length > 1">
-          <label class="raw-label">Измерение:</label>
-          <select
-            class="raw-select"
-            :value="rawAutoSession?.session_id"
-            @change="e => selectRawView(sessions.find(x => x.session_id === Number(e.target.value)), rawAutoCycle)"
-          >
-            <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">
-              {{ sessionShortLabel(s) }}
-            </option>
-          </select>
-        </template>
-
-        <label class="raw-label">Цикл:</label>
-        <select
-          class="raw-select"
-          :value="rawAutoCycle"
-          @change="e => requestRawCycle(Number(e.target.value))"
-        >
-          <option v-for="opt in rawCycleOptions" :key="opt.value" :value="opt.value">
-            Ц{{ opt.value }}{{ opt.loaded ? '' : ' (не загружен)' }}
-          </option>
-        </select>
-
-        <label class="raw-label">Шаг:</label>
-        <div class="raw-filter-btns">
-          <button
-            v-for="opt in [
-              { v: 'all',       l: 'Все' },
-              { v: 'charge',    l: 'Заряд' },
-              { v: 'discharge', l: 'Разряд' },
-              { v: 'cccv',      l: 'CCCV' },
-              { v: 'rest',      l: 'Отдых' },
-            ]"
-            :key="opt.v"
-            class="raw-filter-btn"
-            :class="{ 'is-active': rawFilter === opt.v }"
-            @click="rawFilter = opt.v; rawPage = 0"
-          >{{ opt.l }}</button>
-        </div>
-
-        <label class="raw-label">V от</label>
-        <input v-model.number="rawSearchMin" type="number" step="0.01" class="raw-range" placeholder="—"
-               @input="rawPage = 0" />
-        <label class="raw-label">до</label>
-        <input v-model.number="rawSearchMax" type="number" step="0.01" class="raw-range" placeholder="—"
-               @input="rawPage = 0" />
-
-        <span class="raw-count">
-          <strong>{{ rawFiltered.length }}</strong>
-          <span class="raw-count-total">/ {{ rawPoints.length }} точек</span>
-        </span>
-      </div>
-
-      <!-- Points table or hint to pick a cycle -->
-      <div v-if="rawPoints.length" class="raw-table-scroll">
-        <table class="raw-table">
-          <thead>
-            <tr>
-              <th class="c-idx">#</th>
-              <th>t (с)</th>
-              <th>V</th>
-              <th>I (A)</th>
-              <th>Q (Ah)</th>
-              <th>step</th>
-              <th>type</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(p, idx) in rawPagePoints" :key="rawPage * 500 + idx">
-              <td class="c-idx">{{ rawPage * 500 + idx + 1 }}</td>
-              <td>{{ p.time_s == null ? '—' : p.time_s.toFixed(2) }}</td>
-              <td>{{ p.voltage_v == null ? '—' : p.voltage_v.toFixed(5) }}</td>
-              <td>{{ p.current_a == null ? '—' : p.current_a.toExponential(4) }}</td>
-              <td>{{ p.capacity_ah == null ? '—' : p.capacity_ah.toExponential(4) }}</td>
-              <td>{{ p.step_number ?? '—' }}</td>
-              <td>
-                <span class="raw-type-chip" :data-type="p.step_type">{{ p.step_type || '—' }}</span>
-              </td>
-            </tr>
-            <tr v-if="!rawPagePoints.length">
-              <td colspan="7" class="raw-empty">Нет точек под фильтр</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div v-else class="raw-empty-panel">
-        Цикл не загружен. Выберите цикл выше или в блоке «Циклы» — данные
-        подгрузятся и появятся здесь.
-      </div>
-
-      <!-- Pagination -->
-      <div v-if="rawPageCount > 1" class="raw-pagination">
-        <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage = 0">« первая</button>
-        <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage--">‹ назад</button>
-        <span class="raw-pg-info">Страница {{ rawPage + 1 }} из {{ rawPageCount }}</span>
-        <button class="raw-pg-btn" :disabled="rawPage >= rawPageCount - 1" @click="rawPage++">вперёд ›</button>
-        <button class="raw-pg-btn" :disabled="rawPage >= rawPageCount - 1" @click="rawPage = rawPageCount - 1">последняя »</button>
-      </div>
-    </div>
-
     <!-- 📐 Collapsible formulas panel (scientific transparency) -->
     <div v-if="sessions.length" class="formulas-panel">
       <button class="formulas-head" @click="formulasOpen = !formulasOpen">
@@ -1277,6 +1167,116 @@ function exportChartPNG(chartRef, name) {
       </button>
       <div class="chart-wrap chart-wrap--tall">
         <Scatter ref="dqdvChartRef" :data="dqdvChartData" :options="dqdvOptions" />
+      </div>
+    </div>
+
+    <!-- 🔍 Raw datapoints panel — at the bottom so users scan charts
+         first, then dig into the numbers for verification. Defaults to
+         the first active session + first cycle with data; row click in
+         the summary table above updates the selection. -->
+    <div v-if="sessions.length" class="raw-panel">
+      <div class="raw-panel-head">
+        <span class="raw-panel-title">🔍 Сырые точки</span>
+
+        <!-- Session picker (only shown when > 1 active) -->
+        <template v-if="sessions.length > 1">
+          <label class="raw-label">Измерение:</label>
+          <select
+            class="raw-select"
+            :value="rawAutoSession?.session_id"
+            @change="e => selectRawView(sessions.find(x => x.session_id === Number(e.target.value)), rawAutoCycle)"
+          >
+            <option v-for="s in sessions" :key="s.session_id" :value="s.session_id">
+              {{ sessionShortLabel(s) }}
+            </option>
+          </select>
+        </template>
+
+        <label class="raw-label">Цикл:</label>
+        <select
+          class="raw-select"
+          :value="rawAutoCycle"
+          @change="e => requestRawCycle(Number(e.target.value))"
+        >
+          <option v-for="opt in rawCycleOptions" :key="opt.value" :value="opt.value">
+            Ц{{ opt.value }}{{ opt.loaded ? '' : ' (не загружен)' }}
+          </option>
+        </select>
+
+        <label class="raw-label">Шаг:</label>
+        <div class="raw-filter-btns">
+          <button
+            v-for="opt in [
+              { v: 'all',       l: 'Все' },
+              { v: 'charge',    l: 'Заряд' },
+              { v: 'discharge', l: 'Разряд' },
+              { v: 'cccv',      l: 'CCCV' },
+              { v: 'rest',      l: 'Отдых' },
+            ]"
+            :key="opt.v"
+            class="raw-filter-btn"
+            :class="{ 'is-active': rawFilter === opt.v }"
+            @click="rawFilter = opt.v; rawPage = 0"
+          >{{ opt.l }}</button>
+        </div>
+
+        <label class="raw-label">V от</label>
+        <input v-model.number="rawSearchMin" type="number" step="0.01" class="raw-range" placeholder="—"
+               @input="rawPage = 0" />
+        <label class="raw-label">до</label>
+        <input v-model.number="rawSearchMax" type="number" step="0.01" class="raw-range" placeholder="—"
+               @input="rawPage = 0" />
+
+        <span class="raw-count">
+          <strong>{{ rawFiltered.length }}</strong>
+          <span class="raw-count-total">/ {{ rawPoints.length }} точек</span>
+        </span>
+      </div>
+
+      <!-- Points table or hint to pick a cycle -->
+      <div v-if="rawPoints.length" class="raw-table-scroll">
+        <table class="raw-table">
+          <thead>
+            <tr>
+              <th class="c-idx">#</th>
+              <th>t (с)</th>
+              <th>V</th>
+              <th>I (A)</th>
+              <th>Q (Ah)</th>
+              <th>step</th>
+              <th>type</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(p, idx) in rawPagePoints" :key="rawPage * 500 + idx">
+              <td class="c-idx">{{ rawPage * 500 + idx + 1 }}</td>
+              <td>{{ p.time_s == null ? '—' : p.time_s.toFixed(2) }}</td>
+              <td>{{ p.voltage_v == null ? '—' : p.voltage_v.toFixed(5) }}</td>
+              <td>{{ p.current_a == null ? '—' : p.current_a.toExponential(4) }}</td>
+              <td>{{ p.capacity_ah == null ? '—' : p.capacity_ah.toExponential(4) }}</td>
+              <td>{{ p.step_number ?? '—' }}</td>
+              <td>
+                <span class="raw-type-chip" :data-type="p.step_type">{{ p.step_type || '—' }}</span>
+              </td>
+            </tr>
+            <tr v-if="!rawPagePoints.length">
+              <td colspan="7" class="raw-empty">Нет точек под фильтр</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else class="raw-empty-panel">
+        Цикл не загружен. Выберите цикл выше или в блоке «Циклы» — данные
+        подгрузятся и появятся здесь.
+      </div>
+
+      <!-- Pagination -->
+      <div v-if="rawPageCount > 1" class="raw-pagination">
+        <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage = 0">« первая</button>
+        <button class="raw-pg-btn" :disabled="rawPage === 0" @click="rawPage--">‹ назад</button>
+        <span class="raw-pg-info">Страница {{ rawPage + 1 }} из {{ rawPageCount }}</span>
+        <button class="raw-pg-btn" :disabled="rawPage >= rawPageCount - 1" @click="rawPage++">вперёд ›</button>
+        <button class="raw-pg-btn" :disabled="rawPage >= rawPageCount - 1" @click="rawPage = rawPageCount - 1">последняя »</button>
       </div>
     </div>
 
