@@ -45,6 +45,10 @@ const props = defineProps({
   // when sessions have active_mass_mg populated — the parent toggles the
   // prop back to 'Ah' when any active session lacks mass.
   capacityUnit: { type: String, default: 'Ah' },
+  // When true, render summary tables under the capacity chart showing
+  // raw numbers per cycle (matches colleague's Excel output, useful for
+  // paper-ready reports and for copy-pasting into other tools).
+  showTables: { type: Boolean, default: true },
 })
 
 // Convert a capacity value (Ah) to the current display unit based on
@@ -62,6 +66,21 @@ function convertCapacity(ah, session) {
 // Axis labels match the active unit.
 function capacityAxisLabel() {
   return props.capacityUnit === 'mAh_per_g' ? 'C, mAh/g' : 'Ёмкость (Ah)'
+}
+
+// Format a capacity number for table cells. mAh/g gets 2 decimal places
+// (typical for electrode-scale cells with capacities 50-300 mAh/g),
+// absolute Ah gets 5 (cell-level values often < 0.01 Ah on coin cells).
+function formatCap(ah, session) {
+  const v = convertCapacity(ah, session)
+  if (v == null || !Number.isFinite(v)) return '—'
+  return props.capacityUnit === 'mAh_per_g' ? v.toFixed(2) : v.toFixed(5)
+}
+function formatPct(v) {
+  return (v == null || !Number.isFinite(v)) ? '—' : v.toFixed(2)
+}
+function formatVolt(v) {
+  return (v == null || !Number.isFinite(v)) ? '—' : v.toFixed(3)
 }
 
 // toggle-cycle — add/remove one cycle (across all active sessions)
@@ -740,6 +759,58 @@ function exportChartPNG(chartRef, name) {
       </div>
     </div>
 
+    <!-- Per-cycle summary tables — one per active session (replicates the
+         colleague's Excel tab with Chg/DChg/CE columns). Shown below the
+         capacity chart so the user can see numbers + plot together. -->
+    <div v-if="showTables && sessions.length" class="summary-tables">
+      <div
+        v-for="s in sessions"
+        :key="s.session_id"
+        class="summary-table-wrap"
+      >
+        <div class="summary-table-head" :style="{ borderColor: s.color }">
+          <span class="summary-table-chip" :style="{ background: s.color }"></span>
+          <strong>{{ sessionShortLabel(s) }}</strong>
+          <span v-if="s.file_name" class="summary-table-sub" :title="s.file_name">
+            · {{ s.file_name }}
+          </span>
+          <span v-if="s.active_mass_mg" class="summary-table-sub">
+            · масса AM: {{ Number(s.active_mass_mg).toFixed(3) }} mg
+          </span>
+        </div>
+        <div class="summary-table-scroll">
+          <table class="summary-table">
+            <thead>
+              <tr>
+                <th>Цикл</th>
+                <th :title="capacityUnit === 'mAh_per_g' ? 'Charge specific capacity, mAh per gram of active material' : 'Charge capacity, Ah'">
+                  Chg {{ capacityUnit === 'mAh_per_g' ? '(mAh/g)' : '(Ah)' }}
+                </th>
+                <th :title="capacityUnit === 'mAh_per_g' ? 'Discharge specific capacity' : 'Discharge capacity'">
+                  DChg {{ capacityUnit === 'mAh_per_g' ? '(mAh/g)' : '(Ah)' }}
+                </th>
+                <th title="Coulombic efficiency: DChg / Chg × 100">CE (%)</th>
+                <th title="Energy efficiency: E_dch / E_chg × 100 (round-trip)">EE (%)</th>
+                <th title="Среднее напряжение заряда">V̄ chg</th>
+                <th title="Среднее напряжение разряда">V̄ dch</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in s.summary" :key="row.cycle_number">
+                <td class="cell-cycle">{{ row.cycle_number }}</td>
+                <td>{{ formatCap(row.charge_capacity_ah, s) }}</td>
+                <td>{{ formatCap(row.discharge_capacity_ah, s) }}</td>
+                <td>{{ formatPct(row.coulombic_efficiency) }}</td>
+                <td>{{ formatPct(row.energy_efficiency) }}</td>
+                <td>{{ formatVolt(row.avg_charge_voltage_v) }}</td>
+                <td>{{ formatVolt(row.avg_discharge_voltage_v) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- Quick filters (replace whole selection) -->
     <div v-if="summary.length" class="cycle-filters">
       <span class="cycle-label">Фильтры:</span>
@@ -1047,6 +1118,81 @@ function exportChartPNG(chartRef, name) {
   font-size: 10px;
   color: rgba(0, 50, 116, 0.4);
   margin-left: 6px;
+}
+
+/* ── Per-session summary tables (mimics colleague's Excel layout) ── */
+.summary-tables {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.summary-table-wrap {
+  border: 1px solid rgba(0, 50, 116, 0.08);
+  border-radius: 8px;
+  background: white;
+  overflow: hidden;
+}
+.summary-table-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #1F2937;
+  background: rgba(0, 50, 116, 0.02);
+  border-bottom: 2px solid;   /* color set inline via :style */
+}
+.summary-table-head strong { color: #003274; font-weight: 700; }
+.summary-table-chip {
+  width: 10px; height: 10px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.summary-table-sub {
+  color: #6B7280;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.summary-table-scroll {
+  overflow-x: auto;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.summary-table thead th {
+  background: rgba(0, 50, 116, 0.04);
+  color: #003274;
+  font-weight: 600;
+  text-align: right;
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+}
+.summary-table thead th:first-child {
+  text-align: center;
+}
+.summary-table tbody td {
+  padding: 3px 10px;
+  text-align: right;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.04);
+  color: #1F2937;
+}
+.summary-table tbody tr:last-child td { border-bottom: none; }
+.summary-table tbody tr:hover td { background: rgba(0, 50, 116, 0.03); }
+.cell-cycle {
+  text-align: center !important;
+  font-weight: 600;
+  color: #003274 !important;
 }
 
 .chart-placeholder {
