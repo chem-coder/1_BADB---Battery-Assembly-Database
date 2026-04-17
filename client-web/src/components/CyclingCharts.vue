@@ -345,18 +345,25 @@ function dedupeLegend(chart) {
 }
 
 // ── Capacity + CE (combined plot, dual Y-axis) ─────────────────────────
-// Standard publication layout (see reference images from lab colleague):
-//   Left Y  — capacity (Ah or mAh/g) as solid line with markers
-//   Right Y — Coulombic efficiency (%), thinner dotted line
+// Matches the lab colleague's Excel style (reference image on file):
+//   Left Y  — capacity as solid line + FILLED circle markers (discharge)
+//             and optional dashed line + HOLLOW circle markers (charge).
+//             Both in the session's color (the "capacity" color family).
+//   Right Y — Coulombic efficiency in a DIFFERENT color family (ochre),
+//             thin line + small circles. Immediately readable as
+//             "that yellow line lives on the right axis".
 //
 // stepFilter respected:
-//   'discharge' (default) — discharge capacity only (standard capacity-fade
-//                           view), incomplete cycles with only charge data
-//                           show a gap
-//   'charge'              — charge capacity only (useful for formation
-//                           analysis + recovers incomplete cycles whose
-//                           discharge was truncated)
-//   'both'                — overlay discharge (solid) + charge (dashed)
+//   'discharge' — only the discharge line (standard capacity-fade view)
+//   'charge'    — only the charge line (recovers truncated last cycles)
+//   'both'      — both overlaid; charge uses hollow markers + dashed
+//
+// CE colour rule:
+//   Single session  → fixed BADB ochre (#D3A754), matches colleague's yellow
+//   Multi session   → derive from each session color but desaturate to
+//                     avoid confusion with the capacity lines
+const CE_COLOR = '#D3A754'  // BADB ochre — single-session CE default
+
 const capacityChartData = computed(() => {
   const datasets = []
   const selectedSet = new Set(props.selectedCycles)
@@ -367,7 +374,7 @@ const capacityChartData = computed(() => {
   for (const s of props.sessions) {
     if (!s.summary?.length) continue
 
-    // Discharge line (left Y)
+    // Discharge line — filled circle markers (colleague's convention)
     if (showDischarge) {
       datasets.push({
         label: sessionShortLabel(s),
@@ -377,39 +384,43 @@ const capacityChartData = computed(() => {
         })),
         yAxisID: 'y',
         borderColor: s.color,
-        backgroundColor: isSolo && !showCharge ? fillColor(s.color, 0.08) : 'transparent',
-        fill: isSolo && !showCharge,
+        backgroundColor: s.color,       // filled marker
+        fill: false,
         tension: 0.2,
-        pointRadius: s.summary.map(row => selectedSet.has(row.cycle_number) ? 5 : 2.5),
-        pointBackgroundColor: s.summary.map(row =>
-          selectedSet.has(row.cycle_number) ? '#D3A754' : s.color
-        ),
+        pointRadius: s.summary.map(row => selectedSet.has(row.cycle_number) ? 5 : 3),
+        pointBackgroundColor: s.color,
+        pointBorderColor: s.color,
+        pointStyle: 'circle',
         pointHoverRadius: 6,
         borderWidth: 1.8,
       })
     }
 
-    // Charge line (left Y, dashed) — shown when filter includes charge.
-    // Recovers incomplete cycles where only the charge half was recorded.
+    // Charge line — HOLLOW circle markers + dashed (colleague's convention)
     if (showCharge) {
       datasets.push({
-        label: showDischarge ? `${sessionShortLabel(s)} · заряд` : sessionShortLabel(s),
+        label: showDischarge ? `${sessionShortLabel(s)} · charge` : sessionShortLabel(s),
         data: s.summary.map(row => ({
           x: row.cycle_number,
           y: convertCapacity(row.charge_capacity_ah, s),
         })),
         yAxisID: 'y',
         borderColor: s.color,
-        backgroundColor: 'transparent',
+        backgroundColor: '#ffffff',     // hollow center
         borderDash: [4, 2],
         tension: 0.2,
-        pointRadius: 2,
-        pointStyle: 'triangle',
+        pointRadius: 3,
+        pointBackgroundColor: '#ffffff',
+        pointBorderColor: s.color,
+        pointStyle: 'circle',
+        pointBorderWidth: 1.6,
         borderWidth: 1.4,
       })
     }
 
-    // CE line (right Y). Faded shade so the eye reads capacity as primary.
+    // CE — DISTINCT color family (ochre for single-session matching the
+    // colleague's plot; desaturated session-color blend for multi).
+    const ceColor = isSolo ? CE_COLOR : fillColor(s.color, 0.45)
     datasets.push({
       label: `${sessionShortLabel(s)} · CE`,
       data: s.summary.map(row => ({
@@ -417,11 +428,12 @@ const capacityChartData = computed(() => {
         y: row.coulombic_efficiency,
       })),
       yAxisID: 'y1',
-      borderColor: fillColor(s.color, 0.55),
-      backgroundColor: fillColor(s.color, 0.55),
-      borderDash: [2, 3],
+      borderColor: ceColor,
+      backgroundColor: ceColor,
       tension: 0.2,
-      pointRadius: 2,
+      pointRadius: 2.2,
+      pointBackgroundColor: ceColor,
+      pointBorderColor: ceColor,
       pointStyle: 'circle',
       borderWidth: 1.2,
     })
@@ -449,6 +461,10 @@ const capacityOptions = computed(() => ({
   },
   plugins: {
     legend: {
+      // Solo mode: no legend (subtitle explains symbology — matches how
+      // colleague's Excel plots render). Multi-session: show legend so
+      // user can tell cells apart by color.
+      display: props.sessions.length > 1,
       position: 'bottom',
       labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend },
     },
@@ -457,8 +473,8 @@ const capacityOptions = computed(() => ({
       text: props.experimentLabel
         ? props.experimentLabel
         : (props.sessions.length > 1
-            ? `Ёмкость и CE · ${props.sessions.length} измерений`
-            : 'Ёмкость и Кулоновская эффективность'),
+            ? `Capacity & CE · ${props.sessions.length} cells`
+            : 'Capacity & Coulombic Efficiency'),
       font: { size: 13, weight: 600 },
       color: '#003274',
       padding: { bottom: 4 },
@@ -466,15 +482,15 @@ const capacityOptions = computed(() => ({
     subtitle: {
       display: true,
       text: (() => {
-        // Describe line styles so the user can decode what's on the plot
-        // without reading the (deduped) legend. Adapts to current filter.
+        // Line-style legend (replaces the Chart.js legend in solo mode):
+        //   ● discharge, ○ charge, ▭ CE → (right axis, ochre)
         const parts = []
-        if (props.stepFilter !== 'charge') parts.push('── discharge')
-        if (props.stepFilter === 'charge' || props.stepFilter === 'both') parts.push('▵▵ charge')
-        parts.push('⋯ CE (right axis)')
+        if (props.stepFilter !== 'charge') parts.push('● discharge')
+        if (props.stepFilter === 'charge' || props.stepFilter === 'both') parts.push('○ charge')
+        parts.push('▭ CE →')
         return parts.join('   ')
       })(),
-      font: { size: 10, style: 'italic' },
+      font: { size: 11, style: 'italic' },
       color: '#6B7280',
       padding: { bottom: 8 },
     },
