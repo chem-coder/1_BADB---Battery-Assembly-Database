@@ -1066,7 +1066,9 @@ const batteryOptions = computed(() =>
 }
 .chip-close:hover { background: #E74C3C; color: white; }
 
-/* ── Charts toolbar (experiment label + publication mode toggle) ── */
+/* ── Charts toolbar ── Applies to the charts below (V profile + dQ/dV).
+   Keeps all controls on a single row when the viewport allows; the
+   title field shrinks first, toggle groups never wrap into columns. */
 .charts-toolbar {
   display: flex;
   align-items: flex-end;
@@ -1080,8 +1082,9 @@ const batteryOptions = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 4px;
-  flex: 1;
-  min-width: 260px;
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: 420px;
 }
 .toolbar-label {
   font-size: 10px;
@@ -1110,6 +1113,7 @@ const batteryOptions = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex-shrink: 0;  /* toggle groups stay compact, never stack */
 }
 .pubmode-row {
   display: inline-flex;
