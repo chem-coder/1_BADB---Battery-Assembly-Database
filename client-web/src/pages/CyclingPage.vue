@@ -350,11 +350,6 @@ async function onTableHeaderClick(field) {
   }))
 }
 
-// "Убрать все" button — clears every active session + resets cycle pick.
-function clearAllActive() {
-  activeSessionIds.value = []
-  selectedCycles.value = []
-}
 
 // Toggle a cycle across ALL active sessions. selectedCycles is a single
 // global list — the user's intent is "show cycle N on every session on the
@@ -591,20 +586,7 @@ const batteryOptions = computed(() =>
 
 <template>
   <div class="cycling-page">
-    <PageHeader title="Циклирование" icon="pi pi-sync">
-      <template #actions>
-        <Button
-          v-if="activeSessionViews.length"
-          :label="`Убрать с графиков (${activeSessionViews.length})`"
-          icon="pi pi-times"
-          severity="secondary"
-          text
-          size="small"
-          @click="clearAllActive"
-        />
-        <Button label="Загрузить файл" icon="pi pi-upload" size="small" @click="showUpload = true" />
-      </template>
-    </PageHeader>
+    <PageHeader title="Циклирование" icon="pi pi-sync" />
 
     <!-- Sessions table -->
     <CrudTable
@@ -617,6 +599,9 @@ const batteryOptions = computed(() =>
       @delete="deleteSession"
       @header-click="onTableHeaderClick"
     >
+      <template #toolbar-end>
+        <Button label="Загрузить файл" icon="pi pi-upload" size="small" @click="showUpload = true" />
+      </template>
       <template #col-active="{ data }">
         <div class="active-cell">
           <button
