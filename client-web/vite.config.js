@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: { '@': resolve(__dirname, 'src') },
+    dedupe: ['chart.js', 'vue'],
   },
   server: {
     port: 5173,
@@ -18,5 +19,8 @@ export default defineConfig({
   },
   build: {
     outDir: '../public-vue',
+  },
+  optimizeDeps: {
+    include: ['chart.js', 'chartjs-plugin-zoom', 'vue-chartjs'],
   },
 })
