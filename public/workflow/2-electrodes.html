@@ -90,6 +90,7 @@
               
               <label for="electrodes-comments">Заметки/комментарии: </label>
               <textarea id="electrodes-comments" name="electrodes-comments" placeholder="Комментарии о вырезании электродов"></textarea>
+              <div id="electrode-sidedness-display" style="margin-top:8px; color:#555;"></div>
             </fieldset>
             
             <!-- geometry block -->
@@ -285,6 +286,7 @@
         <!-- save button -->           
         <!-- I'm not sure what is saves though - the electrodes or the batch drying information? What is the right workflow here? -->
         <button type="button" id="saveBtn">Сохранить партию</button>
+        <button type="button" id="printElectrodeBatchBtn" hidden>Печать</button>
         <button type="button" id="exitBatchBtn">Выйти</button>
 
         <fieldset id="electrodes-tape-dry-box" hidden>
