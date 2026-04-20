@@ -624,6 +624,63 @@ async function doUpload() {
   setTimeout(loadData, 6000)
 }
 
+// ── Excel export ────────────────────────────────────────────────────────
+// Calls GET /api/cycling/export/xlsx with the current active sessions +
+// toolbar state. Uses axios responseType:'blob' so the JWT interceptor
+// still attaches the Authorization header — a plain anchor download would
+// skip auth. Filename is resolved from the Content-Disposition header
+// when present (RFC 5987 encoded), otherwise we fall back to a sensible
+// default derived from the experiment label.
+const excelDownloading = ref(false)
+
+async function downloadExcel() {
+  if (!activeSessionIds.value.length) return
+  excelDownloading.value = true
+  try {
+    const params = {
+      session_ids: activeSessionIds.value.join(','),
+      cycles: selectedCycles.value.join(','),
+      unit: capacityUnit.value,
+      label: experimentLabel.value,
+      step_filter: stepFilter.value,
+      smoothing: smoothingWindow.value,
+    }
+    const response = await api.get('/api/cycling/export/xlsx', {
+      params,
+      responseType: 'blob',
+    })
+    // Resolve filename from Content-Disposition (supports RFC 5987 UTF-8).
+    let filename = 'cycling_export.xlsx'
+    const cd = response.headers['content-disposition'] || ''
+    const mStar = cd.match(/filename\*=UTF-8''([^;]+)/i)
+    const mPlain = cd.match(/filename="([^"]+)"/)
+    if (mStar) filename = decodeURIComponent(mStar[1])
+    else if (mPlain) filename = decodeURIComponent(mPlain[1])
+
+    const blob = new Blob([response.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    toast.add({ severity: 'success', summary: 'Экспорт готов', detail: filename, life: 3000 })
+  } catch (err) {
+    toast.add({
+      severity: 'error',
+      summary: 'Ошибка экспорта',
+      detail: err.response?.data?.error || 'Не удалось выгрузить Excel',
+      life: 4000,
+    })
+  } finally {
+    excelDownloading.value = false
+  }
+}
+
 async function deleteSession(items) {
   const deletedIds = []
   for (const item of items) {
@@ -850,6 +907,23 @@ const batteryOptions = computed(() =>
               :aria-label="`Окно сглаживания dQ/dV: ${smoothingWindow}`"
             />
             <span class="toolbar-smoothing__edge">21</span>
+          </div>
+        </div>
+        <div class="toolbar-pubmode">
+          <label class="toolbar-label">Экспорт</label>
+          <div class="pubmode-row">
+            <button
+              class="pubmode-btn export-xlsx-btn"
+              :disabled="excelDownloading || !activeSessionIds.length"
+              :title="selectedCycles.length
+                ? `Скачать Excel: ${activeSessionIds.length} сессий, ${selectedCycles.length} циклов (с данными)`
+                : `Скачать Excel: ${activeSessionIds.length} сессий (только сводка, без сырых данных)`"
+              @click="downloadExcel"
+            >
+              <i v-if="excelDownloading" class="pi pi-spin pi-spinner"></i>
+              <i v-else class="pi pi-file-excel"></i>
+              Excel
+            </button>
           </div>
         </div>
       </div>
@@ -1600,4 +1674,21 @@ const batteryOptions = computed(() =>
   color: white;
 }
 .style-chip__btn.is-custom:hover { background: #003274; }
+
+/* ── Excel export button (in toolbar) ── */
+.export-xlsx-btn {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+  color: #16A085;
+}
+.export-xlsx-btn:hover:not(:disabled) {
+  background: #16A085 !important;
+  color: white !important;
+  border-color: #16A085 !important;
+}
+.export-xlsx-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 </style>

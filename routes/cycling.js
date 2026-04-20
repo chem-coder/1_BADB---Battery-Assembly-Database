@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const ExcelJS = require('exceljs');
 const pool = require('../db/pool');
 const { auth } = require('../middleware/auth');
 
@@ -624,6 +625,246 @@ router.get('/sessions/:id/export', auth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// ── GET /api/cycling/export/xlsx ──────────────────────────────────────
+// Multi-session Excel export. Produces a 4-sheet workbook:
+//   1. Metadata       — experiment label, export date, units, session list
+//   2. Summary        — per-cycle table for every active session
+//   3. Raw datapoints — measurements for the cycles the user selected
+//   4. Chart params   — the toolbar state used to generate the view
+//
+// Query params (all optional except session_ids):
+//   session_ids   — CSV of integers, e.g. "5,8,12" (required, ≥1)
+//   cycles        — CSV of integers; filters datapoints to these cycles
+//                    (empty → no raw datapoints, just summary)
+//   unit          — "Ah" | "mAh_per_g" — capacity unit used in charts
+//   label         — experiment title (goes on chart titles + filename)
+//   step_filter   — "both" | "charge" | "discharge"
+//   smoothing     — integer 1..21 (dQ/dV smoothing window used in UI)
+router.get('/export/xlsx', auth, async (req, res) => {
+  try {
+    const sessionIds = String(req.query.session_ids || '')
+      .split(',').map(s => Number(s.trim())).filter(Number.isInteger);
+    if (!sessionIds.length) {
+      return res.status(400).json({ error: 'session_ids is required' });
+    }
+    const cycles = String(req.query.cycles || '')
+      .split(',').map(s => Number(s.trim())).filter(Number.isInteger);
+    const unit = String(req.query.unit || 'Ah');
+    const label = String(req.query.label || '').slice(0, 200);
+    const stepFilter = String(req.query.step_filter || 'both');
+    const smoothing = Number(req.query.smoothing) || 5;
+
+    // Load session metadata for every requested session. Missing rows are
+    // silently skipped rather than 404ing — lets a stale UI state still
+    // produce a partial export instead of blocking the user.
+    const sessionsQ = await pool.query(`
+      SELECT s.session_id, s.battery_id, s.file_name, s.equipment_type,
+             s.channel, s.protocol, s.notes, s.uploaded_at, s.started_at,
+             s.ended_at, s.total_cycles, s.active_mass_mg,
+             u.name AS uploader_name
+      FROM cycling_sessions s
+      LEFT JOIN users u ON u.user_id = s.uploaded_by
+      WHERE s.session_id = ANY($1::int[])
+      ORDER BY array_position($1::int[], s.session_id)
+    `, [sessionIds]);
+    if (!sessionsQ.rowCount) {
+      return res.status(404).json({ error: 'No matching sessions found' });
+    }
+    const sessionsList = sessionsQ.rows;
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'BADB Cycling';
+    workbook.created = new Date();
+
+    // Helper: mass-normalize Ah → mAh/g when unit === 'mAh_per_g' and the
+    // session has active_mass_mg. Otherwise leave the raw Ah value.
+    // mAh/g = (Ah * 1000) / (mass_mg / 1000) = Ah * 1_000_000 / mass_mg
+    function asCapacity(valueAh, massMg) {
+      if (valueAh == null) return null;
+      if (unit !== 'mAh_per_g') return valueAh;
+      if (!Number.isFinite(Number(massMg)) || Number(massMg) <= 0) return valueAh;
+      return (Number(valueAh) * 1e6) / Number(massMg);
+    }
+    const capHeader = unit === 'mAh_per_g' ? 'mAh/g' : 'Ah';
+
+    // ── Sheet 1: Metadata ────────────────────────────────────────────
+    const meta = workbook.addWorksheet('Metadata');
+    meta.columns = [
+      { header: 'Параметр', key: 'k', width: 28 },
+      { header: 'Значение', key: 'v', width: 60 },
+    ];
+    meta.addRow({ k: 'Название эксперимента', v: label || '(не задано)' });
+    meta.addRow({ k: 'Дата экспорта',         v: new Date().toLocaleString('ru-RU') });
+    meta.addRow({ k: 'Единицы ёмкости',       v: capHeader });
+    meta.addRow({ k: 'Фильтр шагов',          v: stepFilter });
+    meta.addRow({ k: 'Количество сессий',     v: sessionsList.length });
+    meta.addRow({ k: 'ID сессий',             v: sessionsList.map(s => s.session_id).join(', ') });
+    meta.addRow({ k: '', v: '' });
+
+    // Session directory (one row per session)
+    const dirHeaderRow = meta.addRow(['Сессия', 'Акк.', 'Файл', 'Оборудование',
+      'Канал', 'Протокол', 'Начало', 'Конец', 'Циклов', 'Масса (мг)', 'Загрузил']);
+    dirHeaderRow.font = { bold: true };
+    for (const s of sessionsList) {
+      meta.addRow([
+        s.session_id,
+        `№${s.battery_id}`,
+        s.file_name || '',
+        s.equipment_type || '',
+        s.channel ?? '',
+        s.protocol || '',
+        s.started_at ? new Date(s.started_at).toLocaleString('ru-RU') : '',
+        s.ended_at   ? new Date(s.ended_at).toLocaleString('ru-RU')   : '',
+        s.total_cycles ?? '',
+        s.active_mass_mg ?? '',
+        s.uploader_name || '',
+      ]);
+    }
+    meta.getRow(1).font = { bold: true };
+
+    // ── Sheet 2: Per-cycle summary ───────────────────────────────────
+    const summary = workbook.addWorksheet('Summary');
+    let summaryRowCursor = 1;
+    for (const s of sessionsList) {
+      const sumQ = await pool.query(`
+        SELECT cycle_number, charge_capacity_ah, discharge_capacity_ah,
+               coulombic_efficiency, energy_efficiency,
+               avg_charge_voltage_v, avg_discharge_voltage_v,
+               charge_energy_wh, discharge_energy_wh, duration_s
+        FROM cycling_cycle_summary
+        WHERE session_id = $1
+        ORDER BY cycle_number
+      `, [s.session_id]);
+
+      // Section header
+      const hRow = summary.getRow(summaryRowCursor++);
+      hRow.getCell(1).value = `Сессия №${s.session_id} — Акк. №${s.battery_id}`;
+      hRow.font = { bold: true, color: { argb: 'FF003274' }, size: 12 };
+      summary.mergeCells(hRow.number, 1, hRow.number, 8);
+
+      // Column headers
+      const colHeaders = [
+        'Цикл',
+        `Заряд (${capHeader})`,
+        `Разряд (${capHeader})`,
+        'CE (%)',
+        'EE (%)',
+        'V̄заряд (В)',
+        'V̄разряд (В)',
+        'Длительность (с)',
+      ];
+      const colHdrRow = summary.getRow(summaryRowCursor++);
+      colHeaders.forEach((h, i) => { colHdrRow.getCell(i + 1).value = h; });
+      colHdrRow.font = { bold: true };
+
+      for (const r of sumQ.rows) {
+        const row = summary.getRow(summaryRowCursor++);
+        row.getCell(1).value = r.cycle_number;
+        row.getCell(2).value = asCapacity(r.charge_capacity_ah, s.active_mass_mg);
+        row.getCell(3).value = asCapacity(r.discharge_capacity_ah, s.active_mass_mg);
+        row.getCell(4).value = r.coulombic_efficiency != null ? Number(r.coulombic_efficiency) * 100 : null;
+        row.getCell(5).value = r.energy_efficiency != null ? Number(r.energy_efficiency) * 100 : null;
+        row.getCell(6).value = r.avg_charge_voltage_v;
+        row.getCell(7).value = r.avg_discharge_voltage_v;
+        row.getCell(8).value = r.duration_s;
+      }
+      summaryRowCursor++; // blank separator row
+    }
+    summary.columns = [
+      { width: 10 }, { width: 16 }, { width: 16 }, { width: 10 },
+      { width: 10 }, { width: 14 }, { width: 14 }, { width: 16 },
+    ];
+
+    // ── Sheet 3: Raw datapoints (only for selected cycles) ───────────
+    const raw = workbook.addWorksheet('Datapoints');
+    raw.columns = [
+      { header: 'session_id',    key: 'session_id',    width: 12 },
+      { header: 'battery_id',    key: 'battery_id',    width: 12 },
+      { header: 'cycle',         key: 'cycle',         width: 8  },
+      { header: 'step',          key: 'step',          width: 8  },
+      { header: 'step_type',     key: 'step_type',     width: 14 },
+      { header: 'time_s',        key: 'time_s',        width: 12 },
+      { header: 'voltage_v',     key: 'voltage_v',     width: 12 },
+      { header: 'current_a',     key: 'current_a',     width: 12 },
+      { header: `capacity (${capHeader})`, key: 'capacity', width: 16 },
+      { header: 'energy_wh',     key: 'energy_wh',     width: 12 },
+      { header: 'temperature_c', key: 'temperature_c', width: 14 },
+    ];
+    raw.getRow(1).font = { bold: true };
+
+    if (cycles.length) {
+      // Bound: enforce a hard cap on rows to avoid runaway exports. 2M rows
+      // is around 50MB of ExcelJS state — well under the 1,048,576 sheet row
+      // limit but a sensible practical ceiling for in-memory generation.
+      const ROW_CAP = 2_000_000;
+      let rowsWritten = 0;
+      for (const s of sessionsList) {
+        if (rowsWritten >= ROW_CAP) break;
+        const dpQ = await pool.query(`
+          SELECT cycle_number, step_number, step_type, time_s, voltage_v,
+                 current_a, capacity_ah, energy_wh, temperature_c
+          FROM cycling_datapoints
+          WHERE session_id = $1 AND cycle_number = ANY($2::int[])
+          ORDER BY cycle_number, time_s
+        `, [s.session_id, cycles]);
+        for (const r of dpQ.rows) {
+          if (rowsWritten >= ROW_CAP) break;
+          if (stepFilter === 'charge'    && r.step_type === 'discharge') continue;
+          if (stepFilter === 'discharge' && (r.step_type === 'charge' || r.step_type === 'cccv')) continue;
+          raw.addRow({
+            session_id: s.session_id,
+            battery_id: s.battery_id,
+            cycle: r.cycle_number,
+            step: r.step_number,
+            step_type: r.step_type,
+            time_s: r.time_s,
+            voltage_v: r.voltage_v,
+            current_a: r.current_a,
+            capacity: asCapacity(r.capacity_ah, s.active_mass_mg),
+            energy_wh: r.energy_wh,
+            temperature_c: r.temperature_c,
+          });
+          rowsWritten++;
+        }
+      }
+    }
+
+    // ── Sheet 4: Chart parameters ────────────────────────────────────
+    const params = workbook.addWorksheet('Chart params');
+    params.columns = [
+      { header: 'Параметр', key: 'k', width: 28 },
+      { header: 'Значение', key: 'v', width: 60 },
+    ];
+    params.getRow(1).font = { bold: true };
+    params.addRow({ k: 'Выбранные циклы',     v: cycles.length ? cycles.join(', ') : '(не выбраны)' });
+    params.addRow({ k: 'Фильтр шагов',        v: stepFilter });
+    params.addRow({ k: 'Единицы ёмкости',     v: capHeader });
+    params.addRow({ k: 'Сглаживание dQ/dV',   v: smoothing });
+    params.addRow({ k: 'Название эксперимента', v: label || '(не задано)' });
+
+    // ── Stream to client ─────────────────────────────────────────────
+    const safeLabel = (label || 'cycling_export')
+      .replace(/[^\wа-яА-ЯёЁ-]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'cycling_export';
+    const ts = new Date().toISOString().slice(0, 10);
+    const filename = `${safeLabel}_${ts}.xlsx`;
+
+    res.setHeader('Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    // Use RFC 5987 filename* so Cyrillic labels don't mangle the download.
+    res.setHeader('Content-Disposition',
+      `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error('XLSX export error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Excel export failed' });
+    } else {
+      res.end();
+    }
   }
 });
 
