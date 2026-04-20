@@ -77,6 +77,11 @@ const props = defineProps({
   // (SEI growth, contact loss, dendrite nucleation). Gated by a toolbar
   // toggle because on first-cycle-only runs the chart is just two points.
   showHysteresis: { type: Boolean, default: false },
+  // Ghost trace: render cycle (N-1) as a faded, thin line behind cycle N
+  // on the voltage profile. Helps the eye catch fade between adjacent
+  // cycles when the user has both loaded (the previous cycle must be
+  // present in cycleDataMap — we don't auto-fetch it). Off by default.
+  ghostTrace: { type: Boolean, default: false },
   // Per-session style overrides — keyed by session_id. Each entry can set
   // any subset of { color, borderWidth, borderDash, pointStyle, pointRadius }
   // to replace the palette/gradient defaults. Applied to voltage profile +
@@ -379,6 +384,10 @@ const FAST_ANIM = { duration: 150, easing: 'easeOutQuad' }
 function dedupeLegend(chart) {
   const seen = new Map()
   chart.data.datasets.forEach((ds, idx) => {
+    // Ghost traces are visual context (faded, thin); they don't belong
+    // in the legend — it would double every cycle entry and confuse
+    // which one the user clicked. Skip.
+    if (ds.isGhost) return
     const sessionKey = (ds.label || '').split(' · ')[0] || ds.label
     if (seen.has(sessionKey)) return
     seen.set(sessionKey, {
@@ -704,6 +713,46 @@ const voltageChartData = computed(() => {
       // charge, 'both' keeps everything.
       const showCharge = props.stepFilter !== 'discharge'
       const showDischarge = props.stepFilter !== 'charge'
+
+      // Ghost trace of cycle N−1 (behind cycle N, faded + thin). Only
+      // drawn when the previous cycle is already in cycleDataMap — we
+      // don't trigger auto-fetch here. Rendered first so the main cycle
+      // lines paint on top of the ghost. No legend entry (isGhost flag).
+      if (props.ghostTrace && cycleNum > 1) {
+        const ghostPoints = s.cycleDataMap?.[cycleNum - 1] || []
+        if (ghostPoints.length) {
+          const ghostCharge = decimate(ghostPoints.filter(d => d.step_type === 'charge' || d.step_type === 'cccv'))
+          const ghostDischarge = decimate(ghostPoints.filter(d => d.step_type === 'discharge'))
+          const ghostColor = fillColor(colorBase, 0.15)
+          const ghostWidth = Math.max(0.6, thickness * 0.55)
+          if (showCharge && ghostCharge.length) {
+            datasets.push({
+              label: `ghost_Ц${cycleNum - 1}_${sessionShortLabel(s)}_charge`,
+              isGhost: true,
+              data: ghostCharge.map(p => ({ x: xOf(p), y: p.voltage_v })),
+              borderColor: ghostColor,
+              backgroundColor: ghostColor,
+              pointRadius: 0,
+              borderWidth: ghostWidth,
+              borderDash: chargeDash,
+              showLine: true,
+            })
+          }
+          if (showDischarge && ghostDischarge.length) {
+            datasets.push({
+              label: `ghost_Ц${cycleNum - 1}_${sessionShortLabel(s)}_discharge`,
+              isGhost: true,
+              data: ghostDischarge.map(p => ({ x: xOf(p), y: p.voltage_v })),
+              borderColor: ghostColor,
+              backgroundColor: ghostColor,
+              pointRadius: 0,
+              borderWidth: ghostWidth,
+              borderDash: dischargeDash,
+              showLine: true,
+            })
+          }
+        }
+      }
 
       if (showCharge && charge.length) {
         datasets.push(applySessionStyle({

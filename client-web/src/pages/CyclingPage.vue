@@ -88,6 +88,12 @@ const capacityView = ref('absolute')
 // avg_discharge_voltage_v (migration 019); rendered as ΔV̄ in mV.
 const showHysteresis = ref(false)
 
+// Ghost trace on the voltage profile: for every selected cycle N,
+// render cycle N−1 underneath as a faded thin line. Helps the eye
+// catch fade between adjacent cycles. Only works when cycle N−1 is
+// already loaded into cycleDataMap — we don't auto-fetch it.
+const ghostTrace = ref(false)
+
 // Per-session style popover state. Controlled by the ⚙ button in the
 // active-session chip — stores which session is being edited so the popover
 // knows which style map entry to mutate. The PrimeVue Popover itself uses
@@ -923,6 +929,25 @@ const batteryOptions = computed(() =>
             </button>
           </div>
         </div>
+        <div class="toolbar-pubmode" title="Предыдущий цикл (N-1) в профиле V как призрак — видно fade между соседними циклами">
+          <label class="toolbar-label">Ghost trace</label>
+          <div class="pubmode-row">
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': !ghostTrace }"
+              @click="ghostTrace = false"
+            >
+              Выкл
+            </button>
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': ghostTrace }"
+              @click="ghostTrace = true"
+            >
+              Вкл
+            </button>
+          </div>
+        </div>
         <div class="toolbar-pubmode">
           <label class="toolbar-label">Стиль</label>
           <div class="pubmode-row">
@@ -990,6 +1015,7 @@ const batteryOptions = computed(() =>
         :smoothingWindow="smoothingWindow"
         :capacityView="capacityView"
         :showHysteresis="showHysteresis"
+        :ghostTrace="ghostTrace"
         :sessionStyles="sessionStyles"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"
