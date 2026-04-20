@@ -64,6 +64,13 @@ const props = defineProps({
   // recommended for noisy cells where peaks get buried in measurement
   // jitter. Clamped to [1, 21] inside computeDQDV.
   smoothingWindow: { type: Number, default: 5 },
+  // 'absolute' | 'retention'. Controls what the capacity chart plots:
+  //   absolute  — discharge/charge capacity in Ah or mAh/g (default).
+  //   retention — C(n) / C(first_valid) × 100 % per session. Scientific
+  //     standard for fade visualization in Li-ion papers. First cycle of
+  //     each session is the reference (100 %); if cycle 1 is a formation
+  //     cycle, the user can still see the full fade curve.
+  capacityView: { type: String, default: 'absolute' },
   // Per-session style overrides — keyed by session_id. Each entry can set
   // any subset of { color, borderWidth, borderDash, pointStyle, pointRadius }
   // to replace the palette/gradient defaults. Applied to voltage profile +
@@ -83,10 +90,39 @@ function convertCapacity(ah, session) {
   return (ah * 1_000_000) / massMg
 }
 
-// Axis labels match the active unit. English, publication style
-// ("Capacity, Ah" / "C, mAh/g") — matches the lab colleague's Excel
-// output and the convention in Li-ion journals.
+// First valid discharge capacity (Ah) for a session — used as the 100 %
+// reference in retention mode. "Valid" means non-null, finite and > 0;
+// early cycles of some ELITECH files have a placeholder 0 from the
+// pre-formation step that we must skip. Returns null when no reference
+// can be found; callers then emit null y-values so retention plots
+// simply show a gap instead of NaNs.
+function firstValidDischargeCap(session) {
+  const rows = session?.summary
+  if (!Array.isArray(rows)) return null
+  for (const row of rows) {
+    const c = Number(row?.discharge_capacity_ah)
+    if (Number.isFinite(c) && c > 0) return c
+  }
+  return null
+}
+
+// Project a raw Ah capacity into the currently active view (absolute or
+// retention). Kept as a single helper so both charge and discharge
+// datasets pick up the same formula and retention toggle is atomic.
+function projectCapacity(ah, session, refCap) {
+  if (ah == null || !Number.isFinite(ah)) return null
+  if (props.capacityView === 'retention') {
+    if (!refCap || refCap <= 0) return null
+    return (ah / refCap) * 100
+  }
+  return convertCapacity(ah, session)
+}
+
+// Axis labels match the active unit / view. English, publication style
+// ("Capacity, Ah" / "C, mAh/g" / "Retention, %") — matches the lab
+// colleague's Excel output and the convention in Li-ion journals.
 function capacityAxisLabel() {
+  if (props.capacityView === 'retention') return 'Retention, %'
   return props.capacityUnit === 'mAh_per_g' ? 'C, mAh/g' : 'Capacity, Ah'
 }
 
@@ -397,13 +433,20 @@ const capacityChartData = computed(() => {
   for (const s of props.sessions) {
     if (!s.summary?.length) continue
 
+    // In retention mode we normalize each session against its own first
+    // valid discharge cap → every session starts at 100%. refCap is null
+    // when the session has no valid discharge cap at all; projectCapacity
+    // then emits null y-values and Chart.js leaves the points empty
+    // instead of throwing.
+    const refCap = props.capacityView === 'retention' ? firstValidDischargeCap(s) : null
+
     // Discharge line — filled circle markers (colleague's convention)
     if (showDischarge) {
       datasets.push({
         label: sessionShortLabel(s),
         data: s.summary.map(row => ({
           x: row.cycle_number,
-          y: convertCapacity(row.discharge_capacity_ah, s),
+          y: projectCapacity(row.discharge_capacity_ah, s, refCap),
         })),
         yAxisID: 'y',
         borderColor: s.color,
@@ -425,7 +468,7 @@ const capacityChartData = computed(() => {
         label: showDischarge ? `${sessionShortLabel(s)} · charge` : sessionShortLabel(s),
         data: s.summary.map(row => ({
           x: row.cycle_number,
-          y: convertCapacity(row.charge_capacity_ah, s),
+          y: projectCapacity(row.charge_capacity_ah, s, refCap),
         })),
         yAxisID: 'y',
         borderColor: s.color,
@@ -579,6 +622,33 @@ const hasCapacity = computed(() => {
   return false
 })
 
+// Apply per-session user overrides on top of palette/gradient defaults.
+// The color override is folded back through fillColor() so the alpha
+// gradient (old cycles fade, new cycles vivid) is preserved even when the
+// user picks a custom base color. Line/dash/marker/radius replace their
+// auto-computed counterparts as-is.
+function applySessionStyle(ds, sstyle) {
+  if (!sstyle) return ds
+  if (sstyle.borderWidth != null && Number.isFinite(Number(sstyle.borderWidth))) {
+    ds.borderWidth = Number(sstyle.borderWidth)
+  }
+  if (sstyle.borderDash !== undefined) {
+    // null / empty array → explicit "solid"; set to undefined so Chart.js uses default line.
+    ds.borderDash = Array.isArray(sstyle.borderDash) && sstyle.borderDash.length
+      ? sstyle.borderDash
+      : undefined
+  }
+  if (sstyle.pointStyle) {
+    ds.pointStyle = sstyle.pointStyle
+  }
+  if (sstyle.pointRadius != null && Number.isFinite(Number(sstyle.pointRadius))) {
+    ds.pointRadius = Number(sstyle.pointRadius)
+    ds.pointBackgroundColor = ds.borderColor
+    ds.pointBorderColor = ds.borderColor
+  }
+  return ds
+}
+
 const voltageChartData = computed(() => {
   const datasets = []
   const sortedCycles = [...props.selectedCycles].sort((a, b) => a - b)
@@ -586,6 +656,10 @@ const voltageChartData = computed(() => {
   const nCycles = sortedCycles.length
 
   for (const s of props.sessions) {
+    const sstyle = props.sessionStyles?.[s.session_id] || null
+    // Color: user override replaces the palette base, gradient (alpha) still applies.
+    const colorBase = sstyle?.color || s.color
+
     sortedCycles.forEach((cycleNum, cIdx) => {
       const points = s.cycleDataMap?.[cycleNum] || []
       if (!points.length) return
@@ -606,7 +680,7 @@ const voltageChartData = computed(() => {
         : 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.2 : 0.6)
 
       const alpha = cycleAlpha(cIdx, nCycles)
-      const cycleColor = fillColor(s.color, alpha)
+      const cycleColor = fillColor(colorBase, alpha)
 
       // In publication mode, both halves use the same dash (matches
       // colleague's figure — nothing distinguishes charge vs discharge
@@ -625,7 +699,7 @@ const voltageChartData = computed(() => {
       const showDischarge = props.stepFilter !== 'charge'
 
       if (showCharge && charge.length) {
-        datasets.push({
+        datasets.push(applySessionStyle({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge.map(p => ({ x: xOf(p), y: p.voltage_v })),
           borderColor: cycleColor,
@@ -634,10 +708,10 @@ const voltageChartData = computed(() => {
           borderWidth: thickness,
           borderDash: chargeDash,
           showLine: true,
-        })
+        }, sstyle))
       }
       if (showDischarge && discharge.length) {
-        datasets.push({
+        datasets.push(applySessionStyle({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge.map(p => ({ x: xOf(p), y: p.voltage_v })),
           borderColor: cycleColor,
@@ -646,7 +720,7 @@ const voltageChartData = computed(() => {
           borderWidth: thickness,
           borderDash: dischargeDash,
           showLine: true,
-        })
+        }, sstyle))
       }
     })
   }
@@ -766,6 +840,8 @@ const dqdvChartData = computed(() => {
   const nCycles = sortedCycles.length
 
   for (const s of props.sessions) {
+    const sstyle = props.sessionStyles?.[s.session_id] || null
+    const colorBase = sstyle?.color || s.color
     sortedCycles.forEach((cycleNum, cIdx) => {
       const points = s.cycleDataMap?.[cycleNum] || []
       if (!points.length) return
@@ -774,12 +850,12 @@ const dqdvChartData = computed(() => {
       const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.0 : 0.5)
       // Old cycles fade, new cycles vivid — same convention as voltage profile
       const alpha = cycleAlpha(cIdx, nCycles)
-      const cycleColor = fillColor(s.color, alpha)
+      const cycleColor = fillColor(colorBase, alpha)
       const showCharge = props.stepFilter !== 'discharge'
       const showDischarge = props.stepFilter !== 'charge'
 
       if (showCharge && charge.length) {
-        datasets.push({
+        datasets.push(applySessionStyle({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge,
           borderColor: cycleColor,
@@ -788,10 +864,10 @@ const dqdvChartData = computed(() => {
           borderWidth: thickness,
           borderDash: [4, 2],
           showLine: true,
-        })
+        }, sstyle))
       }
       if (showDischarge && discharge.length) {
-        datasets.push({
+        datasets.push(applySessionStyle({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge,
           borderColor: cycleColor,
@@ -799,7 +875,7 @@ const dqdvChartData = computed(() => {
           pointRadius: 0,
           borderWidth: thickness,
           showLine: true,
-        })
+        }, sstyle))
       }
     })
   }

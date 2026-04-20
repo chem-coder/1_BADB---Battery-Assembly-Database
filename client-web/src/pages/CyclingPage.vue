@@ -13,8 +13,12 @@ import CrudTable from '@/components/CrudTable.vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
+import CyclingStylePopover from '@/components/CyclingStylePopover.vue'
+import { useCyclingStyles } from '@/composables/useCyclingStyles'
 
 const CyclingCharts = defineAsyncComponent(() => import('@/components/CyclingCharts.vue'))
+
+const { styles: sessionStyles, getStyle, setStyle, resetStyle } = useCyclingStyles()
 
 const router = useRouter()
 const toast = useToast()
@@ -71,6 +75,39 @@ const capacityUnit = ref('Ah')
 // higher (otherwise peaks get buried in measurement jitter). The slider
 // is the fastest way to A/B compare in the UI without reloading.
 const smoothingWindow = ref(5)
+
+// Per-session style popover state. Controlled by the ⚙ button in the
+// active-session chip — stores which session is being edited so the popover
+// knows which style map entry to mutate. The PrimeVue Popover itself uses
+// ref-based positioning: we pass the click event through to .toggle(event).
+const stylePopoverRef = ref(null)
+const styleCurrentSessionId = ref(null)
+const styleCurrentSession = computed(() => {
+  return activeSessionViews.value.find(s => s.session_id === styleCurrentSessionId.value) || null
+})
+const styleCurrentStyle = computed(() => {
+  return styleCurrentSessionId.value ? getStyle(styleCurrentSessionId.value) : {}
+})
+const styleCurrentDefaultColor = computed(() => {
+  return styleCurrentSessionId.value ? colorForSession(styleCurrentSessionId.value) : '#003274'
+})
+const styleCurrentLabel = computed(() => {
+  const s = styleCurrentSession.value
+  return s ? `Акк. №${s.battery_id ?? '—'}` : ''
+})
+
+function openStylePopover(sessionId, event) {
+  styleCurrentSessionId.value = sessionId
+  stylePopoverRef.value?.toggle(event)
+}
+function onStyleUpdate(partial) {
+  if (!styleCurrentSessionId.value) return
+  setStyle(styleCurrentSessionId.value, partial)
+}
+function onStyleReset() {
+  if (!styleCurrentSessionId.value) return
+  resetStyle(styleCurrentSessionId.value)
+}
 
 // Mass editor dialog — opens when user clicks mAh/g while some active
 // sessions lack an active_mass_mg value. Lets them fill the mass inline
@@ -686,6 +723,34 @@ const batteryOptions = computed(() =>
 
     <!-- Charts area (multi-session) -->
     <div v-if="activeSessionViews.length" class="charts-area glass-card">
+      <!-- Per-session style bar: compact chip per active session with a
+           ⚙ button that opens the style popover. Lets the user override
+           color / thickness / line / marker per session (voltage + dQ/dV). -->
+      <div class="style-bar">
+        <span class="style-bar__label">Стили:</span>
+        <div class="style-bar__chips">
+          <div
+            v-for="s in activeSessionViews"
+            :key="s.session_id"
+            class="style-chip"
+            :style="{ borderColor: sessionStyles[s.session_id]?.color || s.color }"
+            :title="`Акк. №${s.battery_id} — настроить стиль`"
+          >
+            <span class="style-chip__dot" :style="{ background: sessionStyles[s.session_id]?.color || s.color }"></span>
+            <span class="style-chip__label">№{{ s.battery_id }}</span>
+            <button
+              type="button"
+              class="style-chip__btn"
+              :title="sessionStyles[s.session_id] ? 'Изменить стиль (есть переопределение)' : 'Настроить стиль'"
+              :class="{ 'is-custom': !!sessionStyles[s.session_id] }"
+              @click="openStylePopover(s.session_id, $event)"
+            >
+              <i class="pi pi-cog"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Toolbar: experiment title + publication-mode toggle -->
       <div class="charts-toolbar">
         <div class="toolbar-field">
@@ -797,6 +862,7 @@ const batteryOptions = computed(() =>
         :capacityUnit="capacityUnit"
         :stepFilter="stepFilter"
         :smoothingWindow="smoothingWindow"
+        :sessionStyles="sessionStyles"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"
       />
@@ -805,6 +871,17 @@ const batteryOptions = computed(() =>
       <i class="pi pi-chart-line" style="font-size:24px;opacity:0.3"></i>
       <div>Выберите одно или несколько измерений в таблице — графики появятся здесь.</div>
     </div>
+
+    <!-- Per-session style popover (shared, positions at clicked ⚙ button) -->
+    <CyclingStylePopover
+      ref="stylePopoverRef"
+      :session="styleCurrentSession"
+      :sessionLabel="styleCurrentLabel"
+      :defaultColor="styleCurrentDefaultColor"
+      :style="styleCurrentStyle"
+      @update="onStyleUpdate"
+      @reset="onStyleReset"
+    />
 
     <!-- Upload dialog — multi-file -->
     <Dialog v-model:visible="showUpload" header="Загрузить файлы циклирования"
@@ -1451,4 +1528,76 @@ const batteryOptions = computed(() =>
   align-items: center;
 }
 .default-battery-row > :first-child { flex: 1; min-width: 0; }
+
+/* ── Style bar (per-session style overrides) ── */
+.style-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.08);
+  flex-wrap: wrap;
+}
+.style-bar__label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(0, 50, 116, 0.55);
+  flex-shrink: 0;
+}
+.style-bar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.style-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 2px 8px;
+  border: 1.5px solid;
+  border-radius: 8px;
+  background: white;
+  font-size: 12px;
+  color: #1F2937;
+  max-width: 180px;
+  min-height: 24px;
+}
+.style-chip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.style-chip__label {
+  font-weight: 600;
+  color: #003274;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.style-chip__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: rgba(0, 50, 116, 0.06);
+  color: rgba(0, 50, 116, 0.55);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.12s ease;
+}
+.style-chip__btn:hover { background: #003274; color: white; }
+.style-chip__btn.is-custom {
+  background: #D3A754;
+  color: white;
+}
+.style-chip__btn.is-custom:hover { background: #003274; }
 </style>
