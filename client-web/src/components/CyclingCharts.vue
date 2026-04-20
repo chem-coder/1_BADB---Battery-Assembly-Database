@@ -57,6 +57,12 @@ const props = defineProps({
   // profile + dQ/dV. Capacity+CE chart is per-cycle summary and not
   // filterable by step.
   stepFilter: { type: String, default: 'both' },
+  // Moving-average window for dQ/dV smoothing. 1 = no smoothing (raw
+  // differentiated signal, every noise spike visible), 5 = our default
+  // (good balance for clean ELITECH data), 11-15 = heavy smoothing
+  // recommended for noisy cells where peaks get buried in measurement
+  // jitter. Clamped to [1, 21] inside computeDQDV.
+  smoothingWindow: { type: Number, default: 5 },
 })
 
 // Convert a capacity value (Ah) to the current display unit based on
@@ -680,11 +686,18 @@ const voltageOptions = computed(() => ({
  * - Input: sorted datapoints for a cycle (mixed charge/discharge steps).
  * - Output: array of {x: voltage, y: |dQ/dV|} for charge and discharge separately.
  * - Uses |dV| threshold to skip flat/noisy regions.
- * - Smoothing: moving average window=5.
+ * - Smoothing: moving average with configurable window (clamped to [1, 21]).
+ *   window=1 → no smoothing (raw signal, every measurement spike).
+ *   window=5 → default; good for clean ELITECH data.
+ *   window=11..15 → heavy smoothing for noisy cells.
  */
-function computeDQDV(points) {
+function computeDQDV(points, smoothingWindow = 5) {
   const charge = points.filter(d => (d.step_type === 'charge' || d.step_type === 'cccv') && d.voltage_v != null && d.capacity_ah != null)
   const discharge = points.filter(d => d.step_type === 'discharge' && d.voltage_v != null && d.capacity_ah != null)
+
+  // Clamp to [1, 21] and coerce to integer. Non-finite / NaN falls back to 5.
+  const wRaw = Number(smoothingWindow)
+  const w = Number.isFinite(wRaw) ? Math.max(1, Math.min(21, Math.round(wRaw))) : 5
 
   function process(steps) {
     if (steps.length < 2) return []
@@ -707,8 +720,11 @@ function computeDQDV(points) {
     }
     raw.sort((a, b) => a.x - b.x)
 
-    // Moving average smoothing
-    const w = 5
+    // window=1 is a no-op — return raw early (cheaper + matches the "no
+    // smoothing" mental model: slider at minimum = see the real signal).
+    if (w <= 1) return raw
+
+    // Moving average smoothing (configurable window)
     const half = Math.floor(w / 2)
     const smoothed = []
     for (let i = 0; i < raw.length; i++) {
@@ -734,7 +750,7 @@ const dqdvChartData = computed(() => {
       const points = s.cycleDataMap?.[cycleNum] || []
       if (!points.length) return
 
-      const { charge, discharge } = computeDQDV(points)
+      const { charge, discharge } = computeDQDV(points, props.smoothingWindow)
       const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.0 : 0.5)
       // Old cycles fade, new cycles vivid — same convention as voltage profile
       const alpha = cycleAlpha(cIdx, nCycles)

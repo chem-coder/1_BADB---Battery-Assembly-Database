@@ -66,6 +66,12 @@ const stepFilter = ref('both')
 // availability is a computed guard, UI auto-falls back to 'Ah' otherwise.
 const capacityUnit = ref('Ah')
 
+// dQ/dV moving-average window. 1 = no smoothing, 5 = default, 21 = max.
+// Clean data wants lower (preserves peak sharpness), noisy cells want
+// higher (otherwise peaks get buried in measurement jitter). The slider
+// is the fastest way to A/B compare in the UI without reloading.
+const smoothingWindow = ref(5)
+
 // Mass editor dialog — opens when user clicks mAh/g while some active
 // sessions lack an active_mass_mg value. Lets them fill the mass inline
 // and PATCHes each session; on success the mAh/g toggle auto-unlocks.
@@ -762,6 +768,25 @@ const batteryOptions = computed(() =>
             </button>
           </div>
         </div>
+        <div class="toolbar-smoothing" title="Окно скользящего среднего для dQ/dV. 1 = без сглаживания, 21 = максимум.">
+          <label class="toolbar-label">
+            Сглаживание dQ/dV
+            <span class="toolbar-smoothing__val">{{ smoothingWindow }}</span>
+          </label>
+          <div class="toolbar-smoothing__row">
+            <span class="toolbar-smoothing__edge">1</span>
+            <input
+              v-model.number="smoothingWindow"
+              type="range"
+              min="1"
+              max="21"
+              step="1"
+              class="toolbar-smoothing__slider"
+              :aria-label="`Окно сглаживания dQ/dV: ${smoothingWindow}`"
+            />
+            <span class="toolbar-smoothing__edge">21</span>
+          </div>
+        </div>
       </div>
       <CyclingCharts
         :sessions="activeSessionViews"
@@ -771,6 +796,7 @@ const batteryOptions = computed(() =>
         :publicationMode="publicationMode"
         :capacityUnit="capacityUnit"
         :stepFilter="stepFilter"
+        :smoothingWindow="smoothingWindow"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"
       />
@@ -1187,6 +1213,70 @@ const batteryOptions = computed(() =>
   font-weight: 600;
 }
 .pubmode-btn i { font-size: 11px; }
+
+/* ── dQ/dV smoothing slider ──
+   Sits in the charts toolbar next to the style toggles. Same flex-shrink:0
+   rule as .toolbar-pubmode so it never gets stretched or pushed to a new
+   row when the title field steals horizontal space. Width is fixed so the
+   track length is predictable regardless of the slider's current value. */
+.toolbar-smoothing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 180px;
+}
+.toolbar-smoothing__val {
+  display: inline-block;
+  min-width: 22px;
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 4px;
+  background: rgba(0, 50, 116, 0.08);
+  color: #003274;
+  font-weight: 600;
+  font-size: 11px;
+  text-align: center;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.toolbar-smoothing__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 6px;
+  background: white;
+  height: 24px;
+  box-sizing: border-box;
+}
+.toolbar-smoothing__edge {
+  font-size: 10px;
+  color: rgba(0, 50, 116, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+.toolbar-smoothing__slider {
+  flex: 1;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  accent-color: #003274;  /* native-native — modern browsers honour this */
+  cursor: pointer;
+}
+/* Make the track slightly thicker and more visible than the browser default
+   so the slider reads as a control at a glance, not a stray line. */
+.toolbar-smoothing__slider::-webkit-slider-runnable-track {
+  height: 3px;
+  background: rgba(0, 50, 116, 0.2);
+  border-radius: 2px;
+}
+.toolbar-smoothing__slider::-moz-range-track {
+  height: 3px;
+  background: rgba(0, 50, 116, 0.2);
+  border-radius: 2px;
+}
 
 /* ── Charts placeholder ── */
 .charts-placeholder {
