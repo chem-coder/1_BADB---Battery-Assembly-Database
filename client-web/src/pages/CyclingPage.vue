@@ -76,6 +76,12 @@ const capacityUnit = ref('Ah')
 // is the fastest way to A/B compare in the UI without reloading.
 const smoothingWindow = ref(5)
 
+// Capacity chart view: 'absolute' (Ah or mAh/g) vs 'retention' (C/C1 × 100%).
+// Retention is the scientific-paper standard for visualising fade — every
+// session starts at 100% and the curve shows % of initial capacity at
+// each cycle. Pressing the toggle re-derives the data without any refetch.
+const capacityView = ref('absolute')
+
 // Per-session style popover state. Controlled by the ⚙ button in the
 // active-session chip — stores which session is being edited so the popover
 // knows which style map entry to mutate. The PrimeVue Popover itself uses
@@ -871,6 +877,27 @@ const batteryOptions = computed(() =>
             </button>
           </div>
         </div>
+        <div class="toolbar-pubmode" title="Абсолютная ёмкость ↔ нормированная C/C₁ (scientific standard for fade)">
+          <label class="toolbar-label">Вид графика ёмкости</label>
+          <div class="pubmode-row">
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': capacityView === 'absolute' }"
+              @click="capacityView = 'absolute'"
+              title="Абсолютная ёмкость (Ah или mAh/g)"
+            >
+              Абсолют
+            </button>
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': capacityView === 'retention' }"
+              @click="capacityView = 'retention'"
+              title="Удержание: C(n)/C(1) × 100% — стандарт для публикаций"
+            >
+              Ретенция, %
+            </button>
+          </div>
+        </div>
         <div class="toolbar-pubmode">
           <label class="toolbar-label">Стиль</label>
           <div class="pubmode-row">
@@ -936,6 +963,7 @@ const batteryOptions = computed(() =>
         :capacityUnit="capacityUnit"
         :stepFilter="stepFilter"
         :smoothingWindow="smoothingWindow"
+        :capacityView="capacityView"
         :sessionStyles="sessionStyles"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"
