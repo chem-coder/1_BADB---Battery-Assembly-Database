@@ -389,15 +389,27 @@ function dedupeLegend(chart) {
     // which one the user clicked. Skip.
     if (ds.isGhost) return
     const sessionKey = (ds.label || '').split(' · ')[0] || ds.label
-    if (seen.has(sessionKey)) return
-    seen.set(sessionKey, {
-      text: sessionKey,
-      fillStyle: ds.borderColor,
-      strokeStyle: ds.borderColor,
-      lineWidth: 2,
-      hidden: false,
-      datasetIndex: idx,
-    })
+    if (!seen.has(sessionKey)) {
+      // Start a new legend entry for this group. Visibility reflects
+      // the chart's actual state (chart.getDatasetMeta().hidden respects
+      // per-dataset hidden flags we set via setDatasetVisibility).
+      const hidden = !chart.isDatasetVisible(idx)
+      seen.set(sessionKey, {
+        text: sessionKey,
+        fillStyle: ds.borderColor,
+        strokeStyle: ds.borderColor,
+        lineWidth: 2,
+        hidden,
+        datasetIndex: idx,
+        // All dataset indices that belong to this group — used by
+        // legendToggleAll to flip every matching dataset on click
+        // (dedupeLegend folds charge+discharge+CE into one entry, but
+        // the user's click should still hide or show all of them).
+        _datasetIndices: [idx],
+      })
+    } else {
+      seen.get(sessionKey)._datasetIndices.push(idx)
+    }
   })
   const entries = Array.from(seen.values())
 
@@ -417,6 +429,22 @@ function dedupeLegend(chart) {
     return ap.rest.localeCompare(bp.rest, 'ru')
   })
   return entries
+}
+
+// Custom legend onClick that toggles ALL datasets belonging to a deduped
+// group. The default Chart.js handler hides only one dataset — fine for
+// plain charts, wrong for ours where "Акк№1" is actually three datasets
+// (charge + discharge + CE). Logic: if every dataset in the group is
+// currently visible → hide all; otherwise → show all (normalises the
+// mixed-state case where one sub-dataset was hidden by other means).
+function legendToggleAll(e, legendItem, legend) {
+  const chart = legend.chart
+  const indices = Array.isArray(legendItem._datasetIndices) && legendItem._datasetIndices.length
+    ? legendItem._datasetIndices
+    : [legendItem.datasetIndex]
+  const allVisible = indices.every(i => chart.isDatasetVisible(i))
+  indices.forEach(i => chart.setDatasetVisibility(i, !allVisible))
+  chart.update()
 }
 
 // ── Capacity + CE (combined plot, dual Y-axis) ─────────────────────────
@@ -548,7 +576,7 @@ const capacityOptions = computed(() => ({
       // user can tell cells apart by color.
       display: props.sessions.length > 1,
       position: 'bottom',
-      labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend },
+      labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend }, onClick: legendToggleAll,
     },
     title: {
       display: true,
@@ -792,7 +820,7 @@ const voltageOptions = computed(() => ({
     legend: {
       display: !props.publicationMode,  // publication figures don't carry legends
       position: 'bottom',
-      labels: { boxWidth: 12, font: { size: 10 }, generateLabels: dedupeLegend },
+      labels: { boxWidth: 12, font: { size: 10 }, generateLabels: dedupeLegend }, onClick: legendToggleAll,
     },
     title: {
       display: true,
@@ -947,7 +975,7 @@ const dqdvOptions = computed(() => ({
     legend: {
       display: !props.publicationMode,
       position: 'bottom',
-      labels: { boxWidth: 12, font: { size: 10 }, generateLabels: dedupeLegend },
+      labels: { boxWidth: 12, font: { size: 10 }, generateLabels: dedupeLegend }, onClick: legendToggleAll,
     },
     title: {
       display: true,
@@ -1026,7 +1054,7 @@ const hysteresisOptions = computed(() => ({
     legend: {
       display: props.sessions.length > 1,
       position: 'bottom',
-      labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend },
+      labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend }, onClick: legendToggleAll,
     },
     title: {
       display: true,
