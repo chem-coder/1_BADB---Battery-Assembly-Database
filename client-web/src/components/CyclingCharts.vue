@@ -609,10 +609,16 @@ const capacityOptions = computed(() => ({
     },
     // Zoom/pan: X-only on capacity+CE chart. The dual Y-axis (capacity
     // + CE) panning together would misalign CE values on each axis, so
-    // we lock Y. Shift+drag to pan; wheel/pinch to zoom a cycle range.
+    // we lock Y. Shift+drag to pan; Ctrl+wheel to zoom a cycle range
+    // (plain wheel is reserved for scrolling the page). 'original'
+    // bounds stop the user from panning past the real cycle range —
+    // no more "negative cycles" or blank space past the last one.
     zoom: {
       pan:  { enabled: true, mode: 'x', modifierKey: 'shift' },
-      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+      zoom: { wheel: { enabled: true, modifierKey: 'ctrl' }, pinch: { enabled: true }, mode: 'x' },
+      limits: {
+        x: { min: 'original', max: 'original', minRange: 1 },
+      },
     },
   },
   scales: {
@@ -837,10 +843,16 @@ const voltageOptions = computed(() => ({
     },
     // Zoom/pan: XY on voltage profile — a plateau analysis typically
     // zooms into a specific V window (e.g. 3.2–3.6 V for LFP) AND a
-    // capacity window at the same time. Shift+drag pans, wheel/pinch zooms.
+    // capacity window at the same time. Shift+drag pans, Ctrl+wheel
+    // zooms (plain wheel scrolls the page). 'original' bounds keep
+    // the user within the real capacity/voltage ranges.
     zoom: {
       pan:  { enabled: true, mode: 'xy', modifierKey: 'shift' },
-      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
+      zoom: { wheel: { enabled: true, modifierKey: 'ctrl' }, pinch: { enabled: true }, mode: 'xy' },
+      limits: {
+        x: { min: 'original', max: 'original' },
+        y: { min: 'original', max: 'original' },
+      },
     },
   },
   scales: {
@@ -988,9 +1000,16 @@ const dqdvOptions = computed(() => ({
     },
     // Zoom/pan: XY on dQ/dV — isolating a single peak (V range) and
     // seeing its height (|dQ/dV| range) both matter for phase analysis.
+    // Shift+drag pans, Ctrl+wheel zooms. 'original' bounds on X keep
+    // the V window realistic; Y min=0 because |dQ/dV| ≥ 0 always
+    // (panning into negative heights would be meaningless).
     zoom: {
       pan:  { enabled: true, mode: 'xy', modifierKey: 'shift' },
-      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
+      zoom: { wheel: { enabled: true, modifierKey: 'ctrl' }, pinch: { enabled: true }, mode: 'xy' },
+      limits: {
+        x: { min: 'original', max: 'original' },
+        y: { min: 0, max: 'original' },
+      },
     },
   },
   scales: {
@@ -1074,9 +1093,16 @@ const hysteresisOptions = computed(() => ({
     },
     // XY zoom: sometimes you want a specific cycle window (x) but
     // sometimes a particular hysteresis range (y) to spot inflection.
+    // Shift+drag pans, Ctrl+wheel zooms. Bounds keep the user inside
+    // the real cycle range; Y min=0 because ΔV̄ ≥ 0 for normal cells
+    // (avg_charge > avg_discharge by definition of hysteresis).
     zoom: {
       pan:  { enabled: true, mode: 'xy', modifierKey: 'shift' },
-      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
+      zoom: { wheel: { enabled: true, modifierKey: 'ctrl' }, pinch: { enabled: true }, mode: 'xy' },
+      limits: {
+        x: { min: 'original', max: 'original', minRange: 1 },
+        y: { min: 0, max: 'original' },
+      },
     },
   },
   scales: {
@@ -1262,7 +1288,7 @@ function resetZoom(chartRef) {
   <div class="cycling-charts">
     <!-- Top: combined Capacity + CE chart (dual Y-axis, publication style) -->
     <div class="chart-card chart-card--wide">
-      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, колесо — масштаб)" @click="resetZoom(capacityChartRef)">
+      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, Ctrl+колесо — масштаб)" @click="resetZoom(capacityChartRef)">
         <i class="pi pi-refresh"></i>
       </button>
       <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(capacityChartRef, 'capacity_and_ce')">
@@ -1278,7 +1304,7 @@ function resetZoom(chartRef) {
          when the toggle is off or when no session has avg voltages yet
          (older uploads pre-migration-019). -->
     <div v-if="showHysteresis && hasHysteresisData" class="chart-card chart-card--wide">
-      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, колесо — масштаб)" @click="resetZoom(hysteresisChartRef)">
+      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, Ctrl+колесо — масштаб)" @click="resetZoom(hysteresisChartRef)">
         <i class="pi pi-refresh"></i>
       </button>
       <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(hysteresisChartRef, 'voltage_hysteresis')">
@@ -1470,7 +1496,7 @@ function resetZoom(chartRef) {
 
     <!-- Voltage profile (overlay of selected cycles) -->
     <div v-if="selectedCycles.length" class="chart-card chart-card--wide">
-      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, колесо — масштаб)" @click="resetZoom(voltageChartRef)">
+      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, Ctrl+колесо — масштаб)" @click="resetZoom(voltageChartRef)">
         <i class="pi pi-refresh"></i>
       </button>
       <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(voltageChartRef, 'voltage_profile')">
@@ -1487,7 +1513,7 @@ function resetZoom(chartRef) {
 
     <!-- dQ/dV plot -->
     <div v-if="selectedCycles.length" class="chart-card chart-card--wide">
-      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, колесо — масштаб)" @click="resetZoom(dqdvChartRef)">
+      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, Ctrl+колесо — масштаб)" @click="resetZoom(dqdvChartRef)">
         <i class="pi pi-refresh"></i>
       </button>
       <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(dqdvChartRef, 'dqdv')">
