@@ -82,6 +82,12 @@ const smoothingWindow = ref(5)
 // each cycle. Pressing the toggle re-derives the data without any refetch.
 const capacityView = ref('absolute')
 
+// Voltage hysteresis chart toggle. Off by default — useful mostly when
+// user is looking for polarisation growth over many cycles (SEI, contact
+// loss, dendrites). Data comes from avg_charge_voltage_v /
+// avg_discharge_voltage_v (migration 019); rendered as ΔV̄ in mV.
+const showHysteresis = ref(false)
+
 // Per-session style popover state. Controlled by the ⚙ button in the
 // active-session chip — stores which session is being edited so the popover
 // knows which style map entry to mutate. The PrimeVue Popover itself uses
@@ -898,6 +904,25 @@ const batteryOptions = computed(() =>
             </button>
           </div>
         </div>
+        <div class="toolbar-pubmode" title="Рост ΔV̄ = avg_charge − avg_discharge показывает полиризацию (SEI, контакт, дендриты)">
+          <label class="toolbar-label">Гистерезис V̄</label>
+          <div class="pubmode-row">
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': !showHysteresis }"
+              @click="showHysteresis = false"
+            >
+              Скрыт
+            </button>
+            <button
+              class="pubmode-btn"
+              :class="{ 'is-active': showHysteresis }"
+              @click="showHysteresis = true"
+            >
+              Показать
+            </button>
+          </div>
+        </div>
         <div class="toolbar-pubmode">
           <label class="toolbar-label">Стиль</label>
           <div class="pubmode-row">
@@ -964,6 +989,7 @@ const batteryOptions = computed(() =>
         :stepFilter="stepFilter"
         :smoothingWindow="smoothingWindow"
         :capacityView="capacityView"
+        :showHysteresis="showHysteresis"
         :sessionStyles="sessionStyles"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"

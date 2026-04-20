@@ -71,6 +71,12 @@ const props = defineProps({
   //     each session is the reference (100 %); if cycle 1 is a formation
   //     cycle, the user can still see the full fade curve.
   capacityView: { type: String, default: 'absolute' },
+  // Voltage hysteresis chart: ΔV̄ = avg_charge_V − avg_discharge_V (in mV)
+  // per cycle. A classic "how much is kinetic loss growing with cycling"
+  // plot — rising hysteresis means polarisation is getting worse
+  // (SEI growth, contact loss, dendrite nucleation). Gated by a toolbar
+  // toggle because on first-cycle-only runs the chart is just two points.
+  showHysteresis: { type: Boolean, default: false },
   // Per-session style overrides — keyed by session_id. Each entry can set
   // any subset of { color, borderWidth, borderDash, pointStyle, pointRadius }
   // to replace the palette/gradient defaults. Applied to voltage profile +
@@ -289,6 +295,7 @@ const summary = mergedSummary
 const capacityChartRef = ref(null)
 const voltageChartRef = ref(null)
 const dqdvChartRef = ref(null)
+const hysteresisChartRef = ref(null)
 
 // ── Session label helper (shown in chart legends) ──
 // Primary format: "Акк. №5" — battery number is the scientific anchor.
@@ -920,6 +927,97 @@ const dqdvOptions = computed(() => ({
   },
 }))
 
+// ── Voltage hysteresis chart ──────────────────────────────────────────
+// ΔV̄ = avg_charge_V − avg_discharge_V per cycle, expressed in mV
+// (typical range 20–400 mV for Li-ion coin cells). Rising hysteresis
+// = polarisation growing → kinetic losses (SEI, contact, dendrites).
+// Only cycles where both avg voltages are available produce points.
+const hasHysteresisData = computed(() => {
+  for (const s of props.sessions) {
+    for (const row of s.summary || []) {
+      if (row.avg_charge_voltage_v != null && row.avg_discharge_voltage_v != null) return true
+    }
+  }
+  return false
+})
+
+const hysteresisChartData = computed(() => {
+  const datasets = []
+  for (const s of props.sessions) {
+    if (!s.summary?.length) continue
+    const points = s.summary
+      .map(row => {
+        const chg = Number(row.avg_charge_voltage_v)
+        const dch = Number(row.avg_discharge_voltage_v)
+        if (!Number.isFinite(chg) || !Number.isFinite(dch)) return null
+        return { x: row.cycle_number, y: (chg - dch) * 1000 }
+      })
+      .filter(Boolean)
+    if (!points.length) continue
+    datasets.push({
+      label: sessionShortLabel(s),
+      data: points,
+      borderColor: s.color,
+      backgroundColor: s.color,
+      tension: 0.2,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      pointStyle: 'circle',
+      borderWidth: 1.8,
+    })
+  }
+  return { datasets }
+})
+
+const hysteresisOptions = computed(() => ({
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: FAST_ANIM,
+  plugins: {
+    legend: {
+      display: props.sessions.length > 1,
+      position: 'bottom',
+      labels: { boxWidth: 12, font: { size: 11 }, generateLabels: dedupeLegend },
+    },
+    title: {
+      display: true,
+      text: props.experimentLabel
+        ? `${props.experimentLabel} — ΔV̄ hysteresis`
+        : 'Voltage hysteresis (ΔV̄ = V̄_chg − V̄_dch)',
+      font: { size: 13, weight: 600 },
+      color: '#003274',
+      padding: { bottom: 4 },
+    },
+    subtitle: {
+      display: true,
+      text: 'Полиризация — рост = ухудшение кинетики (SEI / контакт / дендриты)',
+      font: { size: 11, style: 'italic' },
+      color: '#6B7280',
+      padding: { bottom: 8 },
+    },
+    // XY zoom: sometimes you want a specific cycle window (x) but
+    // sometimes a particular hysteresis range (y) to spot inflection.
+    zoom: {
+      pan:  { enabled: true, mode: 'xy', modifierKey: 'shift' },
+      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
+    },
+  },
+  scales: {
+    y: {
+      title: { display: true, text: 'ΔV̄, mV', font: { size: 10 } },
+      ticks: { font: { size: 10 } },
+      beginAtZero: true,
+      grid: { color: 'rgba(0,50,116,0.05)' },
+    },
+    x: {
+      type: 'linear',
+      title: { display: true, text: 'Cycle number', font: { size: 10 } },
+      ticks: { font: { size: 10 }, stepSize: 1 },
+      grid: { display: false },
+    },
+  },
+}))
+
 // ── Quick filters (replace whole selection) ────────────────────────────
 // All helpers clamp to maxSelected — the lazy-fetch loop in CyclingPage
 // doesn't scale past ~20 cycles without noticeable lag, and the voltage
@@ -1095,6 +1193,22 @@ function resetZoom(chartRef) {
       </button>
       <div class="chart-wrap chart-wrap--tall">
         <Line v-if="summary.length" ref="capacityChartRef" :data="capacityChartData" :options="capacityOptions" />
+      </div>
+    </div>
+
+    <!-- Voltage hysteresis chart (opt-in via toolbar toggle). Sits next
+         to Capacity+CE because both are per-cycle summary plots. Hidden
+         when the toggle is off or when no session has avg voltages yet
+         (older uploads pre-migration-019). -->
+    <div v-if="showHysteresis && hasHysteresisData" class="chart-card chart-card--wide">
+      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, колесо — масштаб)" @click="resetZoom(hysteresisChartRef)">
+        <i class="pi pi-refresh"></i>
+      </button>
+      <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(hysteresisChartRef, 'voltage_hysteresis')">
+        <i class="pi pi-download"></i>
+      </button>
+      <div class="chart-wrap chart-wrap--tall">
+        <Line ref="hysteresisChartRef" :data="hysteresisChartData" :options="hysteresisOptions" />
       </div>
     </div>
 
