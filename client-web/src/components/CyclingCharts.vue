@@ -23,8 +23,9 @@ import {
   Filler,
   ScatterController,
 } from 'chart.js'
+import zoomPlugin from 'chartjs-plugin-zoom'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, SubTitle, Tooltip, Legend, Filler, ScatterController)
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, SubTitle, Tooltip, Legend, Filler, ScatterController, zoomPlugin)
 
 // Multi-session props — each session carries its own summary + cycleDataMap
 // + color. See CyclingPage.activeSessionViews for the shape.
@@ -63,6 +64,11 @@ const props = defineProps({
   // recommended for noisy cells where peaks get buried in measurement
   // jitter. Clamped to [1, 21] inside computeDQDV.
   smoothingWindow: { type: Number, default: 5 },
+  // Per-session style overrides — keyed by session_id. Each entry can set
+  // any subset of { color, borderWidth, borderDash, pointStyle, pointRadius }
+  // to replace the palette/gradient defaults. Applied to voltage profile +
+  // dQ/dV only (capacity+CE chart stays automatic for clarity).
+  sessionStyles: { type: Object, default: () => ({}) },
 })
 
 // Convert a capacity value (Ah) to the current display unit based on
@@ -514,6 +520,13 @@ const capacityOptions = computed(() => ({
     tooltip: {
       callbacks: { afterBody: () => 'Клик по ёмкости — добавить/убрать цикл' },
     },
+    // Zoom/pan: X-only on capacity+CE chart. The dual Y-axis (capacity
+    // + CE) panning together would misalign CE values on each axis, so
+    // we lock Y. Shift+drag to pan; wheel/pinch to zoom a cycle range.
+    zoom: {
+      pan:  { enabled: true, mode: 'x', modifierKey: 'shift' },
+      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+    },
   },
   scales: {
     // Left Y: discharge capacity — absolute (Ah) or specific (mAh/g)
@@ -664,6 +677,13 @@ const voltageOptions = computed(() => ({
       color: '#003274',
       padding: { bottom: 10 },
     },
+    // Zoom/pan: XY on voltage profile — a plateau analysis typically
+    // zooms into a specific V window (e.g. 3.2–3.6 V for LFP) AND a
+    // capacity window at the same time. Shift+drag pans, wheel/pinch zooms.
+    zoom: {
+      pan:  { enabled: true, mode: 'xy', modifierKey: 'shift' },
+      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
+    },
   },
   scales: {
     y: { title: { display: true, text: 'E, V', font: { size: 10 } }, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,50,116,0.05)' } },
@@ -805,6 +825,12 @@ const dqdvOptions = computed(() => ({
       font: { size: 13, weight: 600 },
       color: '#003274',
       padding: { bottom: 10 },
+    },
+    // Zoom/pan: XY on dQ/dV — isolating a single peak (V range) and
+    // seeing its height (|dQ/dV| range) both matter for phase analysis.
+    zoom: {
+      pan:  { enabled: true, mode: 'xy', modifierKey: 'shift' },
+      zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'xy' },
     },
   },
   scales: {
@@ -969,12 +995,25 @@ function exportChartPNG(chartRef, name) {
   link.click()
   document.body.removeChild(link)
 }
+
+// Reset zoom/pan state on a chart to its default bounds. The plugin
+// registers a resetZoom() method on every Chart instance; vue-chartjs
+// wraps the instance in `.chart` on the component ref. No-op if the
+// chart isn't mounted yet (happens when the user clicks the button
+// before data is loaded).
+function resetZoom(chartRef) {
+  const inst = chartRef?.value?.chart
+  if (inst && typeof inst.resetZoom === 'function') inst.resetZoom()
+}
 </script>
 
 <template>
   <div class="cycling-charts">
     <!-- Top: combined Capacity + CE chart (dual Y-axis, publication style) -->
     <div class="chart-card chart-card--wide">
+      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, колесо — масштаб)" @click="resetZoom(capacityChartRef)">
+        <i class="pi pi-refresh"></i>
+      </button>
       <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(capacityChartRef, 'capacity_and_ce')">
         <i class="pi pi-download"></i>
       </button>
@@ -1164,6 +1203,9 @@ function exportChartPNG(chartRef, name) {
 
     <!-- Voltage profile (overlay of selected cycles) -->
     <div v-if="selectedCycles.length" class="chart-card chart-card--wide">
+      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, колесо — масштаб)" @click="resetZoom(voltageChartRef)">
+        <i class="pi pi-refresh"></i>
+      </button>
       <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(voltageChartRef, 'voltage_profile')">
         <i class="pi pi-download"></i>
       </button>
@@ -1178,6 +1220,9 @@ function exportChartPNG(chartRef, name) {
 
     <!-- dQ/dV plot -->
     <div v-if="selectedCycles.length" class="chart-card chart-card--wide">
+      <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, колесо — масштаб)" @click="resetZoom(dqdvChartRef)">
+        <i class="pi pi-refresh"></i>
+      </button>
       <button class="chart-export-btn" title="Скачать PNG" @click="exportChartPNG(dqdvChartRef, 'dqdv')">
         <i class="pi pi-download"></i>
       </button>
@@ -1321,10 +1366,10 @@ function exportChartPNG(chartRef, name) {
 .chart-wrap--tall { height: 300px; }
 
 /* PNG export button — top-right corner */
-.chart-export-btn {
+.chart-export-btn,
+.chart-reset-zoom-btn {
   position: absolute;
   top: 6px;
-  right: 6px;
   width: 26px;
   height: 26px;
   border-radius: 6px;
@@ -1340,10 +1385,14 @@ function exportChartPNG(chartRef, name) {
   transition: opacity 0.15s ease, background 0.15s ease;
   z-index: 2;
 }
-.chart-card:hover .chart-export-btn {
+.chart-export-btn { right: 6px; }
+.chart-reset-zoom-btn { right: 38px; }  /* sits to the left of PNG button */
+.chart-card:hover .chart-export-btn,
+.chart-card:hover .chart-reset-zoom-btn {
   opacity: 1;
 }
-.chart-export-btn:hover {
+.chart-export-btn:hover,
+.chart-reset-zoom-btn:hover {
   background: #003274;
   color: white;
 }
