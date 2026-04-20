@@ -184,6 +184,20 @@ async function deleteInstance(id) {
   }
 }
 
+function openMaterialDetailsPage(materialInstanceId) {
+  window.open(
+    `/reference/material-details.html?material_instance_id=${encodeURIComponent(materialInstanceId)}`,
+    '_blank'
+  );
+}
+
+function openMaterialSourceInfoPage(materialInstanceId) {
+  window.open(
+    `/reference/material-source-info.html?material_instance_id=${encodeURIComponent(materialInstanceId)}`,
+    '_blank'
+  );
+}
+
 createMaterialBtn.addEventListener('click', async () => {
   const name = newNameInput.value.trim();
   const role = newRoleSelect.value;
@@ -550,6 +564,8 @@ function renderMaterials(materials) {
           instDetails.dataset.type = 'instance';
           instDetails.dataset.id = inst.material_instance_id;
           instDetails.dataset.notes = inst.notes || '';
+          instDetails.dataset.isPure = String(Boolean(inst.is_pure));
+          instDetails.dataset.sourceId = inst.source_id || '';
           
           instDetails.open = false;
           
@@ -569,8 +585,23 @@ function renderMaterials(materials) {
           deleteBtn.type = 'button';
           deleteBtn.textContent = '🗑';
           deleteBtn.dataset.action = 'delete';
+
+          const detailsBtn = document.createElement('button');
+          detailsBtn.type = 'button';
+          detailsBtn.textContent = '+ Details';
+          detailsBtn.dataset.action = 'details';
+          detailsBtn.style.marginLeft = '0.5rem';
+
+          const sourceInfoBtn = document.createElement('button');
+          sourceInfoBtn.type = 'button';
+          sourceInfoBtn.textContent = '+ Source Info';
+          sourceInfoBtn.dataset.action = 'source-info';
+          sourceInfoBtn.style.marginLeft = '0.35rem';
+          sourceInfoBtn.hidden = !inst.is_pure;
           
           instSummary.appendChild(instTitle);
+          instSummary.appendChild(detailsBtn);
+          instSummary.appendChild(sourceInfoBtn);
           instSummary.appendChild(editBtn);
           instSummary.appendChild(deleteBtn);
           
@@ -638,6 +669,17 @@ function renderMaterials(materials) {
           notesInput.placeholder = 'Комментарий (необязательно)';
           notesInput.style.display = 'block';
           notesInput.style.marginTop = '0.4rem';
+
+          const pureLabel = document.createElement('label');
+          pureLabel.style.display = 'block';
+          pureLabel.style.marginTop = '0.4rem';
+
+          const pureCheckbox = document.createElement('input');
+          pureCheckbox.type = 'checkbox';
+          pureCheckbox.style.marginRight = '0.4rem';
+
+          pureLabel.appendChild(pureCheckbox);
+          pureLabel.append('100% чистый экземпляр');
           
           const saveBtn = document.createElement('button');
           saveBtn.type = 'button';
@@ -649,6 +691,7 @@ function renderMaterials(materials) {
           
           createRow.appendChild(input);
           createRow.appendChild(notesInput);
+          createRow.appendChild(pureLabel);
           createRow.appendChild(saveBtn);
           createRow.appendChild(cancelBtn);
           
@@ -666,7 +709,8 @@ function renderMaterials(materials) {
             try {
               await createInstance(material.material_id, {
                 name,
-                notes: notesInput.value.trim() || null
+                notes: notesInput.value.trim() || null,
+                is_pure: pureCheckbox.checked
               });
               
               childrenContainer.dataset.loaded = '';
@@ -954,6 +998,21 @@ materialsList.addEventListener('click', async (e) => {
   
   if (action === 'edit') {
     enterEditMode(row, type, id);
+    return;
+  }
+
+  if (action === 'details' && type === 'instance') {
+    e.preventDefault();
+    e.stopPropagation();
+    openMaterialDetailsPage(id);
+    return;
+  }
+
+  if (action === 'source-info' && type === 'instance') {
+    e.preventDefault();
+    e.stopPropagation();
+    openMaterialSourceInfoPage(id);
+    return;
   }
   
   if (action === 'delete') {

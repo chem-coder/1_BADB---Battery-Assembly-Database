@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>Свойства материала</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+  </head>
+
+  <body data-page="materials">
+    <header class="page-header">
+      <a href="/reference/materials.html" aria-label="Материалы" class="home-link"><img src="/icons/house-regular.svg" alt=""></a>
+      <h1>Свойства материала</h1>
+    </header>
+
+    <div class="status-feedback" id="detailsStatus" aria-live="polite"></div>
+
+    <section>
+      <h2 id="materialDetailsTitle">Загрузка...</h2>
+      <div id="materialDetailsMeta"></div>
+    </section>
+
+    <form id="materialDetailsForm" autocomplete="off">
+      <fieldset>
+        <legend>Свойства материала</legend>
+
+        <div class="form-grid cols-2">
+          <div class="form-field">
+            <label for="specificCapacityInput">Удельная ёмкость, мАч/г</label>
+            <input type="number" step="any" min="0" id="specificCapacityInput">
+          </div>
+
+          <div class="form-field">
+            <label for="densityInput">Плотность, г/мл</label>
+            <input type="number" step="any" min="0" id="densityInput">
+          </div>
+        </div>
+
+        <div class="notes-row">
+          <label for="materialPropertyNotesInput">Заметки:</label>
+          <textarea id="materialPropertyNotesInput" rows="3" placeholder="Необязательно"></textarea>
+        </div>
+
+        <fieldset style="margin-top: 1rem;">
+          <legend>Документы по свойствам</legend>
+          <label for="materialPropertyFilesInput">Файлы</label>
+          <input id="materialPropertyFilesInput" type="file" multiple>
+          <button id="saveMaterialPropertyFilesBtn" type="button" hidden>Сохранить файлы</button>
+          <p id="materialPropertyFilesSaved" class="tiny_note"></p>
+        </fieldset>
+
+        <div class="form-actions" style="display:flex; gap:.5rem; align-items:center; margin:.5rem 0 1rem 0;">
+          <button type="submit">Сохранить свойства</button>
+          <button type="button" id="backToMaterialsBtn">К материалам</button>
+        </div>
+        <div class="status-feedback" id="detailsLocalStatus" aria-live="polite"></div>
+      </fieldset>
+    </form>
+
+    <script src="/js/material-details.js"></script>
+  </body>
+</html>
