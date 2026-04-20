@@ -2,11 +2,165 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   margin: 2rem;
   max-width: 90%;
+  color: #20242b;
+  background: #fcfcfb;
+  line-height: 1.45;
+}
+
+a {
+  color: #315f86;
+  text-decoration-color: rgba(49, 95, 134, 0.38);
+  text-underline-offset: 0.14em;
+}
+
+a:visited {
+  color: #6b5e8e;
+  text-decoration-color: rgba(107, 94, 142, 0.34);
+}
+
+a:hover,
+a:focus-visible {
+  color: #244a69;
+  text-decoration-color: currentColor;
+}
+
+header.page-header {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+header.page-header h1 {
+  margin: 0;
+}
+
+.home-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.home-link img {
+  display: block;
+  width: 22px;
+  height: 22px;
 }
 
 fieldset legend {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  color: lightskyblue;
+  color: #5f7f99;
+  font-weight: 600;
+}
+
+body[data-page] .container,
+body[data-page="tapes"],
+body[data-page="electrodes"],
+body[data-page="BAL"] {
+  color: #20242b;
+}
+
+body[data-page] header {
+  margin-bottom: 1.1rem;
+}
+
+body[data-page] h1 {
+  color: #161a21;
+  letter-spacing: -0.01em;
+}
+
+body[data-page] h2,
+body[data-page] h3 {
+  color: #1d2530;
+}
+
+body[data-page] fieldset {
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0.95rem 1rem 1rem;
+  margin-bottom: 0.9rem;
+  box-shadow: 0 1px 0 rgba(18, 27, 40, 0.03);
+}
+
+body[data-page] details {
+  margin-bottom: 0.9rem;
+}
+
+body[data-page] summary {
+  color: #5f7f99;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+body[data-page] label {
+  color: #2b3340;
+}
+
+body[data-page] input,
+body[data-page] select,
+body[data-page] textarea,
+body[data-page] button {
+  font: inherit;
+}
+
+body[data-page] input,
+body[data-page] select,
+body[data-page] textarea {
+  border: 1px solid #cdd5df;
+  border-radius: 5px;
+  padding: 0.32rem 0.45rem;
+  background: #fff;
+  color: #1f2732;
+}
+
+body[data-page] textarea {
+  line-height: 1.35;
+}
+
+body[data-page] button {
+  padding: 0.34rem 0.7rem;
+  border: 1px solid #cdd5df;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #1f2732;
+}
+
+body[data-page] button:hover {
+  background: #f1f5f9;
+}
+
+body[data-page] a {
+  color: #315f86;
+  text-decoration-color: rgba(49, 95, 134, 0.38);
+}
+
+body[data-page] a:visited {
+  color: #6b5e8e;
+  text-decoration-color: rgba(107, 94, 142, 0.34);
+}
+
+body[data-page] a:hover,
+body[data-page] a:focus-visible {
+  color: #244a69;
+  text-decoration-color: currentColor;
+}
+
+body[data-page] .form-actions {
+  margin: 0.85rem 0 1.35rem 0 !important;
+  gap: 0.75rem !important;
+}
+
+body[data-page="tapes"] #printBtn,
+body[data-page="tapes"] #clearBtn,
+body[data-page="electrodes"] #printElectrodeBatchBtn,
+body[data-page="electrodes"] #exitBatchBtn,
+body[data-page="BAL"] #printBatteryBtn,
+body[data-page="BAL"] #exitBatteriesBtn {
+  margin-top: 0.2rem;
+  margin-bottom: 0.55rem;
 }
 
 .add-user {
