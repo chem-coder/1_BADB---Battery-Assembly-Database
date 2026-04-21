@@ -152,10 +152,16 @@ async function loadInstances(materialId) {
     const { data } = await api.get(`/api/materials/${materialId}/instances`)
     instances.value = data.sort((a, b) => a.name.localeCompare(b.name))
     // Auto-expand all instances and load their components
-    const ids = instances.value.map(i => i.material_instance_id)
-    openInstances.value = new Set(ids)
-    ids.forEach(id => {
+    openInstances.value = new Set(instances.value.map(i => i.material_instance_id))
+    instances.value.forEach(inst => {
+      const id = inst.material_instance_id
       if (!componentsLoaded.value[id]) loadComponents(id)
+      // source-info is only meaningful for pure instances — backend
+      // rejects non-pure with 400. Skip the load for composites (they
+      // get a friendly "N/A" message in the template instead of a
+      // spinner-forever + error toast).
+      if (inst.is_pure && !sourceInfoLoaded.value[id]) loadSourceInfo(id)
+      if (!propertiesLoaded.value[id]) loadProperties(id)
     })
   } finally {
     instancesLoading.value = false
@@ -166,6 +172,135 @@ async function loadComponents(instanceId) {
   const { data } = await api.get(`/api/materials/instances/${instanceId}/components`)
   componentsMap.value[instanceId] = data
   componentsLoaded.value[instanceId] = true
+}
+
+// ── Source info & properties (per material instance) ──────────────────
+// Dalia added material_sources + material_properties in migrations
+// d026/d027. The Vue UI exposes two per-instance forms:
+//   - Source info — supplier, brand, lot, dates, quality rating, notes.
+//   - Properties  — specific capacity (mAh/g), density (g/ml), notes.
+// Loaded lazily when the user expands an instance (parallel with the
+// components fetch). Same reactive object doubles as the edit buffer —
+// on PUT success the backend-returned row replaces the buffer, so the
+// form always reflects the authoritative DB state after save.
+const sourceInfoForm = ref({})
+const sourceInfoLoaded = ref({})
+const sourceInfoSaving = ref({})
+const propertiesForm = ref({})
+const propertiesLoaded = ref({})
+const propertiesSaving = ref({})
+
+const QUALITY_LABELS = [
+  { value: 'good', label: 'Хорошо' },
+  { value: 'ok',   label: 'Приемлемо' },
+  { value: 'bad',  label: 'Плохо' },
+  { value: 'tbd',  label: 'Не оценено' },
+]
+
+function blankSourceInfo() {
+  return {
+    supplier: '', brand: '', model_or_catalog_no: '', lot_number: '',
+    date_ordered: '', date_received: '',
+    quality_rating_label: '', quality_rating_score: '',
+    evaluation_notes: '', is_evaluated: false,
+  }
+}
+function blankProperties() {
+  return {
+    specific_capacity_mAh_g: '',
+    density_g_ml: '',
+    notes: '',
+  }
+}
+
+async function loadSourceInfo(instanceId) {
+  try {
+    const { data } = await api.get(`/api/materials/instances/${instanceId}/source-info`)
+    // Endpoint returns { instance, source }. When source is null (no row
+    // yet) we seed the form with blanks so inputs don't bind to null.
+    const src = data?.source || {}
+    sourceInfoForm.value[instanceId] = {
+      ...blankSourceInfo(),
+      ...src,
+      // DB dates come back as ISO; inputs expect yyyy-mm-dd. Slice the T.
+      date_ordered: src.date_ordered ? String(src.date_ordered).slice(0, 10) : '',
+      date_received: src.date_received ? String(src.date_received).slice(0, 10) : '',
+    }
+    sourceInfoLoaded.value[instanceId] = true
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Источник', detail: err.response?.data?.error || 'Не удалось загрузить', life: 4000 })
+  }
+}
+
+async function saveSourceInfo(instanceId) {
+  const form = sourceInfoForm.value[instanceId]
+  if (!form) return
+  sourceInfoSaving.value[instanceId] = true
+  try {
+    const payload = {
+      supplier:               form.supplier || null,
+      brand:                  form.brand || null,
+      model_or_catalog_no:    form.model_or_catalog_no || null,
+      lot_number:             form.lot_number || null,
+      date_ordered:           form.date_ordered || null,
+      date_received:          form.date_received || null,
+      quality_rating_label:   form.quality_rating_label || null,
+      quality_rating_score:   form.quality_rating_score === '' || form.quality_rating_score == null
+                                ? null : Number(form.quality_rating_score),
+      evaluation_notes:       form.evaluation_notes || null,
+      is_evaluated:           !!form.is_evaluated,
+    }
+    await api.put(`/api/materials/instances/${instanceId}/source-info`, payload)
+    toast.add({ severity: 'success', summary: 'Источник', detail: 'Сохранено', life: 2500 })
+    // Reload to get canonical server state (including server-computed
+    // updated_at / updated_by / updated_by_name).
+    await loadSourceInfo(instanceId)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Источник', detail: err.response?.data?.error || 'Ошибка сохранения', life: 4000 })
+  } finally {
+    sourceInfoSaving.value[instanceId] = false
+  }
+}
+
+async function loadProperties(instanceId) {
+  try {
+    const { data } = await api.get(`/api/materials/instances/${instanceId}/properties`)
+    const p = data?.properties || {}
+    propertiesForm.value[instanceId] = {
+      ...blankProperties(),
+      // Postgres normalises column names lower-case — the column is
+      // specific_capacity_mAh_g, PG returns specific_capacity_mah_g.
+      // Read both spellings to be robust.
+      specific_capacity_mAh_g: p.specific_capacity_mAh_g ?? p.specific_capacity_mah_g ?? '',
+      density_g_ml:            p.density_g_ml ?? '',
+      notes:                   p.notes ?? '',
+    }
+    propertiesLoaded.value[instanceId] = true
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Свойства', detail: err.response?.data?.error || 'Не удалось загрузить', life: 4000 })
+  }
+}
+
+async function saveProperties(instanceId) {
+  const form = propertiesForm.value[instanceId]
+  if (!form) return
+  propertiesSaving.value[instanceId] = true
+  try {
+    const payload = {
+      specific_capacity_mAh_g: form.specific_capacity_mAh_g === '' || form.specific_capacity_mAh_g == null
+                                 ? null : Number(form.specific_capacity_mAh_g),
+      density_g_ml:            form.density_g_ml === '' || form.density_g_ml == null
+                                 ? null : Number(form.density_g_ml),
+      notes:                   form.notes || null,
+    }
+    await api.put(`/api/materials/instances/${instanceId}/properties`, payload)
+    toast.add({ severity: 'success', summary: 'Свойства', detail: 'Сохранено', life: 2500 })
+    await loadProperties(instanceId)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Свойства', detail: err.response?.data?.error || 'Ошибка сохранения', life: 4000 })
+  } finally {
+    propertiesSaving.value[instanceId] = false
+  }
 }
 
 async function loadAllInstances() {
@@ -180,6 +315,9 @@ function toggleInstance(inst) {
   } else {
     openInstances.value = new Set([...openInstances.value, id])
     if (!componentsLoaded.value[id]) loadComponents(id)
+    // Same pure-instance gate as loadInstances above.
+    if (inst.is_pure && !sourceInfoLoaded.value[id]) loadSourceInfo(id)
+    if (!propertiesLoaded.value[id]) loadProperties(id)
   }
 }
 
@@ -566,6 +704,143 @@ function onEditKeydown(e, saveFn, cancelFn) {
                     />
                   </template>
                   <div v-else class="loading-text">Загрузка...</div>
+
+                  <!-- ── Source info (supplier/lot/quality, d026) ──
+                       Only meaningful for "pure" instances (single compound,
+                       no components). Backend returns 400 for composites,
+                       so we hide the form entirely and show a short hint
+                       instead of a loading spinner that never resolves. -->
+                  <div v-if="!inst.is_pure" class="instance-sub-section instance-sub-section--muted">
+                    <div class="sub-section-title">Источник</div>
+                    <div class="meta-text">
+                      Информация о поставщике/партии/качестве ведётся только для
+                      однокомпонентных материалов. У этого экземпляра есть компоненты
+                      — источник каждого компонента ведётся в его отдельной карточке.
+                    </div>
+                  </div>
+                  <div v-else class="instance-sub-section">
+                    <div class="sub-section-title">Источник (поставщик · партия · качество)</div>
+                    <template v-if="sourceInfoLoaded[inst.material_instance_id]">
+                      <div class="form-grid">
+                        <div class="form-field">
+                          <label>Поставщик</label>
+                          <InputText v-model="sourceInfoForm[inst.material_instance_id].supplier" class="w-full" />
+                        </div>
+                        <div class="form-field">
+                          <label>Бренд</label>
+                          <InputText v-model="sourceInfoForm[inst.material_instance_id].brand" class="w-full" />
+                        </div>
+                        <div class="form-field">
+                          <label>Модель / каталожный №</label>
+                          <InputText v-model="sourceInfoForm[inst.material_instance_id].model_or_catalog_no" class="w-full" />
+                        </div>
+                        <div class="form-field">
+                          <label>Номер партии</label>
+                          <InputText v-model="sourceInfoForm[inst.material_instance_id].lot_number" class="w-full" />
+                        </div>
+                        <div class="form-field">
+                          <label>Дата заказа</label>
+                          <input type="date" v-model="sourceInfoForm[inst.material_instance_id].date_ordered" class="date-input" />
+                        </div>
+                        <div class="form-field">
+                          <label>Дата получения</label>
+                          <input type="date" v-model="sourceInfoForm[inst.material_instance_id].date_received" class="date-input" />
+                        </div>
+                        <div class="form-field">
+                          <label>Метка качества</label>
+                          <Select
+                            v-model="sourceInfoForm[inst.material_instance_id].quality_rating_label"
+                            :options="QUALITY_LABELS"
+                            optionLabel="label"
+                            optionValue="value"
+                            placeholder="—"
+                            showClear
+                            class="w-full"
+                          />
+                        </div>
+                        <div class="form-field">
+                          <label title="1 — худшая оценка, 5 — лучшая">Оценка, 1–5</label>
+                          <input
+                            type="number" min="1" max="5" step="1"
+                            v-model="sourceInfoForm[inst.material_instance_id].quality_rating_score"
+                            class="num-input"
+                          />
+                        </div>
+                        <div class="form-field form-field--full">
+                          <label>Комментарий по оценке</label>
+                          <textarea
+                            v-model="sourceInfoForm[inst.material_instance_id].evaluation_notes"
+                            class="textarea-input"
+                            rows="2"
+                          />
+                        </div>
+                        <div class="form-field form-field--full form-field--checkbox">
+                          <label>
+                            <input
+                              type="checkbox"
+                              v-model="sourceInfoForm[inst.material_instance_id].is_evaluated"
+                            />
+                            Оценка завершена
+                          </label>
+                        </div>
+                      </div>
+                      <div class="form-actions">
+                        <Button
+                          label="Сохранить источник"
+                          icon="pi pi-save"
+                          size="small"
+                          :loading="!!sourceInfoSaving[inst.material_instance_id]"
+                          :disabled="!!sourceInfoSaving[inst.material_instance_id]"
+                          @click="saveSourceInfo(inst.material_instance_id)"
+                        />
+                      </div>
+                    </template>
+                    <div v-else class="loading-text">Загрузка…</div>
+                  </div>
+
+                  <!-- ── Properties (spec capacity / density, d026) ── -->
+                  <div class="instance-sub-section">
+                    <div class="sub-section-title">Свойства (удельная ёмкость · плотность)</div>
+                    <template v-if="propertiesLoaded[inst.material_instance_id]">
+                      <div class="form-grid">
+                        <div class="form-field">
+                          <label>Удельная ёмкость, мАч/г</label>
+                          <input
+                            type="number" step="any" min="0"
+                            v-model="propertiesForm[inst.material_instance_id].specific_capacity_mAh_g"
+                            class="num-input"
+                          />
+                        </div>
+                        <div class="form-field">
+                          <label>Плотность, г/мл</label>
+                          <input
+                            type="number" step="any" min="0"
+                            v-model="propertiesForm[inst.material_instance_id].density_g_ml"
+                            class="num-input"
+                          />
+                        </div>
+                        <div class="form-field form-field--full">
+                          <label>Заметки</label>
+                          <textarea
+                            v-model="propertiesForm[inst.material_instance_id].notes"
+                            class="textarea-input"
+                            rows="2"
+                          />
+                        </div>
+                      </div>
+                      <div class="form-actions">
+                        <Button
+                          label="Сохранить свойства"
+                          icon="pi pi-save"
+                          size="small"
+                          :loading="!!propertiesSaving[inst.material_instance_id]"
+                          :disabled="!!propertiesSaving[inst.material_instance_id]"
+                          @click="saveProperties(inst.material_instance_id)"
+                        />
+                      </div>
+                    </template>
+                    <div v-else class="loading-text">Загрузка…</div>
+                  </div>
                 </div>
               </div>
 
@@ -843,6 +1118,89 @@ function onEditKeydown(e, saveFn, cancelFn) {
 .components-section {
   margin-left: 1.75rem;
   padding-bottom: 0.5rem;
+}
+
+/* ── Source-info & Properties sub-sections (Dalia d026) ── */
+.instance-sub-section {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: rgba(0, 50, 116, 0.02);
+  border: 0.5px solid rgba(0, 50, 116, 0.08);
+  border-radius: 6px;
+}
+.instance-sub-section--muted {
+  background: rgba(0, 50, 116, 0.015);
+  opacity: 0.75;
+}
+.instance-sub-section--muted .meta-text {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6B7280;
+}
+.sub-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0, 50, 116, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.5rem;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 0.7rem;
+  margin-bottom: 0.5rem;
+}
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.form-field--full { grid-column: 1 / -1; }
+.form-field--checkbox label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.form-field label {
+  font-size: 11px;
+  color: #6B7280;
+  font-weight: 500;
+}
+.num-input,
+.date-input {
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 5px;
+  background: white;
+  color: #003274;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+.num-input:focus,
+.date-input:focus {
+  outline: none;
+  border-color: #003274;
+  box-shadow: 0 0 0 2px rgba(0, 50, 116, 0.1);
+}
+.textarea-input {
+  padding: 5px 8px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 5px;
+  background: white;
+  color: #003274;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 .comp-table {
   width: 100%;
