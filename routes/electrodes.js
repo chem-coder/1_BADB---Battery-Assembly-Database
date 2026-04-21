@@ -130,6 +130,17 @@ router.get('/electrode-cut-batches', auth, async (req, res) => {
         t.project_id,
         p.name AS project_name,
         r.role AS tape_role,
+        (
+          SELECT c.coating_sidedness
+          FROM tape_process_steps ts_coating
+          JOIN operation_types ot_coating
+            ON ot_coating.operation_type_id = ts_coating.operation_type_id
+          JOIN tape_step_coating c
+            ON c.step_id = ts_coating.step_id
+          WHERE ts_coating.tape_id = b.tape_id
+            AND ot_coating.code = 'coating'
+          LIMIT 1
+        ) AS tape_coating_sidedness,
         u_created.name AS created_by_name,
         u_updated.name AS updated_by_name,
         d.start_time AS drying_start,
@@ -460,6 +471,18 @@ router.get('/electrode-cut-batches/:id', auth, async (req, res) => {
     const result = await pool.query(
       `
       SELECT b.*,
+        b.tape_id,
+        (
+          SELECT c.coating_sidedness
+          FROM tape_process_steps ts_coating
+          JOIN operation_types ot_coating
+            ON ot_coating.operation_type_id = ts_coating.operation_type_id
+          JOIN tape_step_coating c
+            ON c.step_id = ts_coating.step_id
+          WHERE ts_coating.tape_id = b.tape_id
+            AND ot_coating.code = 'coating'
+          LIMIT 1
+        ) AS tape_coating_sidedness,
         u_created.name AS created_by_name,
         u_updated.name AS updated_by_name
       FROM electrode_cut_batches b
@@ -478,6 +501,116 @@ router.get('/electrode-cut-batches/:id', auth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+router.get('/electrode-cut-batches/:id/report', auth, async (req, res) => {
+  const cutBatchId = Number(req.params.id);
+
+  if (!Number.isInteger(cutBatchId)) {
+    return res.status(400).json({ error: 'Некорректный ID' });
+  }
+
+  try {
+    const batchResult = await pool.query(
+      `
+      SELECT
+        b.cut_batch_id,
+        b.tape_id,
+        b.comments,
+        b.target_form_factor,
+        b.target_config_code,
+        b.target_config_other,
+        b.shape,
+        b.diameter_mm,
+        b.length_mm,
+        b.width_mm,
+        b.created_at,
+        b.updated_at,
+        b.created_by,
+        b.updated_by,
+        u_created.name AS created_by_name,
+        u_updated.name AS updated_by_name,
+        t.name AS tape_name,
+        t.availability_status AS tape_availability_status,
+        r.role AS tape_role,
+        r.name AS tape_recipe_name,
+        p.name AS project_name,
+        (
+          SELECT c.coating_sidedness
+          FROM tape_process_steps ts_coating
+          JOIN operation_types ot_coating
+            ON ot_coating.operation_type_id = ts_coating.operation_type_id
+          JOIN tape_step_coating c
+            ON c.step_id = ts_coating.step_id
+          WHERE ts_coating.tape_id = b.tape_id
+            AND ot_coating.code = 'coating'
+          LIMIT 1
+        ) AS tape_coating_sidedness,
+        d.drying_id,
+        d.start_time AS drying_start_time,
+        d.end_time AS drying_end_time,
+        d.temperature_c AS drying_temperature_c,
+        d.other_parameters AS drying_other_parameters,
+        d.comments AS drying_comments
+      FROM electrode_cut_batches b
+      JOIN tapes t
+        ON t.tape_id = b.tape_id
+      LEFT JOIN tape_recipes r
+        ON r.tape_recipe_id = t.tape_recipe_id
+      LEFT JOIN projects p
+        ON p.project_id = t.project_id
+      LEFT JOIN users u_created
+        ON u_created.user_id = b.created_by
+      LEFT JOIN users u_updated
+        ON u_updated.user_id = b.updated_by
+      LEFT JOIN electrode_drying d
+        ON d.cut_batch_id = b.cut_batch_id
+      WHERE b.cut_batch_id = $1
+      `,
+      [cutBatchId]
+    );
+
+    if (batchResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Партия не найдена' });
+    }
+
+    const foilMassesResult = await pool.query(
+      `
+      SELECT foil_measurement_id, mass_g
+      FROM foil_mass_measurements
+      WHERE cut_batch_id = $1
+      ORDER BY foil_measurement_id ASC
+      `,
+      [cutBatchId]
+    );
+
+    const electrodesResult = await pool.query(
+      `
+      SELECT
+        electrode_id,
+        number_in_batch,
+        electrode_mass_g,
+        cup_number,
+        comments,
+        status_code,
+        used_in_battery_id,
+        scrapped_reason
+      FROM electrodes
+      WHERE cut_batch_id = $1
+      ORDER BY number_in_batch ASC, electrode_id ASC
+      `,
+      [cutBatchId]
+    );
+
+    res.json({
+      batch: batchResult.rows[0],
+      foil_masses: foilMassesResult.rows,
+      electrodes: electrodesResult.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка загрузки печатного отчёта по партии электродов' });
   }
 });
 

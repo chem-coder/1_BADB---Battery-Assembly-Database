@@ -4,6 +4,7 @@
     const addCutBatchBtn = document.getElementById('add-cut-batch-btn');
     const workspace = document.getElementById('electrode-workspace');
     const batchTitle = document.getElementById('batch-title');
+    const printElectrodeBatchBtn = document.getElementById('printElectrodeBatchBtn');
 
     function getDefaultElectrodeFiltersState() {
       return {
@@ -155,6 +156,24 @@
 
     function cloneElectrodeSnapshot(value) {
       return JSON.parse(JSON.stringify(value));
+    }
+
+    function formatTapeSidednessLabel(value) {
+      if (value === 'one_sided') return '1-сторонняя';
+      if (value === 'two_sided') return '2-сторонняя';
+      return '';
+    }
+
+    function formatElectrodeSidednessLabel(value) {
+      if (value === 'one_sided') return '1-сторонний';
+      if (value === 'two_sided') return '2-сторонний';
+      return '';
+    }
+
+    function formatElectrodesSidednessLabel(value) {
+      if (value === 'one_sided') return '1-сторонние';
+      if (value === 'two_sided') return '2-сторонние';
+      return '';
     }
 
     function getCurrentElectrodeSectionSnapshot(sectionKey) {
@@ -369,11 +388,28 @@
       });
     }
 
+    function renderElectrodeTableFromState() {
+      if (!state.selection.currentCutBatchId) {
+        renderElectrodeDraftRows();
+        return;
+      }
+
+      renderElectrodes(state.lists.electrodes);
+
+      if (!state.drafts.electrodes.length) {
+        return;
+      }
+
+      state.drafts.electrodes.forEach(row => {
+        appendElectrodeRow(row);
+      });
+    }
+
     function renderElectrodeWorkspace() {
       renderCutBatchForm();
       renderElectrodeDryingForm();
       renderFoilMassDrafts();
-      renderElectrodeDraftRows();
+      renderElectrodeTableFromState();
       renderTapeDryBoxActions();
     }
 
@@ -419,6 +455,9 @@
       workflow.hidden = !shouldShowWorkflow;
       addCutBatchBtn.hidden = !shouldShowWorkflow;
       workspace.hidden = !state.selection.currentCutBatchId && batchTitle.textContent !== 'Новая партия';
+      if (printElectrodeBatchBtn) {
+        printElectrodeBatchBtn.hidden = !state.selection.currentCutBatchId;
+      }
     }
 
     function renderCurrentTapeCutBatchList() {
@@ -466,9 +505,10 @@
           'электродов';
         const targetText = formatCutBatchTarget(batch);
         const geometryText = formatCutBatchGeometry(batch);
+        const sidednessText = formatElectrodesSidednessLabel(batch.tape_coating_sidedness);
 
         btn.textContent =
-          `Партия ${batch.cut_batch_id}${targetText ? ` — ${targetText}` : ''}${geometryText ? ` — ${geometryText}` : ''} — ${dateText} — ${count} ${electrodeWord} — ${status}`;
+          `Партия ${batch.cut_batch_id}${sidednessText ? ` — ${sidednessText}` : ''}${targetText ? ` — ${targetText}` : ''}${geometryText ? ` — ${geometryText}` : ''} — ${dateText} — ${count} ${electrodeWord} — ${status}`;
 
         btn.onclick = () => selectBatch(batch);
 
@@ -483,6 +523,20 @@
       renderCurrentTapeCutBatchList();
       renderAllCutBatches();
       renderElectrodeWorkspace();
+      const sidednessEl = document.getElementById('electrode-sidedness-display');
+      if (sidednessEl) {
+        const currentBatch = state.reference.allCutBatches.find(
+          batch => String(batch.cut_batch_id) === String(state.selection.currentCutBatchId || '')
+        ) || state.lists.cutBatches.find(
+          batch => String(batch.cut_batch_id) === String(state.selection.currentCutBatchId || '')
+        );
+        const currentTape = state.reference.tapes.find(
+          tape => String(tape.tape_id) === String(state.form.filters.tape_id || '')
+        );
+        const label = formatElectrodeSidednessLabel(currentBatch?.tape_coating_sidedness || currentTape?.coating_sidedness);
+        sidednessEl.textContent = label ? `Тип покрытия: ${label}` : '';
+        sidednessEl.hidden = !label;
+      }
       renderElectrodeWorkflowVisibility();
     }
 
@@ -758,8 +812,9 @@
 
         const date = t.finished_at || '—';          
         const roleLabel = roleRu[t.role] || t.role;
+        const sidednessLabel = formatTapeSidednessLabel(t.coating_sidedness);
 
-        option.textContent = `#${t.tape_id} | ${t.name} (${roleLabel}) | ${date} | ${t.created_by}`;
+        option.textContent = `#${t.tape_id} | ${t.name} (${roleLabel})${sidednessLabel ? ` | ${sidednessLabel}` : ''} | ${date} | ${t.created_by}`;
 
         if (t.role === 'cathode') {
           cathodeGroup.appendChild(option);
@@ -2068,6 +2123,17 @@
       markAllElectrodeSectionsSaved();
       showElectrodeInlineStatus('saveBtn', 'Партия сохранена.');
     });
+
+    if (printElectrodeBatchBtn) {
+      printElectrodeBatchBtn.addEventListener('click', () => {
+        if (!state.selection.currentCutBatchId) return;
+        window.open(
+          `/workflow/electrode-batch-print.html?cut_batch_id=${encodeURIComponent(state.selection.currentCutBatchId)}`,
+          '_blank',
+          'noopener'
+        );
+      });
+    }
 
     document.getElementById('electrodes-return-tape-btn').addEventListener('click', async () => {
       const tapeId = Number(state.form.filters.tape_id);

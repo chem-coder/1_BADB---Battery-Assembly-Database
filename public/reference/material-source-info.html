@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>Источник материала и оценка качества</title>
+    <link rel="stylesheet" type="text/css" href="/css/styles.css">
+  </head>
+
+  <body data-page="materials">
+    <header class="page-header">
+      <a href="/reference/materials.html" aria-label="Материалы" class="home-link"><img src="/icons/house-regular.svg" alt=""></a>
+      <h1>Источник материала и оценка качества</h1>
+    </header>
+
+    <div class="status-feedback" id="sourceInfoStatus" aria-live="polite"></div>
+
+    <section>
+      <h2 id="sourceInfoTitle">Загрузка...</h2>
+      <div id="sourceInfoMeta"></div>
+    </section>
+
+    <form id="materialSourceInfoForm" autocomplete="off">
+      <fieldset>
+        <legend>Информация об источнике / партии</legend>
+
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="supplierInput">Поставщик</label>
+            <input type="text" id="supplierInput">
+          </div>
+        </div>
+
+        <div class="form-grid cols-2" style="margin-top: 0.85rem;">
+          <div class="form-field">
+            <label for="brandInput">Бренд</label>
+            <input type="text" id="brandInput">
+          </div>
+
+          <div class="form-field">
+            <label for="modelCatalogInput">Модель / каталог</label>
+            <input type="text" id="modelCatalogInput">
+          </div>
+        </div>
+
+        <div class="form-grid cols-3" style="margin-top: 0.85rem;">
+          <div class="form-field">
+            <label for="lotNumberInput">Номер партии</label>
+            <input type="text" id="lotNumberInput">
+          </div>
+
+          <div class="form-field">
+            <label for="dateOrderedInput">Дата заказа</label>
+            <input type="date" id="dateOrderedInput">
+          </div>
+
+          <div class="form-field">
+            <label for="dateReceivedInput">Дата получения</label>
+            <input type="date" id="dateReceivedInput">
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Оценка качества</legend>
+
+        <div class="form-grid cols-2">
+          <div class="form-field">
+            <label for="qualityLabelInput">Метка качества</label>
+            <select id="qualityLabelInput">
+              <option value="">— не указано —</option>
+              <option value="tbd">tbd</option>
+              <option value="good">good</option>
+              <option value="ok">ok</option>
+              <option value="bad">bad</option>
+            </select>
+          </div>
+
+          <div class="form-field">
+            <label for="qualityScoreInput" title="1 — худшая оценка, 5 — лучшая оценка">Оценка, 1–5</label>
+            <input type="number" min="1" max="5" step="1" id="qualityScoreInput">
+            <div class="field-hint">1 — худшая оценка, 5 — лучшая оценка.</div>
+          </div>
+        </div>
+
+        <div class="notes-row">
+          <label for="evaluationNotesInput">Заметки:</label>
+          <textarea id="evaluationNotesInput" rows="3" placeholder="Необязательно"></textarea>
+        </div>
+
+        <fieldset style="margin-top: 1rem;">
+          <legend>Документы по источнику</legend>
+          <label for="materialSourceFilesInput">Файлы</label>
+          <input id="materialSourceFilesInput" type="file" multiple>
+          <button id="saveMaterialSourceFilesBtn" type="button" hidden>Сохранить файлы</button>
+          <p id="materialSourceFilesSaved" class="tiny_note"></p>
+        </fieldset>
+
+        <label style="display:flex; align-items:center; gap:.5rem; margin-top:.5rem;">
+          <input type="checkbox" id="isEvaluatedInput">
+          Оценка выполнена
+        </label>
+
+        <div class="form-actions" style="display:flex; gap:.5rem; align-items:center; margin:.75rem 0 1rem 0;">
+          <button type="submit">Сохранить источник</button>
+          <button type="button" id="backToMaterialsBtn">К материалам</button>
+        </div>
+        <div class="status-feedback" id="sourceInfoLocalStatus" aria-live="polite"></div>
+      </fieldset>
+    </form>
+
+    <script src="/js/material-source-info.js"></script>
+  </body>
+</html>

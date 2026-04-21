@@ -1453,6 +1453,14 @@ function renderBatchCompatibilityWarnings() {
       ? 'Сохранённая партия сохранена в списке для истории, но не соответствует текущей конфигурации элемента.'
       : '';
   }
+
+  const sidednessEl = document.getElementById('battery_electrode_sidedness_display');
+  if (sidednessEl) {
+    const sidedness = deriveSelectedBatterySidedness();
+    const label = formatElectrodesSidednessLabel(sidedness);
+    sidednessEl.textContent = label ? `Тип электродов: ${label}` : '';
+    sidednessEl.hidden = !label;
+  }
 }
 
 function renderAssemblyForm() {
@@ -1748,6 +1756,28 @@ async function saveElectrodeSources() {
       showBatteryInlineStatus(
         statusTargetId,
         'Для этого форм-фактора нужно выбрать ровно одну катодную и одну анодную ленту с соответствующими партиями.',
+        true
+      );
+      return;
+    }
+
+    const cathodeBatch = state.reference.cathodeBatches.find(
+      batch => String(batch.cut_batch_id) === String(sources.cathode_cut_batch_id || '')
+    );
+    const anodeBatch = state.reference.anodeBatches.find(
+      batch => String(batch.cut_batch_id) === String(sources.anode_cut_batch_id || '')
+    );
+    const cathodeSidedness = cathodeBatch?.coating_sidedness || '';
+    const anodeSidedness = anodeBatch?.coating_sidedness || '';
+
+    if (
+      cathodeSidedness &&
+      anodeSidedness &&
+      cathodeSidedness !== anodeSidedness
+    ) {
+      showBatteryInlineStatus(
+        statusTargetId,
+        'Нельзя смешивать 1- и 2-сторонние электроды в одной ячейке',
         true
       );
       return;
@@ -2778,7 +2808,8 @@ function renderTapeOptions() {
   filtered.forEach(t => {
     const option = document.createElement('option');
     option.value = t.tape_id;
-    option.textContent = `#${t.tape_id} | ${t.name} | ${t.created_by}`;
+    const sidednessLabel = formatTapeSidednessLabel(t.coating_sidedness);
+    option.textContent = `#${t.tape_id} | ${t.name}${sidednessLabel ? ` | ${sidednessLabel}` : ''} | ${t.created_by}`;
 
     if (t.role === 'cathode') {
       cathodeSelect.appendChild(option.cloneNode(true));
@@ -2800,7 +2831,7 @@ function renderTapeOptions() {
     cathodeSelect,
     cathodeTapeId,
     cathodeTape
-      ? `#${cathodeTape.tape_id} | ${cathodeTape.name} | ${cathodeTape.created_by}`
+      ? `#${cathodeTape.tape_id} | ${cathodeTape.name}${formatTapeSidednessLabel(cathodeTape.coating_sidedness) ? ` | ${formatTapeSidednessLabel(cathodeTape.coating_sidedness)}` : ''} | ${cathodeTape.created_by}`
       : cathodeTapeId
         ? `#${cathodeTapeId} | сохранённая лента`
         : ''
@@ -2810,7 +2841,7 @@ function renderTapeOptions() {
     anodeSelect,
     anodeTapeId,
     anodeTape
-      ? `#${anodeTape.tape_id} | ${anodeTape.name} | ${anodeTape.created_by}`
+      ? `#${anodeTape.tape_id} | ${anodeTape.name}${formatTapeSidednessLabel(anodeTape.coating_sidedness) ? ` | ${formatTapeSidednessLabel(anodeTape.coating_sidedness)}` : ''} | ${anodeTape.created_by}`
       : anodeTapeId
         ? `#${anodeTapeId} | сохранённая лента`
         : ''
@@ -2835,6 +2866,45 @@ function formatElectrodeBatchGeometry(batch) {
   return '';
 }
 
+function formatTapeSidednessLabel(value) {
+  if (value === 'one_sided') return '1-сторонняя';
+  if (value === 'two_sided') return '2-сторонняя';
+  return '';
+}
+
+function formatElectrodeSidednessLabel(value) {
+  if (value === 'one_sided') return '1-сторонний';
+  if (value === 'two_sided') return '2-сторонний';
+  return '';
+}
+
+function formatElectrodesSidednessLabel(value) {
+  if (value === 'one_sided') return '1-сторонние';
+  if (value === 'two_sided') return '2-сторонние';
+  return '';
+}
+
+function deriveSelectedBatterySidedness() {
+  const cathodeBatch = state.reference.cathodeBatches.find(
+    batch => String(batch.cut_batch_id) === String(state.electrodeSources.cathode_cut_batch_id || '')
+  );
+  const anodeBatch = state.reference.anodeBatches.find(
+    batch => String(batch.cut_batch_id) === String(state.electrodeSources.anode_cut_batch_id || '')
+  );
+  const cathodeTape = state.reference.tapes.find(
+    tape => String(tape.tape_id) === String(state.electrodeSources.cathode_tape_id || '')
+  );
+  const anodeTape = state.reference.tapes.find(
+    tape => String(tape.tape_id) === String(state.electrodeSources.anode_tape_id || '')
+  );
+
+  return cathodeBatch?.coating_sidedness
+    || anodeBatch?.coating_sidedness
+    || cathodeTape?.coating_sidedness
+    || anodeTape?.coating_sidedness
+    || '';
+}
+
 function formatElectrodeBatchTarget(batch) {
   const formFactor = batch.target_form_factor || '';
   const code = batch.target_config_code || '';
@@ -2846,9 +2916,14 @@ function formatElectrodeBatchTarget(batch) {
 
 function formatElectrodeBatchOptionLabel(batch) {
   const parts = [`#${batch.cut_batch_id}`];
+  const sidedness = formatElectrodesSidednessLabel(batch.coating_sidedness);
   const target = formatElectrodeBatchTarget(batch);
   const geometry = formatElectrodeBatchGeometry(batch);
   const count = Number(batch.electrode_count) || 0;
+
+  if (sidedness) {
+    parts.push(sidedness);
+  }
 
   if (target) {
     parts.push(target);

@@ -41,13 +41,9 @@
     
     <div class="container">
       
-      <header>
+      <header class="page-header">
+        <a href="/index.html" aria-label="Главная" class="home-link"><img src="/icons/house-regular.svg" alt=""></a>
         <h1>Электроды</h1>
-        <!-- Navigation button without text -->
-        <a href="/index.html" aria-label="Главная"><svg viewBox="0 0 24 24" width="24" height="24">
-          <path d="M3 11l9-8 9 8v9a2 2 0 01-2 2h-4v-6H9v6H5a2 2 0 01-2-2z"
-          fill="currentColor"/>
-        </svg></a>
       </header>
       
       <!-- tape selection block -->
@@ -90,6 +86,7 @@
               
               <label for="electrodes-comments">Заметки/комментарии: </label>
               <textarea id="electrodes-comments" name="electrodes-comments" placeholder="Комментарии о вырезании электродов"></textarea>
+              <div id="electrode-sidedness-display" style="margin-top:8px; color:#555;"></div>
             </fieldset>
             
             <!-- geometry block -->
@@ -285,6 +282,7 @@
         <!-- save button -->           
         <!-- I'm not sure what is saves though - the electrodes or the batch drying information? What is the right workflow here? -->
         <button type="button" id="saveBtn">Сохранить партию</button>
+        <button type="button" id="printElectrodeBatchBtn" hidden>Печать</button>
         <button type="button" id="exitBatchBtn">Выйти</button>
 
         <fieldset id="electrodes-tape-dry-box" hidden>

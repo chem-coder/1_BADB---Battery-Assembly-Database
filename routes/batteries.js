@@ -285,6 +285,17 @@ router.get('/:id/electrode-cut-batches', async (req, res) => {
         b.*,
         u.name AS created_by_name,
         (
+          SELECT c.coating_sidedness
+          FROM tape_process_steps ts_coating
+          JOIN operation_types ot_coating
+            ON ot_coating.operation_type_id = ts_coating.operation_type_id
+          JOIN tape_step_coating c
+            ON c.step_id = ts_coating.step_id
+          WHERE ts_coating.tape_id = b.tape_id
+            AND ot_coating.code = 'coating'
+          LIMIT 1
+        ) AS coating_sidedness,
+        (
           ctx.expected_shape IS NOT NULL
           AND ctx.target_config_code IS NOT NULL
           AND b.shape = ctx.expected_shape
@@ -1148,6 +1159,41 @@ router.post('/battery_electrode_sources', auth, async (req, res) => {
     const hasCathode = !!cathode_tape_id && !!cathode_cut_batch_id;
     const hasAnode = !!anode_tape_id && !!anode_cut_batch_id;
 
+    if (hasCathode && hasAnode) {
+      const sidednessResult = await pool.query(
+        `
+        SELECT
+          cb.cut_batch_id,
+          (
+            SELECT c.coating_sidedness
+            FROM tape_process_steps ts
+            JOIN operation_types ot
+              ON ot.operation_type_id = ts.operation_type_id
+            JOIN tape_step_coating c
+              ON c.step_id = ts.step_id
+            WHERE ts.tape_id = cb.tape_id
+              AND ot.code = 'coating'
+            LIMIT 1
+          ) AS coating_sidedness
+        FROM electrode_cut_batches cb
+        WHERE cb.cut_batch_id = ANY($1::int[])
+        `,
+        [[Number(cathode_cut_batch_id), Number(anode_cut_batch_id)]]
+      );
+
+      const sidednessValues = [...new Set(
+        sidednessResult.rows
+          .map((row) => row.coating_sidedness || null)
+          .filter(Boolean)
+      )];
+
+      if (sidednessValues.length > 1) {
+        return res.status(400).json({
+          error: 'Нельзя смешивать 1- и 2-сторонние электроды в одной ячейке'
+        });
+      }
+    }
+
     if (form === 'coin' && coinMode === 'half_cell') {
       if ((hasCathode ? 1 : 0) + (hasAnode ? 1 : 0) !== 1) {
         return res.status(400).json({
@@ -1277,7 +1323,20 @@ router.get('/battery_electrode_sources/:battery_id', auth, async (req, res) => {
         role,
         tape_id,
         cut_batch_id,
-        source_notes
+        source_notes,
+        (
+          SELECT c.coating_sidedness
+          FROM electrode_cut_batches cb
+          JOIN tape_process_steps ts
+            ON ts.tape_id = cb.tape_id
+          JOIN operation_types ot
+            ON ot.operation_type_id = ts.operation_type_id
+          JOIN tape_step_coating c
+            ON c.step_id = ts.step_id
+          WHERE cb.cut_batch_id = battery_electrode_sources.cut_batch_id
+            AND ot.code = 'coating'
+          LIMIT 1
+        ) AS coating_sidedness
       FROM battery_electrode_sources
       WHERE battery_id = $1
       ORDER BY role;
@@ -1319,6 +1378,44 @@ router.patch('/battery_electrode_sources/:battery_id', auth, async (req, res) =>
   }
 
   try {
+    const hasCathode = !!cathode_tape_id && !!cathode_cut_batch_id;
+    const hasAnode = !!anode_tape_id && !!anode_cut_batch_id;
+
+    if (hasCathode && hasAnode) {
+      const sidednessResult = await pool.query(
+        `
+        SELECT
+          cb.cut_batch_id,
+          (
+            SELECT c.coating_sidedness
+            FROM tape_process_steps ts
+            JOIN operation_types ot
+              ON ot.operation_type_id = ts.operation_type_id
+            JOIN tape_step_coating c
+              ON c.step_id = ts.step_id
+            WHERE ts.tape_id = cb.tape_id
+              AND ot.code = 'coating'
+            LIMIT 1
+          ) AS coating_sidedness
+        FROM electrode_cut_batches cb
+        WHERE cb.cut_batch_id = ANY($1::int[])
+        `,
+        [[Number(cathode_cut_batch_id), Number(anode_cut_batch_id)]]
+      );
+
+      const sidednessValues = [...new Set(
+        sidednessResult.rows
+          .map((row) => row.coating_sidedness || null)
+          .filter(Boolean)
+      )];
+
+      if (sidednessValues.length > 1) {
+        return res.status(400).json({
+          error: 'Нельзя смешивать 1- и 2-сторонние электроды в одной ячейке'
+        });
+      }
+    }
+
     // Snapshot current state
     const currentSources = await pool.query(
       'SELECT role, tape_id, cut_batch_id, source_notes FROM battery_electrode_sources WHERE battery_id = $1',

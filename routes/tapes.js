@@ -422,6 +422,7 @@ async function fetchWorkflowStatusMap(tapeIds) {
       s.started_at,
       c.foil_id,
       c.coating_id,
+      c.coating_sidedness,
       c.gap_um
     FROM tape_process_steps s
     JOIN operation_types ot
@@ -692,7 +693,16 @@ router.get('/', auth, async (req, res) => {
         FROM tape_process_steps ts2
         JOIN operation_types ot2 ON ot2.operation_type_id = ts2.operation_type_id
         WHERE ts2.tape_id = t.tape_id
-      ) AS completed_steps
+      ) AS completed_steps,
+      (
+        SELECT c.coating_sidedness
+        FROM tape_process_steps ts3
+        JOIN operation_types ot3 ON ot3.operation_type_id = ts3.operation_type_id
+        JOIN tape_step_coating c ON c.step_id = ts3.step_id
+        WHERE ts3.tape_id = t.tape_id
+          AND ot3.code = 'coating'
+        LIMIT 1
+      ) AS coating_sidedness
     FROM tapes t
     LEFT JOIN tape_recipes r ON r.tape_recipe_id = t.tape_recipe_id
     LEFT JOIN projects p ON p.project_id = t.project_id
@@ -1217,6 +1227,7 @@ router.post('/:id/steps/by-code/:code', auth, async (req, res) => {
       comments,
       foil_id,
       coating_id,
+      coating_sidedness,
       gap_um,
       coat_temp_c,
       coat_time_min,
@@ -1247,7 +1258,7 @@ router.post('/:id/steps/by-code/:code', auth, async (req, res) => {
       const prevRes = await client.query(
         `
         SELECT ps.performed_by, ps.started_at, ps.comments,
-               sub.foil_id, sub.coating_id, sub.gap_um,
+               sub.foil_id, sub.coating_id, sub.coating_sidedness, sub.gap_um,
                sub.coat_temp_c, sub.coat_time_min, sub.method_comments
         FROM tape_process_steps ps
         LEFT JOIN tape_step_coating sub ON sub.step_id = ps.step_id
@@ -1285,12 +1296,13 @@ router.post('/:id/steps/by-code/:code', auth, async (req, res) => {
       await client.query(
         `
         INSERT INTO tape_step_coating
-          (step_id, foil_id, coating_id, gap_um, coat_temp_c, coat_time_min, method_comments)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
+          (step_id, foil_id, coating_id, coating_sidedness, gap_um, coat_temp_c, coat_time_min, method_comments)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
         ON CONFLICT (step_id)
         DO UPDATE SET
           foil_id = EXCLUDED.foil_id,
           coating_id = EXCLUDED.coating_id,
+          coating_sidedness = EXCLUDED.coating_sidedness,
           gap_um = EXCLUDED.gap_um,
           coat_temp_c = EXCLUDED.coat_temp_c,
           coat_time_min = EXCLUDED.coat_time_min,
@@ -1300,6 +1312,7 @@ router.post('/:id/steps/by-code/:code', auth, async (req, res) => {
           stepId,
           Number(foil_id) || null,
           Number(coating_id) || null,
+          coating_sidedness || null,
           Number.isFinite(Number(gap_um)) ? Number(gap_um) : null,
           Number.isFinite(Number(coat_temp_c)) ? Number(coat_temp_c) : null,
           Number.isFinite(Number(coat_time_min)) ? Number(coat_time_min) : null,
@@ -1314,6 +1327,7 @@ router.post('/:id/steps/by-code/:code', auth, async (req, res) => {
         comments: comments || null,
         foil_id: Number(foil_id) || null,
         coating_id: Number(coating_id) || null,
+        coating_sidedness: coating_sidedness || null,
         gap_um: Number.isFinite(Number(gap_um)) ? Number(gap_um) : null,
         coat_temp_c: Number.isFinite(Number(coat_temp_c)) ? Number(coat_temp_c) : null,
         coat_time_min: Number.isFinite(Number(coat_time_min)) ? Number(coat_time_min) : null,
@@ -1544,6 +1558,7 @@ router.get('/:id/steps/by-code/:code', auth, async (req, res) => {
       subtypeSelect = `
         c.foil_id,
         c.coating_id,
+        c.coating_sidedness,
         c.gap_um,
         c.coat_temp_c,
         c.coat_time_min,
@@ -1615,7 +1630,18 @@ router.get('/for-electrodes', auth, async (req, res) => {
         r.name AS recipe_name,
         u.name AS created_by,
         TO_CHAR(MAX(ps.started_at), 'YYYY-MM-DD') AS finished_at,
-        t.availability_status
+        t.availability_status,
+        (
+          SELECT c.coating_sidedness
+          FROM tape_process_steps ts_coating
+          JOIN operation_types ot_coating
+            ON ot_coating.operation_type_id = ts_coating.operation_type_id
+          JOIN tape_step_coating c
+            ON c.step_id = ts_coating.step_id
+          WHERE ts_coating.tape_id = t.tape_id
+            AND ot_coating.code = 'coating'
+          LIMIT 1
+        ) AS coating_sidedness
 
       FROM tapes t
 
@@ -1674,6 +1700,17 @@ router.get('/:id/electrode-cut-batches', auth, async (req, res) => {
       `
       SELECT
         b.*,
+        (
+          SELECT c.coating_sidedness
+          FROM tape_process_steps ts_coating
+          JOIN operation_types ot_coating
+            ON ot_coating.operation_type_id = ts_coating.operation_type_id
+          JOIN tape_step_coating c
+            ON c.step_id = ts_coating.step_id
+          WHERE ts_coating.tape_id = b.tape_id
+            AND ot_coating.code = 'coating'
+          LIMIT 1
+        ) AS tape_coating_sidedness,
         d.start_time AS drying_start,
         d.end_time AS drying_end,
         COALESCE(ec.electrode_count, 0) AS electrode_count
@@ -1803,6 +1840,7 @@ router.get('/:id/report', async (req, res) => {
           c.foil_id,
           f.type AS foil_type,
           c.coating_id,
+          c.coating_sidedness,
           COALESCE(cm.comments, cm.name) AS coating_method_label,
           c.gap_um,
           c.coat_temp_c,

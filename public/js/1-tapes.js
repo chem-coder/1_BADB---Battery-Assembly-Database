@@ -75,6 +75,9 @@ const tapePageState = window.tapePageState = {
     name: {
       isEditing: false
     },
+    coating: {
+      sidednessAuto: true
+    },
     panels: {
       mixing: {
         dryParamsVisible: false,
@@ -317,6 +320,7 @@ function setSectionsOpen(nextOpen, { render = true } = {}) {
 }
 
 function resetSectionState() {
+  state.ui.coating.sidednessAuto = true;
   state.ui.sections.visibility = {
     '0-general-info': true,
     '0-tape-recipe-materials': false,
@@ -774,6 +778,7 @@ function getDefaultWorkflowState() {
       comments: '',
       foil_id: '',
       coating_id: '',
+      coating_sidedness: '',
       gap_um: '',
       coat_temp_c: '',
       coat_time_min: '',
@@ -1146,6 +1151,7 @@ function renderCoatingStep() {
   setElValue('2-cathode-tape-notes', step.comments);
   setElValue('2-coating-foil_id', step.foil_id);
   setElValue('2-coating-coating_id', step.coating_id);
+  setElValue('2-coating-sidedness', step.coating_sidedness);
   setElValue('2-coating-gap-um', step.gap_um);
   setElValue('2-coating-temp-c', step.coat_temp_c);
   setElValue('2-coating-time-min', step.coat_time_min);
@@ -1487,10 +1493,12 @@ async function saveTapeActuals(tapeId) {
 
     if (!instanceId) continue;
     const actual = state.workflow.weighing.actualsByLineId[recipeLineId] || getDefaultWeighingActual();
-    const measureMode = actual.measure_mode || 'mass';
-    const value = measureMode === 'volume'
+    const requestedMeasureMode = actual.measure_mode || 'mass';
+    const value = requestedMeasureMode === 'volume'
       ? Number(actual.actual_volume_ml)
       : Number(actual.actual_mass_g);
+    const hasActualValue = Number.isFinite(value) && value > 0;
+    const measureMode = hasActualValue ? requestedMeasureMode : null;
 
     const payload = {
       recipe_line_id: recipeLineId,
@@ -1500,7 +1508,7 @@ async function saveTapeActuals(tapeId) {
       actual_volume_ml: null
     };
 
-    if (Number.isFinite(value) && value > 0) {
+    if (hasActualValue) {
       if (measureMode === 'mass') {
         payload.actual_mass_g = value;
       }
@@ -2342,9 +2350,18 @@ function renderTapesList() {
     
     const info = document.createElement('div');
     info.className = 'user-info';
+
+    const coatingSidednessLabel =
+      t.coating_sidedness === 'one_sided'
+        ? '1-сторонняя'
+        : t.coating_sidedness === 'two_sided'
+          ? '2-сторонняя'
+          : '';
     
     const nameSpan = document.createElement('strong');
-    nameSpan.textContent = `#${t.tape_id} | ${t.name || '— без названия —'}`;
+    nameSpan.textContent = coatingSidednessLabel
+      ? `#${t.tape_id} | ${t.name || '— без названия —'} — ${coatingSidednessLabel}`
+      : `#${t.tape_id} | ${t.name || '— без названия —'}`;
 
     const statusSpan = document.createElement('small');
     statusSpan.style.color = '#666';
@@ -2584,13 +2601,16 @@ function normalizeTapeRestoreDataIntoState(restoreData) {
       comments: stepsByCode.coating.comments ?? '',
       foil_id: stepsByCode.coating.foil_id ?? '',
       coating_id: stepsByCode.coating.coating_id ?? '',
+      coating_sidedness: stepsByCode.coating.coating_sidedness ?? '',
       gap_um: stepsByCode.coating.gap_um ?? '',
       coat_temp_c: stepsByCode.coating.coat_temp_c ?? '',
       coat_time_min: stepsByCode.coating.coat_time_min ?? '',
       method_comments: stepsByCode.coating.method_comments ?? ''
     });
+    state.ui.coating.sidednessAuto = false;
   } else {
     setWorkflowStep('coating', defaults.coating);
+    state.ui.coating.sidednessAuto = true;
   }
 
   if (stepsByCode.calendering) {
@@ -3225,6 +3245,7 @@ function attachWorkflowStateSync() {
   bindValueField('2-cathode-tape-notes', 'coating', 'comments');
   bindValueField('2-coating-foil_id', 'coating', 'foil_id');
   bindValueField('2-coating-coating_id', 'coating', 'coating_id');
+  bindValueField('2-coating-sidedness', 'coating', 'coating_sidedness');
   bindValueField('2-coating-gap-um', 'coating', 'gap_um');
   bindValueField('2-coating-temp-c', 'coating', 'coat_temp_c');
   bindValueField('2-coating-time-min', 'coating', 'coat_time_min');
@@ -3690,6 +3711,17 @@ function getSelectedCoatingMethod() {
   ) || null;
 }
 
+function getDefaultCoatingSidednessForMethod(method) {
+  const raw = `${method?.name || ''} ${method?.comments || ''}`.toLowerCase();
+  if (raw.includes('dr_blade') || raw.includes('dr. blade') || raw.includes('ракель')) {
+    return 'one_sided';
+  }
+  if (raw.includes('coater_machine') || raw.includes('машина для намазки')) {
+    return 'two_sided';
+  }
+  return '';
+}
+
 function applyCoatingMethodDefaultsToState({ force = false } = {}) {
   const method = getSelectedCoatingMethod();
 
@@ -3708,6 +3740,13 @@ function applyCoatingMethodDefaultsToState({ force = false } = {}) {
   }
   if (force || !String(step.coat_time_min || '').trim()) {
     patch.coat_time_min = method.coat_time_min ?? '10';
+  }
+  const defaultSidedness = getDefaultCoatingSidednessForMethod(method);
+  if (
+    defaultSidedness &&
+    (state.ui.coating.sidednessAuto || !String(step.coating_sidedness || '').trim())
+  ) {
+    patch.coating_sidedness = defaultSidedness;
   }
   if (Object.keys(patch).length > 0) {
     setWorkflowStep('coating', {
@@ -3745,6 +3784,7 @@ document.getElementById('2-coating-save-btn').onclick = () => trackPendingSave((
     comments: step.comments || null,
     foil_id: step.foil_id || null,
     coating_id: step.coating_id || null,
+    coating_sidedness: step.coating_sidedness || null,
     gap_um: gapValue,
     coat_temp_c: step.coat_temp_c || null,
     coat_time_min: step.coat_time_min || null,
@@ -3791,8 +3831,18 @@ document.getElementById('2-coating-save-btn').onclick = () => trackPendingSave((
 document
 .getElementById('2-coating-coating_id')
 .addEventListener('change', () => {
+  if (!String(state.workflow.coating.coating_sidedness || '').trim()) {
+    state.ui.coating.sidednessAuto = true;
+  }
   applyCoatingMethodDefaultsToState({ force: true });
   renderCoatingStep();
+});
+
+document
+.getElementById('2-coating-sidedness')
+.addEventListener('change', () => {
+  if (state.form.isRestoringTape) return;
+  state.ui.coating.sidednessAuto = false;
 });
 
 document.getElementById('2-coating-date').addEventListener('change', () => {
@@ -3982,8 +4032,45 @@ document.addEventListener('click', (e) => {
     timeInput.value = `${hh}:${min}`;
   }
 
+  const nowDateValue = dateInput?.value || '';
+  const nowTimeValue = timeInput?.value || '';
+
+  const workflowNowFieldMap = {
+    '0-drying_am-now-button': ['drying_am', 'date', 'time'],
+    '1-weighing-now-button': ['weighing', 'date', 'time'],
+    '1-mixing-now-button': ['mixing', 'started_at_date', 'started_at_time'],
+    '2-coating-now-button': ['coating', 'date', 'time'],
+    '2-calendering-now-button': ['calendering', 'date', 'time'],
+    '2b-drying_pressed_tape-now-button': ['drying_pressed_tape', 'date', 'time'],
+    '2c-dry-box-start-now-button': ['maintenance_dry_box', 'started_at_date', 'started_at_time']
+  };
+
+  const mappedFields = workflowNowFieldMap[btn.id];
+  if (mappedFields && nowDateValue && nowTimeValue) {
+    const [stepKey, dateField, timeField] = mappedFields;
+    setWorkflowStep(stepKey, {
+      ...state.workflow[stepKey],
+      [dateField]: nowDateValue,
+      [timeField]: nowTimeValue
+    });
+  }
+
   if (dateInput) dateInput.dispatchEvent(new Event('input', { bubbles: true }));
   if (timeInput) timeInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+  if (btn.id === '0-drying_am-now-button') {
+    syncDryingEndTime('drying_am');
+    return;
+  }
+
+  if (btn.id === '2b-drying_pressed_tape-now-button') {
+    syncDryingEndTime('drying_pressed_tape');
+    return;
+  }
+
+  if (btn.id === '1-mixing-now-button') {
+    syncMixingEndTime('dry');
+  }
 });
 
 [
