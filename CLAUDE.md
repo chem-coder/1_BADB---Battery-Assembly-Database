@@ -165,6 +165,80 @@ Goes into PageHeader `#actions` slot. Two states: unsaved (ochre) / saved (green
 - NEVER force push to main
 - NEVER commit directly to main — always use a branch + PR
 
+## Sync with Dalia's main (MANDATORY — run at session start)
+
+Dalia pushes to `origin/main` between our sessions. Without periodic
+sync, our feature branch silently drifts — we work against an old
+snapshot, miss her new features, and accumulate a merge surprise.
+
+**Session-start checklist** (run before any code work on a long-running
+feature branch):
+
+```bash
+# 1. Refresh remote refs (silent no-op if nothing changed)
+git fetch origin
+
+# 2. Show what's in main that we don't have
+git log --oneline origin/main ^$(git merge-base origin/main HEAD)
+
+# 3. Show our unpushed commits
+git log --oneline origin/$(git branch --show-current)..HEAD
+
+# 4. Dry-run merge to detect conflicts early
+git merge-tree $(git merge-base origin/main HEAD) HEAD origin/main \
+  | grep -cE "^<<<<<<<|^=======|^>>>>>>>"
+#   → 0 means clean merge
+```
+
+If step 2 shows new commits from Dalia, **merge before starting new
+work**:
+
+```bash
+git merge origin/main --no-edit
+# Run any new migrations she added:
+for f in migrations/d*.sql; do
+  # Only run ones newer than you've applied — check migrations_log.txt
+  psql -U Dalia -d badb_app_v1 -f "$f"
+done
+# Update migrations_log.txt to reflect your now-applied range
+```
+
+**Namespace rule** (already documented in migrations/README.md):
+- Dima: `NNN_*.sql` (numeric prefix — 001…020…)
+- Dalia: `dNNN_*.sql` (d-prefix — d001…d027…)
+- Roma: future namespace TBD
+
+Namespaces never collide → merges stay clean even when both sides
+add migrations in parallel.
+
+**migrations_log.txt** — Dalia's shared tracker. Each developer
+records their last-applied migration so the others know what's
+current on each machine. Update it after applying a batch.
+
+## Avoiding drift during a session
+
+When Chat 1 and Chat 2 (or two humans) edit the same worktree in
+parallel, commit dances get tangled. Proven strategy:
+
+1. **One owner per file per task** — if Chat 1 does retention toggle
+   (CyclingPage.vue state + toolbar), Chat 2 should not edit the
+   same toolbar block the same hour.
+2. **`git add <path>` is explicit, `git add -A` is destructive** —
+   when another chat has uncommitted WIP in the worktree,
+   `-A` picks it up and credits it to your commit.
+3. **Backup → revert → reapply dance** — if you must commit your
+   isolated change while another chat's WIP sits in the worktree:
+   ```bash
+   cp client-web/src/components/X.vue /tmp/bak.vue
+   git checkout HEAD -- client-web/src/components/X.vue
+   # re-apply only your edits (Edit tool with exact strings)
+   git add client-web/src/components/X.vue
+   git commit
+   cp /tmp/bak.vue client-web/src/components/X.vue  # restore WIP
+   ```
+4. **Push immediately after commit** — keeps origin authoritative
+   so the other chat can rebase on top of your work.
+
 ## Security
 
 - **Authentication:** JWT Bearer tokens, 8h expiry, configurable in config/index.js

@@ -1,5 +1,5 @@
 The last applied migrations:
 
 Dalia:  017_   and    d025_
-Dima:   
-Roma:    
+Dima:   020_   and    d027_   (2026-04-21, after merge of origin/main → dima/v2-security-mobile-dashboard)
+Roma:
