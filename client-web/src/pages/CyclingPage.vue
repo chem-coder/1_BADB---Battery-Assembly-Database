@@ -779,15 +779,6 @@ const batteryOptions = computed(() =>
             <i v-if="data.status === 'processing'" class="pi pi-spin pi-spinner" style="font-size:10px"></i>
             <i v-else-if="data.status === 'error'" class="pi pi-exclamation-circle" style="font-size:10px;color:#E74C3C"></i>
           </button>
-          <button
-            v-if="isSessionActive(data.session_id) && data.status === 'ready'"
-            class="active-style-btn"
-            :class="{ 'is-custom': !!sessionStyles[data.session_id] }"
-            :title="sessionStyles[data.session_id] ? 'Стиль изменён — нажмите чтобы изменить' : 'Настроить стиль линии'"
-            @click.stop="openStylePopover(data.session_id, $event)"
-          >
-            <i class="pi pi-cog"></i>
-          </button>
         </div>
       </template>
       <template #col-battery_id="{ data }">
@@ -1665,26 +1656,6 @@ const batteryOptions = computed(() =>
 .default-battery-row > :first-child { flex: 1; min-width: 0; }
 
 /* ── Style bar (per-session style overrides) ── */
-/* ── Per-session ⚙ style button inside the "График" column ── */
-.active-cell { gap: 4px; }
-.active-style-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  background: rgba(0, 50, 116, 0.06);
-  color: rgba(0, 50, 116, 0.55);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 10px;
-  transition: all 0.12s ease;
-}
-.active-style-btn:hover { background: #003274; color: white; transform: scale(1.1); }
-.active-style-btn.is-custom { background: #D3A754; color: white; }
-.active-style-btn.is-custom:hover { background: #003274; }
 
 /* ── Excel export button (in toolbar) ── */
 .export-xlsx-btn {
