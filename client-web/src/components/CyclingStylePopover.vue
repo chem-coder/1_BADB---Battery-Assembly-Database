@@ -1,29 +1,34 @@
 <script setup>
 /**
- * CyclingStylePopover — per-session style overrides (color / line / marker).
- * Controlled by parent via `toggle(event)` exposed method — parent sets the
- * current session + current style, then calls `.toggle(event)` on the ref to
- * position the PrimeVue Popover at the click target.
+ * CyclingStylePopover — per-chart style overrides, scoped to the active
+ * preset in the user's style library.
  *
- * Emits `update(partial)` on every change (parent persists to localStorage).
- * Emits `reset()` when user clicks "По умолчанию" — parent clears the entry.
+ * Parent controls visibility via ref: parent sets `chartId` + `chartLabel`,
+ * then calls `.toggle(event)` on the ref to position the popover.
+ *
+ * Emits `update(partial)` on every control change; parent persists the
+ * change into the active preset via useCyclingStyles().setChartStyle().
+ * Emits `reset()` when the user clicks "Сбросить к дефолту".
+ *
+ * If the active preset is read-only (built-in theme), the controls are
+ * disabled and a hint explains how to clone it.
  */
 import { ref, computed } from 'vue'
 import Popover from 'primevue/popover'
 import {
-  COLOR_PRESETS,
-  LINE_DASH_PRESETS,
+  PALETTES,
   POINT_STYLE_OPTIONS,
 } from '@/composables/useCyclingStyles'
 
 const props = defineProps({
-  session: { type: Object, default: null },       // { session_id, battery_id, ... }
-  sessionLabel: { type: String, default: '' },    // e.g. "Акк. №5"
-  defaultColor: { type: String, default: '#003274' },
-  style: { type: Object, default: () => ({}) },   // current effective override
+  chartId: { type: String, default: '' },
+  chartLabel: { type: String, default: '' },
+  style: { type: Object, default: () => ({}) },
+  readonly: { type: Boolean, default: false },
+  presetName: { type: String, default: '' },
 })
 
-const emit = defineEmits(['update', 'reset'])
+const emit = defineEmits(['update', 'reset', 'clone'])
 
 const popRef = ref(null)
 
@@ -32,62 +37,60 @@ function toggle(event) {
 }
 defineExpose({ toggle })
 
-const effectiveColor = computed(() => props.style.color || props.defaultColor)
 const thicknessOptions = [1, 1.5, 2, 3, 4]
 
-function isActiveColor(c) {
-  const cur = (props.style.color || '').toLowerCase()
-  return cur === c.toLowerCase()
-}
-function isActiveDash(value) {
-  const cur = props.style.borderDash
-  // null / undefined / [] all mean "solid"
-  const isSolid = (arr) => !arr || (Array.isArray(arr) && arr.length === 0)
-  if (isSolid(value)) return isSolid(cur)
-  if (!Array.isArray(cur) || !Array.isArray(value)) return false
-  if (cur.length !== value.length) return false
-  return cur.every((n, i) => n === value[i])
-}
-
-function onColorPick(c) { emit('update', { color: c }) }
-function onColorInput(e) { emit('update', { color: e.target.value }) }
-function onThickness(t) { emit('update', { borderWidth: t }) }
-function onDash(v) { emit('update', { borderDash: v }) }
-function onPointStyle(v) { emit('update', { pointStyle: v }) }
+function onPalette(p) { if (!props.readonly) emit('update', { palette: p }) }
+function onThickness(t) { if (!props.readonly) emit('update', { borderWidth: t }) }
+function onPointStyle(v) { if (!props.readonly) emit('update', { pointStyle: v }) }
 function onPointRadius(e) {
+  if (props.readonly) return
   const n = Number(e.target.value)
-  emit('update', { pointRadius: Number.isFinite(n) ? n : null })
+  emit('update', { pointRadius: Number.isFinite(n) ? n : 0 })
 }
-function onReset() { emit('reset') }
+function onReset() { if (!props.readonly) emit('reset') }
+function onClone() { emit('clone') }
+
+const paletteEntries = computed(() => Object.entries(PALETTES).map(([id, p]) => ({ id, ...p })))
 </script>
 
 <template>
   <Popover ref="popRef">
-    <div class="style-popover">
+    <div class="style-popover" :class="{ 'is-readonly': readonly }">
       <div class="style-popover__head">
-        <strong>Стиль:</strong>
-        <span>{{ sessionLabel || (session ? `№${session.session_id}` : '—') }}</span>
+        <strong>Настройки:</strong>
+        <span>{{ chartLabel || chartId }}</span>
+        <span v-if="readonly" class="style-readonly-badge" title="Встроенный пресет защищён от изменений">
+          <i class="pi pi-lock"></i> read-only
+        </span>
+      </div>
+
+      <div v-if="readonly" class="style-readonly-hint">
+        Пресет <strong>«{{ presetName }}»</strong> защищён. Чтобы изменить стиль,
+        <button class="style-linklike" @click="onClone">сохраните его копию</button>.
       </div>
 
       <div class="style-row">
-        <label class="style-label">Цвет</label>
-        <div class="style-colors">
+        <label class="style-label">Палитра</label>
+        <div class="style-palettes">
           <button
-            v-for="c in COLOR_PRESETS"
-            :key="c"
-            class="style-color-swatch"
-            :class="{ 'is-active': isActiveColor(c) }"
-            :style="{ background: c }"
-            :title="c"
-            @click="onColorPick(c)"
-          ></button>
-          <input
-            type="color"
-            class="style-color-picker"
-            :value="effectiveColor"
-            @input="onColorInput"
-            title="Свой цвет"
-          />
+            v-for="p in paletteEntries"
+            :key="p.id"
+            class="style-palette-btn"
+            :class="{ 'is-active': style.palette === p.id }"
+            :disabled="readonly"
+            :title="p.label"
+            @click="onPalette(p.id)"
+          >
+            <span class="style-palette-swatches">
+              <span
+                v-for="c in p.colors.slice(0, 5)"
+                :key="c"
+                class="style-palette-swatch"
+                :style="{ background: c }"
+              ></span>
+            </span>
+            <span class="style-palette-name">{{ p.label }}</span>
+          </button>
         </div>
       </div>
 
@@ -99,22 +102,9 @@ function onReset() { emit('reset') }
             :key="t"
             class="style-seg-btn"
             :class="{ 'is-active': Number(style.borderWidth) === t }"
+            :disabled="readonly"
             @click="onThickness(t)"
           >{{ t }}</button>
-        </div>
-      </div>
-
-      <div class="style-row">
-        <label class="style-label">Линия</label>
-        <div class="style-seg">
-          <button
-            v-for="p in LINE_DASH_PRESETS"
-            :key="p.key"
-            class="style-seg-btn style-seg-btn--dash"
-            :class="{ 'is-active': isActiveDash(p.value) }"
-            @click="onDash(p.value)"
-            :title="p.key"
-          >{{ p.label }}</button>
         </div>
       </div>
 
@@ -126,6 +116,7 @@ function onReset() { emit('reset') }
             :key="p.key"
             class="style-seg-btn style-seg-btn--marker"
             :class="{ 'is-active': style.pointStyle === p.value }"
+            :disabled="readonly"
             @click="onPointStyle(p.value)"
             :title="p.key"
           >{{ p.label }}</button>
@@ -143,12 +134,13 @@ function onReset() { emit('reset') }
           step="0.5"
           :value="style.pointRadius ?? 0"
           class="style-radius-slider"
+          :disabled="readonly"
           @input="onPointRadius"
         />
       </div>
 
       <div class="style-popover__foot">
-        <button class="style-reset-btn" @click="onReset">По умолчанию</button>
+        <button v-if="!readonly" class="style-reset-btn" @click="onReset">Сбросить к дефолту</button>
       </div>
     </div>
   </Popover>
@@ -160,7 +152,7 @@ function onReset() { emit('reset') }
   flex-direction: column;
   gap: 10px;
   padding: 4px 4px 2px;
-  min-width: 260px;
+  min-width: 300px;
 }
 .style-popover__head {
   display: flex;
@@ -172,6 +164,37 @@ function onReset() { emit('reset') }
   color: #1F2937;
 }
 .style-popover__head strong { color: #003274; }
+.style-readonly-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(211, 167, 84, 0.15);
+  color: #8B6914;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.style-readonly-hint {
+  font-size: 11px;
+  color: #8B6914;
+  padding: 6px 8px;
+  background: rgba(211, 167, 84, 0.08);
+  border-radius: 5px;
+  line-height: 1.4;
+}
+.style-linklike {
+  border: none;
+  background: none;
+  color: #003274;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+  text-decoration: underline;
+}
 .style-row {
   display: flex;
   flex-direction: column;
@@ -200,32 +223,53 @@ function onReset() { emit('reset') }
   letter-spacing: 0;
   text-transform: none;
 }
-.style-colors {
+
+/* ── Palette picker ── */
+.style-palettes {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 4px;
+}
+.style-palette-btn {
+  display: flex;
   align-items: center;
-}
-.style-color-swatch {
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  border: 2px solid transparent;
-  cursor: pointer;
-  padding: 0;
-  transition: transform 0.1s;
-}
-.style-color-swatch:hover { transform: scale(1.1); }
-.style-color-swatch.is-active { border-color: #003274; box-shadow: 0 0 0 1px white inset; }
-.style-color-picker {
-  width: 24px;
-  height: 24px;
-  border: 1px solid rgba(0, 50, 116, 0.2);
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1.5px solid rgba(0, 50, 116, 0.15);
+  border-radius: 6px;
   background: white;
-  border-radius: 4px;
-  padding: 0;
   cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  color: #1F2937;
+  transition: all 0.12s ease;
 }
+.style-palette-btn:hover:not(:disabled):not(.is-active) {
+  background: rgba(0, 50, 116, 0.04);
+  border-color: rgba(0, 50, 116, 0.3);
+}
+.style-palette-btn.is-active {
+  border-color: #003274;
+  background: rgba(0, 50, 116, 0.06);
+  color: #003274;
+  font-weight: 600;
+}
+.style-palette-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+.style-palette-swatches {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: white;
+  border-radius: 3px;
+}
+.style-palette-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+}
+.style-palette-name { flex: 1; text-align: left; }
+
+/* ── Segmented controls (thickness / marker) ── */
 .style-seg {
   display: inline-flex;
   border: 1px solid rgba(0, 50, 116, 0.15);
@@ -247,24 +291,28 @@ function onReset() { emit('reset') }
   transition: all 0.1s;
 }
 .style-seg-btn:last-child { border-right: none; }
-.style-seg-btn:hover:not(.is-active) { background: rgba(0, 50, 116, 0.05); }
+.style-seg-btn:hover:not(.is-active):not(:disabled) { background: rgba(0, 50, 116, 0.05); }
 .style-seg-btn.is-active {
   background: #003274;
   color: white;
   font-weight: 600;
 }
-.style-seg-btn--dash { font-size: 14px; line-height: 1; padding: 4px 10px; letter-spacing: -2px; }
+.style-seg-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 .style-seg-btn--marker { font-size: 13px; line-height: 1; }
+
 .style-radius-slider {
   width: 100%;
   accent-color: #003274;
   cursor: pointer;
 }
+.style-radius-slider:disabled { cursor: not-allowed; opacity: 0.5; }
+
 .style-popover__foot {
   display: flex;
   justify-content: flex-end;
   padding-top: 6px;
   border-top: 1px solid rgba(0, 50, 116, 0.08);
+  min-height: 28px;
 }
 .style-reset-btn {
   padding: 4px 10px;

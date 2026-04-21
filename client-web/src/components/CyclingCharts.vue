@@ -24,8 +24,14 @@ import {
   ScatterController,
 } from 'chart.js'
 import zoomPlugin from 'chartjs-plugin-zoom'
+import { useCyclingStyles } from '@/composables/useCyclingStyles'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, SubTitle, Tooltip, Legend, Filler, ScatterController, zoomPlugin)
+
+// Per-chart style resolver from the user's active preset. Gives us
+// { palette, borderWidth, pointStyle, pointRadius } per chart and a
+// palette-aware color per session.
+const { getChartStyle, colorForSession: resolveColor } = useCyclingStyles()
 
 // Multi-session props — each session carries its own summary + cycleDataMap
 // + color. See CyclingPage.activeSessionViews for the shape.
@@ -82,12 +88,26 @@ const props = defineProps({
   // cycles when the user has both loaded (the previous cycle must be
   // present in cycleDataMap — we don't auto-fetch it). Off by default.
   ghostTrace: { type: Boolean, default: false },
-  // Per-session style overrides — keyed by session_id. Each entry can set
-  // any subset of { color, borderWidth, borderDash, pointStyle, pointRadius }
-  // to replace the palette/gradient defaults. Applied to voltage profile +
-  // dQ/dV only (capacity+CE chart stays automatic for clarity).
-  sessionStyles: { type: Object, default: () => ({}) },
 })
+
+// ── Per-chart style resolution (from active preset in the user library) ──
+// One style object per chart id. The style controls palette (per-session
+// color rotation), borderWidth (line thickness baseline), pointStyle,
+// pointRadius. The cycle-index alpha gradient + charge/discharge dash
+// stay intrinsic to the chart — those are readability aids, not "style".
+const capacityStyle   = computed(() => getChartStyle('capacity'))
+const voltageStyle    = computed(() => getChartStyle('voltage'))
+const dqdvStyle       = computed(() => getChartStyle('dqdv'))
+const hysteresisStyle = computed(() => getChartStyle('hysteresis'))
+
+// Resolve a session color for a specific chart from the active preset's
+// palette. Session index in the active list determines which palette slot
+// it lands in (first session = palette[0], etc, rotating). This keeps
+// sessions distinguishable without burning the page-level session.color.
+function sessionColorFor(chartId, session) {
+  const idx = props.sessions.findIndex(x => x.session_id === session.session_id)
+  return resolveColor(chartId, idx >= 0 ? idx : 0)
+}
 
 // Convert a capacity value (Ah) to the current display unit based on
 // session-specific active mass. Returns null if mode is mAh/g but mass is
@@ -261,7 +281,15 @@ const formulasOpen = ref(false)
 
 // toggle-cycle — add/remove one cycle (across all active sessions)
 // replace-cycles — swap the whole selection (used by quick filters)
-const emit = defineEmits(['toggle-cycle', 'replace-cycles'])
+// style-click — user clicked the ⚙ on a specific chart; parent opens the
+//   style popover positioned at the click event for that chartId.
+const emit = defineEmits(['toggle-cycle', 'replace-cycles', 'style-click'])
+
+// Fired by each chart's ⚙ button; parent receives { chartId, event } and
+// opens the shared popover positioned at the click target.
+function openChartStyle(chartId, event) {
+  emit('style-click', chartId, event)
+}
 
 // ── Compatibility helpers for the rest of the component ────────────────
 // Aggregated "summary" across all sessions — used for cycle-filter buttons
@@ -473,9 +501,14 @@ const capacityChartData = computed(() => {
   const isSolo = props.sessions.length === 1
   const showDischarge = props.stepFilter !== 'charge'
   const showCharge = props.stepFilter === 'charge' || props.stepFilter === 'both'
+  const cStyle = capacityStyle.value
+  const userWidth = Number(cStyle.borderWidth) || 1.8
 
   for (const s of props.sessions) {
     if (!s.summary?.length) continue
+
+    // Palette-resolved color for this session on the capacity chart.
+    const sColor = sessionColorFor('capacity', s)
 
     // In retention mode we normalize each session against its own first
     // valid discharge cap → every session starts at 100%. refCap is null
@@ -484,7 +517,11 @@ const capacityChartData = computed(() => {
     // instead of throwing.
     const refCap = props.capacityView === 'retention' ? firstValidDischargeCap(s) : null
 
-    // Discharge line — filled circle markers (colleague's convention)
+    // Discharge line — filled marker (colleague's convention). Marker
+    // style + radius come from the active preset; selected cycles still
+    // get a +2px bump so "what's currently plotted below" stays visible.
+    const baseRadius = Number(cStyle.pointRadius) || 3
+    const markerStyle = cStyle.pointStyle || 'circle'
     if (showDischarge) {
       datasets.push({
         label: sessionShortLabel(s),
@@ -493,20 +530,20 @@ const capacityChartData = computed(() => {
           y: projectCapacity(row.discharge_capacity_ah, s, refCap),
         })),
         yAxisID: 'y',
-        borderColor: s.color,
-        backgroundColor: s.color,       // filled marker
+        borderColor: sColor,
+        backgroundColor: sColor,       // filled marker
         fill: false,
         tension: 0.2,
-        pointRadius: s.summary.map(row => selectedSet.has(row.cycle_number) ? 5 : 3),
-        pointBackgroundColor: s.color,
-        pointBorderColor: s.color,
-        pointStyle: 'circle',
-        pointHoverRadius: 6,
-        borderWidth: 1.8,
+        pointRadius: s.summary.map(row => selectedSet.has(row.cycle_number) ? baseRadius + 2 : baseRadius),
+        pointBackgroundColor: sColor,
+        pointBorderColor: sColor,
+        pointStyle: markerStyle || 'circle',
+        pointHoverRadius: baseRadius + 3,
+        borderWidth: userWidth,
       })
     }
 
-    // Charge line — HOLLOW circle markers + dashed (colleague's convention)
+    // Charge line — HOLLOW marker + dashed (colleague's convention)
     if (showCharge) {
       datasets.push({
         label: showDischarge ? `${sessionShortLabel(s)} · charge` : sessionShortLabel(s),
@@ -515,22 +552,22 @@ const capacityChartData = computed(() => {
           y: projectCapacity(row.charge_capacity_ah, s, refCap),
         })),
         yAxisID: 'y',
-        borderColor: s.color,
+        borderColor: sColor,
         backgroundColor: '#ffffff',     // hollow center
         borderDash: [4, 2],
         tension: 0.2,
-        pointRadius: 3,
+        pointRadius: baseRadius,
         pointBackgroundColor: '#ffffff',
-        pointBorderColor: s.color,
-        pointStyle: 'circle',
+        pointBorderColor: sColor,
+        pointStyle: markerStyle || 'circle',
         pointBorderWidth: 1.6,
-        borderWidth: 1.4,
+        borderWidth: Math.max(1, userWidth * 0.8),
       })
     }
 
     // CE — DISTINCT color family (ochre for single-session matching the
     // colleague's plot; desaturated session-color blend for multi).
-    const ceColor = isSolo ? CE_COLOR : fillColor(s.color, 0.45)
+    const ceColor = isSolo ? CE_COLOR : fillColor(sColor, 0.45)
     datasets.push({
       label: `${sessionShortLabel(s)} · CE`,
       data: s.summary.map(row => ({
@@ -672,29 +709,25 @@ const hasCapacity = computed(() => {
   return false
 })
 
-// Apply per-session user overrides on top of palette/gradient defaults.
-// The color override is folded back through fillColor() so the alpha
-// gradient (old cycles fade, new cycles vivid) is preserved even when the
-// user picks a custom base color. Line/dash/marker/radius replace their
-// auto-computed counterparts as-is.
-function applySessionStyle(ds, sstyle) {
-  if (!sstyle) return ds
-  if (sstyle.borderWidth != null && Number.isFinite(Number(sstyle.borderWidth))) {
-    ds.borderWidth = Number(sstyle.borderWidth)
+// Apply the per-chart style (from the active preset) to a line/scatter
+// dataset. borderWidth, pointStyle, pointRadius are applied uniformly;
+// color is already computed via palette, not stored here. Used by every
+// chart so thickness/marker/radius settings propagate without reaching
+// into dataset construction code. pointRadius=0 ⇒ markers hidden (the
+// chart's pointStyle choice is still preserved for tooltip icons).
+function applyChartStyle(ds, chartStyle) {
+  if (!chartStyle) return ds
+  const bw = Number(chartStyle.borderWidth)
+  if (Number.isFinite(bw) && bw > 0) ds.borderWidth = bw
+  const r = Number(chartStyle.pointRadius)
+  if (Number.isFinite(r) && r >= 0) {
+    ds.pointRadius = r
+    ds.pointHoverRadius = r > 0 ? r + 2 : 0
   }
-  if (sstyle.borderDash !== undefined) {
-    // null / empty array → explicit "solid"; set to undefined so Chart.js uses default line.
-    ds.borderDash = Array.isArray(sstyle.borderDash) && sstyle.borderDash.length
-      ? sstyle.borderDash
-      : undefined
-  }
-  if (sstyle.pointStyle) {
-    ds.pointStyle = sstyle.pointStyle
-  }
-  if (sstyle.pointRadius != null && Number.isFinite(Number(sstyle.pointRadius))) {
-    ds.pointRadius = Number(sstyle.pointRadius)
-    ds.pointBackgroundColor = ds.borderColor
-    ds.pointBorderColor = ds.borderColor
+  if (chartStyle.pointStyle !== undefined) {
+    // `false` is a legitimate value in Chart.js to hide the point symbol
+    // even on tooltip. Pass it through as-is.
+    ds.pointStyle = chartStyle.pointStyle
   }
   return ds
 }
@@ -704,11 +737,13 @@ const voltageChartData = computed(() => {
   const sortedCycles = [...props.selectedCycles].sort((a, b) => a - b)
   const useCapacity = hasCapacity.value
   const nCycles = sortedCycles.length
+  const vStyle = voltageStyle.value
 
   for (const s of props.sessions) {
-    const sstyle = props.sessionStyles?.[s.session_id] || null
-    // Color: user override replaces the palette base, gradient (alpha) still applies.
-    const colorBase = sstyle?.color || s.color
+    // Per-chart palette color for this session, resolved from the active
+    // preset's voltage-chart palette. Alpha gradient (old fade → new
+    // vivid) still wraps the base color to preserve cycle readability.
+    const colorBase = sessionColorFor('voltage', s)
 
     sortedCycles.forEach((cycleNum, cIdx) => {
       const points = s.cycleDataMap?.[cycleNum] || []
@@ -721,13 +756,14 @@ const voltageChartData = computed(() => {
       const charge = decimate(points.filter(d => d.step_type === 'charge' || d.step_type === 'cccv'))
       const discharge = decimate(points.filter(d => d.step_type === 'discharge'))
 
-      // Publication mode (matches colleague's Excel plots): single session
-      // color with alpha gradient across cycles, everything dashed, thin.
-      // Interactive mode: thickness grows with cycle index + alpha gradient
-      // + charge=dashed / discharge=solid distinction.
-      const thickness = props.publicationMode
-        ? 1.0
-        : 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.2 : 0.6)
+      // Base thickness comes from the user's per-chart style. Publication
+      // mode flattens it to the raw user value (matches colleague's Excel
+      // plots — constant thin line); interactive mode adds a ±30% cycle-
+      // index modulation so later cycles read slightly thicker and the
+      // eye tracks fade without reading the legend.
+      const userWidth = Number(vStyle.borderWidth) || 1.6
+      const cycleMul = nCycles > 1 ? (0.7 + (cIdx / (nCycles - 1)) * 0.6) : 1
+      const thickness = props.publicationMode ? userWidth : userWidth * cycleMul
 
       const alpha = cycleAlpha(cIdx, nCycles)
       const cycleColor = fillColor(colorBase, alpha)
@@ -789,28 +825,32 @@ const voltageChartData = computed(() => {
       }
 
       if (showCharge && charge.length) {
-        datasets.push(applySessionStyle({
+        datasets.push(applyChartStyle({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge.map(p => ({ x: xOf(p), y: p.voltage_v })),
           borderColor: cycleColor,
           backgroundColor: cycleColor,
+          pointBackgroundColor: cycleColor,
+          pointBorderColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
           borderDash: chargeDash,
           showLine: true,
-        }, sstyle))
+        }, vStyle))
       }
       if (showDischarge && discharge.length) {
-        datasets.push(applySessionStyle({
+        datasets.push(applyChartStyle({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge.map(p => ({ x: xOf(p), y: p.voltage_v })),
           borderColor: cycleColor,
           backgroundColor: cycleColor,
+          pointBackgroundColor: cycleColor,
+          pointBorderColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
           borderDash: dischargeDash,
           showLine: true,
-        }, sstyle))
+        }, vStyle))
       }
     })
   }
@@ -934,16 +974,20 @@ const dqdvChartData = computed(() => {
   const datasets = []
   const sortedCycles = [...props.selectedCycles].sort((a, b) => a - b)
   const nCycles = sortedCycles.length
+  const dStyle = dqdvStyle.value
 
   for (const s of props.sessions) {
-    const sstyle = props.sessionStyles?.[s.session_id] || null
-    const colorBase = sstyle?.color || s.color
+    const colorBase = sessionColorFor('dqdv', s)
     sortedCycles.forEach((cycleNum, cIdx) => {
       const points = s.cycleDataMap?.[cycleNum] || []
       if (!points.length) return
 
       const { charge, discharge } = computeDQDV(points, props.smoothingWindow)
-      const thickness = 1.0 + (nCycles > 1 ? (cIdx / (nCycles - 1)) * 1.0 : 0.5)
+      // Same ±30% cycle-index modulation as voltage profile — later
+      // cycles slightly thicker so the eye can follow peak evolution.
+      const userWidth = Number(dStyle.borderWidth) || 1.2
+      const cycleMul = nCycles > 1 ? (0.7 + (cIdx / (nCycles - 1)) * 0.6) : 1
+      const thickness = userWidth * cycleMul
       // Old cycles fade, new cycles vivid — same convention as voltage profile
       const alpha = cycleAlpha(cIdx, nCycles)
       const cycleColor = fillColor(colorBase, alpha)
@@ -951,27 +995,31 @@ const dqdvChartData = computed(() => {
       const showDischarge = props.stepFilter !== 'charge'
 
       if (showCharge && charge.length) {
-        datasets.push(applySessionStyle({
+        datasets.push(applyChartStyle({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · заряд`,
           data: charge,
           borderColor: cycleColor,
           backgroundColor: cycleColor,
+          pointBackgroundColor: cycleColor,
+          pointBorderColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
           borderDash: [4, 2],
           showLine: true,
-        }, sstyle))
+        }, dStyle))
       }
       if (showDischarge && discharge.length) {
-        datasets.push(applySessionStyle({
+        datasets.push(applyChartStyle({
           label: `Ц${cycleNum}_${sessionShortLabel(s)} · разряд`,
           data: discharge,
           borderColor: cycleColor,
           backgroundColor: cycleColor,
+          pointBackgroundColor: cycleColor,
+          pointBorderColor: cycleColor,
           pointRadius: 0,
           borderWidth: thickness,
           showLine: true,
-        }, sstyle))
+        }, dStyle))
       }
     })
   }
@@ -1039,8 +1087,13 @@ const hasHysteresisData = computed(() => {
 
 const hysteresisChartData = computed(() => {
   const datasets = []
+  const hStyle = hysteresisStyle.value
+  const userWidth = Number(hStyle.borderWidth) || 1.8
+  const baseRadius = Number(hStyle.pointRadius) || 3
+  const markerStyle = hStyle.pointStyle || 'circle'
   for (const s of props.sessions) {
     if (!s.summary?.length) continue
+    const sColor = sessionColorFor('hysteresis', s)
     const points = s.summary
       .map(row => {
         const chg = Number(row.avg_charge_voltage_v)
@@ -1053,13 +1106,13 @@ const hysteresisChartData = computed(() => {
     datasets.push({
       label: sessionShortLabel(s),
       data: points,
-      borderColor: s.color,
-      backgroundColor: s.color,
+      borderColor: sColor,
+      backgroundColor: sColor,
       tension: 0.2,
-      pointRadius: 3,
-      pointHoverRadius: 5,
-      pointStyle: 'circle',
-      borderWidth: 1.8,
+      pointRadius: baseRadius,
+      pointHoverRadius: baseRadius + 2,
+      pointStyle: markerStyle || 'circle',
+      borderWidth: userWidth,
     })
   }
   return { datasets }
@@ -1288,6 +1341,9 @@ function resetZoom(chartRef) {
   <div class="cycling-charts">
     <!-- Top: combined Capacity + CE chart (dual Y-axis, publication style) -->
     <div class="chart-card chart-card--wide">
+      <button class="chart-style-btn" title="Настройки стиля графика" @click="openChartStyle('capacity', $event)">
+        <i class="pi pi-sliders-h"></i>
+      </button>
       <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, Ctrl+колесо — масштаб)" @click="resetZoom(capacityChartRef)">
         <i class="pi pi-refresh"></i>
       </button>
@@ -1304,6 +1360,9 @@ function resetZoom(chartRef) {
          when the toggle is off or when no session has avg voltages yet
          (older uploads pre-migration-019). -->
     <div v-if="showHysteresis && hasHysteresisData" class="chart-card chart-card--wide">
+      <button class="chart-style-btn" title="Настройки стиля графика" @click="openChartStyle('hysteresis', $event)">
+        <i class="pi pi-sliders-h"></i>
+      </button>
       <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, Ctrl+колесо — масштаб)" @click="resetZoom(hysteresisChartRef)">
         <i class="pi pi-refresh"></i>
       </button>
@@ -1496,6 +1555,9 @@ function resetZoom(chartRef) {
 
     <!-- Voltage profile (overlay of selected cycles) -->
     <div v-if="selectedCycles.length" class="chart-card chart-card--wide">
+      <button class="chart-style-btn" title="Настройки стиля графика" @click="openChartStyle('voltage', $event)">
+        <i class="pi pi-sliders-h"></i>
+      </button>
       <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, Ctrl+колесо — масштаб)" @click="resetZoom(voltageChartRef)">
         <i class="pi pi-refresh"></i>
       </button>
@@ -1513,6 +1575,9 @@ function resetZoom(chartRef) {
 
     <!-- dQ/dV plot -->
     <div v-if="selectedCycles.length" class="chart-card chart-card--wide">
+      <button class="chart-style-btn" title="Настройки стиля графика" @click="openChartStyle('dqdv', $event)">
+        <i class="pi pi-sliders-h"></i>
+      </button>
       <button class="chart-reset-zoom-btn" title="Сброс зума (Shift+drag — панорама, Ctrl+колесо — масштаб)" @click="resetZoom(dqdvChartRef)">
         <i class="pi pi-refresh"></i>
       </button>
@@ -1660,7 +1725,8 @@ function resetZoom(chartRef) {
 
 /* PNG export button — top-right corner */
 .chart-export-btn,
-.chart-reset-zoom-btn {
+.chart-reset-zoom-btn,
+.chart-style-btn {
   position: absolute;
   top: 6px;
   width: 26px;
@@ -1680,12 +1746,15 @@ function resetZoom(chartRef) {
 }
 .chart-export-btn { right: 6px; }
 .chart-reset-zoom-btn { right: 38px; }  /* sits to the left of PNG button */
+.chart-style-btn    { right: 70px; }  /* sits to the left of reset-zoom button */
 .chart-card:hover .chart-export-btn,
-.chart-card:hover .chart-reset-zoom-btn {
+.chart-card:hover .chart-reset-zoom-btn,
+.chart-card:hover .chart-style-btn {
   opacity: 1;
 }
 .chart-export-btn:hover,
-.chart-reset-zoom-btn:hover {
+.chart-reset-zoom-btn:hover,
+.chart-style-btn:hover {
   background: #003274;
   color: white;
 }

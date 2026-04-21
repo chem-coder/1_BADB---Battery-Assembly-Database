@@ -14,11 +14,29 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
 import CyclingStylePopover from '@/components/CyclingStylePopover.vue'
-import { useCyclingStyles } from '@/composables/useCyclingStyles'
+import { useCyclingStyles, CHART_LABELS } from '@/composables/useCyclingStyles'
 
 const CyclingCharts = defineAsyncComponent(() => import('@/components/CyclingCharts.vue'))
 
-const { styles: sessionStyles, getStyle, setStyle, resetStyle } = useCyclingStyles()
+// Per-chart style + preset library for the cycling charts. Each chart
+// carries its own { palette, borderWidth, pointStyle, pointRadius }
+// stored in the user's active preset; the preset library is persisted
+// per-user in localStorage. Built-in presets (Мои по умолчанию, Публикация
+// ч/б, Colorblind-safe) ship read-only; user can clone + rename any of
+// them to create an editable preset. The activePresetId drives every
+// chart render in <CyclingCharts>.
+const cyclingStyles = useCyclingStyles()
+const {
+  library: styleLibrary,
+  activePreset,
+  getChartStyle,
+  setChartStyle,
+  resetChartStyle,
+  applyPreset,
+  savePresetAs,
+  renamePreset,
+  deletePreset,
+} = cyclingStyles
 
 const router = useRouter()
 const toast = useToast()
@@ -94,37 +112,67 @@ const showHysteresis = ref(false)
 // already loaded into cycleDataMap — we don't auto-fetch it.
 const ghostTrace = ref(false)
 
-// Per-session style popover state. Controlled by the ⚙ button in the
-// active-session chip — stores which session is being edited so the popover
-// knows which style map entry to mutate. The PrimeVue Popover itself uses
-// ref-based positioning: we pass the click event through to .toggle(event).
+// Per-chart style popover state. Controlled by each chart's ⚙ button in
+// <CyclingCharts> — the chart id (capacity/voltage/dqdv/hysteresis) of
+// the clicked one lands here so the shared popover knows which chart's
+// style in the active preset it's editing. The PrimeVue Popover itself
+// uses ref-based positioning: we pass the click event through to
+// .toggle(event) so it anchors under the correct ⚙.
 const stylePopoverRef = ref(null)
-const styleCurrentSessionId = ref(null)
-const styleCurrentSession = computed(() => {
-  return activeSessionViews.value.find(s => s.session_id === styleCurrentSessionId.value) || null
-})
+const styleCurrentChartId = ref('')
 const styleCurrentStyle = computed(() => {
-  return styleCurrentSessionId.value ? getStyle(styleCurrentSessionId.value) : {}
+  return styleCurrentChartId.value ? getChartStyle(styleCurrentChartId.value) : {}
 })
-const styleCurrentDefaultColor = computed(() => {
-  return styleCurrentSessionId.value ? colorForSession(styleCurrentSessionId.value) : '#003274'
+const styleCurrentChartLabel = computed(() => {
+  return CHART_LABELS[styleCurrentChartId.value] || ''
 })
-const styleCurrentLabel = computed(() => {
-  const s = styleCurrentSession.value
-  return s ? `Акк. №${s.battery_id ?? '—'}` : ''
-})
+const styleActivePresetReadonly = computed(() => !!activePreset.value?.readonly)
+const styleActivePresetName = computed(() => activePreset.value?.name || '')
 
-function openStylePopover(sessionId, event) {
-  styleCurrentSessionId.value = sessionId
+// Event from <CyclingCharts @style-click>. Emitted when the user clicks
+// the ⚙ button on any chart card.
+function onChartStyleClick(chartId, event) {
+  styleCurrentChartId.value = chartId
   stylePopoverRef.value?.toggle(event)
 }
 function onStyleUpdate(partial) {
-  if (!styleCurrentSessionId.value) return
-  setStyle(styleCurrentSessionId.value, partial)
+  if (!styleCurrentChartId.value) return
+  setChartStyle(styleCurrentChartId.value, partial)
 }
 function onStyleReset() {
-  if (!styleCurrentSessionId.value) return
-  resetStyle(styleCurrentSessionId.value)
+  if (!styleCurrentChartId.value) return
+  resetChartStyle(styleCurrentChartId.value)
+}
+// Read-only preset → user confirms "сохранить копию" in the popover.
+// We prompt for a name, clone the active preset, make it the active one.
+function onStyleClone() {
+  const base = activePreset.value?.name || 'Мой пресет'
+  const name = window.prompt('Имя нового пресета:', `${base} (копия)`)
+  if (!name || !name.trim()) return
+  savePresetAs(name.trim())
+}
+
+// ── Preset management (used by the toolbar dropdown) ────────────────────
+function onApplyPreset(id) {
+  if (id) applyPreset(id)
+}
+function onPresetSaveAs() {
+  const name = window.prompt('Имя нового пресета (будут сохранены текущие настройки):', '')
+  if (!name || !name.trim()) return
+  savePresetAs(name.trim())
+}
+function onPresetRename() {
+  const p = activePreset.value
+  if (!p || p.readonly) return
+  const name = window.prompt('Новое имя пресета:', p.name)
+  if (!name || !name.trim()) return
+  renamePreset(p.id, name.trim())
+}
+function onPresetDelete() {
+  const p = activePreset.value
+  if (!p || p.readonly || p.id === 'default') return
+  if (!window.confirm(`Удалить пресет «${p.name}»?`)) return
+  deletePreset(p.id)
 }
 
 // Mass editor dialog — opens when user clicks mAh/g while some active
@@ -939,6 +987,47 @@ const batteryOptions = computed(() =>
             </button>
           </div>
         </div>
+        <!-- Style preset library (per-user, persisted in localStorage).
+             Dropdown = active preset (Mine, Publication B/W, Colorblind,
+             or any user-saved clone). 💾 saves current settings as a new
+             named preset; ✏️ renames; 🗑 deletes (only for user presets). -->
+        <div class="toolbar-pubmode" title="Библиотека пресетов стилей — по одному на пользователя, сохраняется в браузере">
+          <label class="toolbar-label">Пресет стилей</label>
+          <div class="pubmode-row preset-row">
+            <select
+              class="preset-select"
+              :value="activePreset?.id"
+              @change="onApplyPreset($event.target.value)"
+            >
+              <option
+                v-for="p in styleLibrary.presets"
+                :key="p.id"
+                :value="p.id"
+              >
+                {{ p.name }}{{ p.readonly ? ' 🔒' : '' }}
+              </option>
+            </select>
+            <button
+              class="pubmode-btn preset-icon-btn"
+              title="Сохранить как новый пресет"
+              @click="onPresetSaveAs"
+            ><i class="pi pi-save"></i></button>
+            <button
+              class="pubmode-btn preset-icon-btn"
+              :disabled="!activePreset || activePreset.readonly"
+              :title="activePreset?.readonly ? 'Встроенный пресет нельзя переименовать' : 'Переименовать активный пресет'"
+              @click="onPresetRename"
+            ><i class="pi pi-pencil"></i></button>
+            <button
+              class="pubmode-btn preset-icon-btn preset-icon-btn--danger"
+              :disabled="!activePreset || activePreset.readonly || activePreset.id === 'default'"
+              :title="activePreset?.readonly || activePreset?.id === 'default'
+                ? 'Этот пресет нельзя удалить'
+                : 'Удалить активный пресет'"
+              @click="onPresetDelete"
+            ><i class="pi pi-trash"></i></button>
+          </div>
+        </div>
         <div class="toolbar-smoothing" title="Окно скользящего среднего для dQ/dV. 1 = без сглаживания, 21 = максимум.">
           <label class="toolbar-label">
             Сглаживание dQ/dV
@@ -988,9 +1077,9 @@ const batteryOptions = computed(() =>
         :capacityView="capacityView"
         :showHysteresis="showHysteresis"
         :ghostTrace="ghostTrace"
-        :sessionStyles="sessionStyles"
         @toggle-cycle="toggleCycle"
         @replace-cycles="replaceCycles"
+        @style-click="onChartStyleClick"
       />
     </div>
     <div v-else class="charts-placeholder glass-card">
@@ -998,15 +1087,17 @@ const batteryOptions = computed(() =>
       <div>Выберите одно или несколько измерений в таблице — графики появятся здесь.</div>
     </div>
 
-    <!-- Per-session style popover (shared, positions at clicked ⚙ button) -->
+    <!-- Per-chart style popover (shared, positions at clicked ⚙ button) -->
     <CyclingStylePopover
       ref="stylePopoverRef"
-      :session="styleCurrentSession"
-      :sessionLabel="styleCurrentLabel"
-      :defaultColor="styleCurrentDefaultColor"
+      :chartId="styleCurrentChartId"
+      :chartLabel="styleCurrentChartLabel"
       :style="styleCurrentStyle"
+      :readonly="styleActivePresetReadonly"
+      :presetName="styleActivePresetName"
       @update="onStyleUpdate"
       @reset="onStyleReset"
+      @clone="onStyleClone"
     />
 
     <!-- Upload dialog — multi-file -->
@@ -1416,6 +1507,33 @@ const batteryOptions = computed(() =>
   font-weight: 600;
 }
 .pubmode-btn i { font-size: 11px; }
+.pubmode-btn:disabled { opacity: 0.4; cursor: not-allowed; color: rgba(0, 50, 116, 0.35); }
+.pubmode-btn:disabled:hover { background: white; color: rgba(0, 50, 116, 0.35); }
+
+/* ── Preset library row ── */
+.preset-row { align-items: stretch; }
+.preset-select {
+  border: none;
+  padding: 5px 10px;
+  background: white;
+  color: #003274;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  border-right: 1px solid rgba(0, 50, 116, 0.1);
+  min-width: 170px;
+  max-width: 220px;
+  outline: none;
+}
+.preset-select:hover { background: rgba(0, 50, 116, 0.04); }
+.preset-icon-btn {
+  padding: 5px 8px;
+}
+.preset-icon-btn--danger { color: rgba(231, 76, 60, 0.75); }
+.preset-icon-btn--danger:hover:not(:disabled) {
+  background: rgba(231, 76, 60, 0.08);
+  color: #E74C3C;
+}
 
 /* ── dQ/dV smoothing slider ──
    Sits in the charts toolbar next to the style toggles. Same flex-shrink:0
