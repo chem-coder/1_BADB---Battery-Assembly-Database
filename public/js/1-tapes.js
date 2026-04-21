@@ -690,6 +690,56 @@ function getDefaultWeighingActual() {
   };
 }
 
+function toFiniteTapeNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function getDefaultActualModeForLine(line) {
+  return line?.recipe_role === 'solvent' ? 'volume' : 'mass';
+}
+
+function getSelectedInstanceDensityForLine(line) {
+  if (!line) return null;
+
+  const selectedInstanceId = Number(state.recipe.selectedInstancesByLineId[line.recipe_line_id]);
+  if (!Number.isInteger(selectedInstanceId)) return null;
+
+  const instances = state.recipe.instanceCacheByMaterialId[line.material_id] || [];
+  const instance = instances.find((item) => Number(item.material_instance_id) === selectedInstanceId);
+  return toFiniteTapeNumber(instance?.density_g_ml);
+}
+
+function formatActualDerivedInfo({ measureMode, rawValue, density }) {
+  const numericValue = toFiniteTapeNumber(rawValue);
+
+  if (!(Number.isFinite(numericValue) && numericValue > 0)) {
+    return { text: '', tone: 'neutral' };
+  }
+
+  if (!(Number.isFinite(density) && density > 0)) {
+    if (measureMode === 'volume') {
+      return {
+        text: 'Плотность не указана: масса не рассчитана автоматически.',
+        tone: 'warning'
+      };
+    }
+    return { text: '', tone: 'neutral' };
+  }
+
+  if (measureMode === 'volume') {
+    return {
+      text: `≈ ${(numericValue * density).toFixed(4)} г`,
+      tone: 'derived'
+    };
+  }
+
+  return {
+    text: `≈ ${(numericValue / density).toFixed(4)} мл`,
+    tone: 'derived'
+  };
+}
+
 function getDefaultWorkflowState() {
   return {
     drying_am: {
@@ -1736,6 +1786,7 @@ function renderRecipeLines() {
     
     instanceSelect.addEventListener('change', () => {
       setInstanceForLine(line.recipe_line_id, instanceSelect.value || '');
+      updateDerivedInfo();
     });
     
     // percent (right) with % sign
@@ -1799,27 +1850,51 @@ function renderRecipeLines() {
     modeSelect.dataset.recipeLineId = line.recipe_line_id;
     modeSelect.innerHTML = `
             <option value="mass" selected>m (г)</option>
-            <option value="volume">V (мкл)</option>
+            <option value="volume">V (мл)</option>
           `;
-    modeSelect.value = 'mass';
+    modeSelect.value = getDefaultActualModeForLine(line);
     
     const valueInput = document.createElement('input');
     valueInput.type = 'number';
     valueInput.step = '0.0001';
     valueInput.className = 'actual-value-input';
     valueInput.dataset.recipeLineId = line.recipe_line_id;
+
+    const derivedInfo = document.createElement('div');
+    derivedInfo.className = 'actual-derived-info';
+    derivedInfo.dataset.recipeLineId = line.recipe_line_id;
     
     actualTd.appendChild(modeSelect);
     actualTd.appendChild(valueInput);
+    actualTd.appendChild(derivedInfo);
     tr.appendChild(actualTd);
     
     slurryBody.appendChild(tr);
 
     const actualState = state.workflow.weighing.actualsByLineId[line.recipe_line_id] || getDefaultWeighingActual();
-    modeSelect.value = actualState.measure_mode || 'mass';
+    modeSelect.value = actualState.measure_mode || getDefaultActualModeForLine(line);
     valueInput.value = modeSelect.value === 'volume'
       ? (actualState.actual_volume_ml ?? '')
       : (actualState.actual_mass_g ?? '');
+
+    const updateDerivedInfo = () => {
+      const density = getSelectedInstanceDensityForLine(line);
+      const rawValue = modeSelect.value === 'volume' ? valueInput.value : valueInput.value;
+      const next = formatActualDerivedInfo({
+        measureMode: modeSelect.value || getDefaultActualModeForLine(line),
+        rawValue,
+        density
+      });
+
+      derivedInfo.textContent = next.text;
+      derivedInfo.classList.remove('is-warning', 'is-derived');
+      if (next.tone === 'warning') {
+        derivedInfo.classList.add('is-warning');
+      }
+      if (next.tone === 'derived') {
+        derivedInfo.classList.add('is-derived');
+      }
+    };
 
     modeSelect.addEventListener('change', () => {
       const nextMode = modeSelect.value || 'mass';
@@ -1832,14 +1907,18 @@ function renderRecipeLines() {
         ? { measure_mode: nextMode, actual_mass_g: '' }
         : { measure_mode: nextMode, actual_volume_ml: '' });
       valueInput.value = nextValue;
+      updateDerivedInfo();
     });
 
     valueInput.addEventListener('input', () => {
       const measureMode = (state.workflow.weighing.actualsByLineId[line.recipe_line_id]?.measure_mode) || modeSelect.value || 'mass';
       setWeighingActualForLine(line.recipe_line_id, measureMode === 'volume'
-        ? { actual_volume_ml: valueInput.value }
-        : { actual_mass_g: valueInput.value });
+        ? { measure_mode: measureMode, actual_volume_ml: valueInput.value }
+        : { measure_mode: measureMode, actual_mass_g: valueInput.value });
+      updateDerivedInfo();
     });
+
+    updateDerivedInfo();
 
   });
 

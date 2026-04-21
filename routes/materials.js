@@ -447,6 +447,7 @@ router.get('/instances', auth, async (req, res) => {
         mi.source_id,
         m.name AS material_name,
         m.role AS material_role,
+        mp.density_g_ml,
         NOT EXISTS (
           SELECT 1
           FROM material_instance_components mic
@@ -455,6 +456,8 @@ router.get('/instances', auth, async (req, res) => {
       FROM material_instances mi
       JOIN materials m
         ON mi.material_id = m.material_id
+      LEFT JOIN material_properties mp
+        ON mp.material_instance_id = mi.material_instance_id
       ORDER BY mi.name, mi.material_instance_id
       `
     );
@@ -478,20 +481,23 @@ router.get('/:id/instances', auth, async (req, res) => {
     const result = await pool.query(
       `
       SELECT
-        material_instance_id,
-        material_id,
-        name,
-        notes,
-        created_at,
-        source_id,
+        material_instances.material_instance_id,
+        material_instances.material_id,
+        material_instances.name,
+        material_instances.notes,
+        material_instances.created_at,
+        material_instances.source_id,
+        mp.density_g_ml,
         NOT EXISTS (
           SELECT 1
           FROM material_instance_components mic
           WHERE mic.parent_material_instance_id = material_instances.material_instance_id
         ) AS is_pure
       FROM material_instances
-      WHERE material_id = $1
-      ORDER BY created_at DESC, material_instance_id DESC
+      LEFT JOIN material_properties mp
+        ON mp.material_instance_id = material_instances.material_instance_id
+      WHERE material_instances.material_id = $1
+      ORDER BY material_instances.created_at DESC, material_instances.material_instance_id DESC
       `,
       [materialId]
     );

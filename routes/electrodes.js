@@ -77,6 +77,26 @@ function averageOfFinite(values) {
   return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
 }
 
+function getEffectiveActualMass(line) {
+  if (!line) return null;
+
+  if (line.measure_mode === 'mass') {
+    const actualMass = toFiniteNumberOrNull(line.actual_mass_g);
+    return Number.isFinite(actualMass) && actualMass > 0 ? actualMass : null;
+  }
+
+  if (line.measure_mode === 'volume') {
+    const actualVolumeMl = toFiniteNumberOrNull(line.actual_volume_ml);
+    const density = toFiniteNumberOrNull(line.density_g_ml);
+    if (!(Number.isFinite(actualVolumeMl) && actualVolumeMl > 0 && Number.isFinite(density) && density > 0)) {
+      return null;
+    }
+    return actualVolumeMl * density;
+  }
+
+  return null;
+}
+
 function computeElectrodeDerivedValues(electrode, capacityContext) {
   const electrodeMass = toFiniteNumberOrNull(electrode?.electrode_mass_g);
   const averageFoilMass = toFiniteNumberOrNull(capacityContext?.average_foil_mass_g);
@@ -225,7 +245,8 @@ async function fetchCutBatchCapacityContext(queryable, cutBatchId) {
       a.measure_mode,
       a.actual_mass_g,
       a.actual_volume_ml,
-      mp.specific_capacity_mah_g
+      mp.specific_capacity_mah_g,
+      mp.density_g_ml
     FROM electrode_cut_batches b
     JOIN tapes t
       ON t.tape_id = b.tape_id
@@ -305,14 +326,13 @@ async function fetchCutBatchCapacityContext(queryable, cutBatchId) {
   const activeMaterialId = Number(activeLine?.material_id);
   let totalActualSolidsMass = 0;
   let actualActiveMaterialMass = 0;
-  let hasMassBasedActuals = false;
+  let hasUsableActuals = false;
 
   rows.forEach((line) => {
-    if (line.measure_mode !== 'mass') return;
-    const actualMass = toFiniteNumberOrNull(line.actual_mass_g);
+    const actualMass = getEffectiveActualMass(line);
     if (!(Number.isFinite(actualMass) && actualMass > 0)) return;
 
-    hasMassBasedActuals = true;
+    hasUsableActuals = true;
 
     const components = getLineComponents(line, componentsByInstanceId);
     components.forEach((component) => {
@@ -330,7 +350,7 @@ async function fetchCutBatchCapacityContext(queryable, cutBatchId) {
   });
 
   const actualFractionStatus =
-    !hasMassBasedActuals ? 'unavailable'
+    !hasUsableActuals ? 'unavailable'
     : !(totalActualSolidsMass > 0) ? 'incomplete'
     : !(actualActiveMaterialMass >= 0) ? 'incomplete'
     : 'complete';

@@ -46,6 +46,26 @@ function averageOfFinite(values) {
   return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
 }
 
+function getEffectiveActualMass(line) {
+  if (!line) return null;
+
+  if (line.measure_mode === 'mass') {
+    const actualMass = toFiniteNumberOrNull(line.actual_mass_g);
+    return Number.isFinite(actualMass) && actualMass > 0 ? actualMass : null;
+  }
+
+  if (line.measure_mode === 'volume') {
+    const actualVolumeMl = toFiniteNumberOrNull(line.actual_volume_ml);
+    const density = toFiniteNumberOrNull(line.density_g_ml);
+    if (!(Number.isFinite(actualVolumeMl) && actualVolumeMl > 0 && Number.isFinite(density) && density > 0)) {
+      return null;
+    }
+    return actualVolumeMl * density;
+  }
+
+  return null;
+}
+
 function sumOfFinite(values) {
   const numeric = (Array.isArray(values) ? values : []).filter((value) => Number.isFinite(value));
   if (!numeric.length) return null;
@@ -137,8 +157,10 @@ async function fetchCutBatchCapacityContext(queryable, cutBatchId) {
       rl.slurry_percent,
       m.name AS material_name,
       a.measure_mode,
+      a.actual_volume_ml,
       a.actual_mass_g,
-      mp.specific_capacity_mah_g
+      mp.specific_capacity_mah_g,
+      mp.density_g_ml
     FROM electrode_cut_batches b
     JOIN tapes t
       ON t.tape_id = b.tape_id
@@ -175,19 +197,16 @@ async function fetchCutBatchCapacityContext(queryable, cutBatchId) {
       : null;
 
   const actualSolidsRows = rows.filter((line) =>
-    line.measure_mode === 'mass' &&
-    line.actual_mass_g != null &&
+    Number.isFinite(getEffectiveActualMass(line)) &&
     line.recipe_role !== 'solvent'
   );
 
-  const actualSolidsMass = actualSolidsRows.reduce(
-    (sum, line) => sum + Number(line.actual_mass_g || 0),
-    0
-  );
+  const actualSolidsMass = actualSolidsRows.reduce((sum, line) => {
+    const effectiveMass = getEffectiveActualMass(line);
+    return sum + (Number.isFinite(effectiveMass) ? effectiveMass : 0);
+  }, 0);
 
-  const actualActiveMass = activeLine?.measure_mode === 'mass'
-    ? toFiniteNumberOrNull(activeLine?.actual_mass_g)
-    : null;
+  const actualActiveMass = getEffectiveActualMass(activeLine);
 
   let activeFractionActual = null;
   let actualFractionStatus = 'missing';
