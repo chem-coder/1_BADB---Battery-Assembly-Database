@@ -87,7 +87,7 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
     },
     coating: {
       operator: '', date: '', time: '', notes: '',
-      foilId: '', coatingId: '',
+      foilId: '', coatingId: '', coatingSidedness: '',
     },
     drying_tape: {
       operator: '', date: '', time: '', notes: '',
@@ -432,6 +432,9 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
       comments: c.notes || null,
       foil_id: c.foilId || null,
       coating_id: c.coatingId || null,
+      // coating_sidedness — null when blank (DB CHECK constraint accepts
+      // NULL + enum values, not empty string). "'' || null" → null.
+      coating_sidedness: c.coatingSidedness || null,
     }
     await api.post(`/api/tapes/${currentTapeId.value}/steps/by-code/coating`, payload)
     setDirty('coating', false)
@@ -574,6 +577,7 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
           steps.coating.notes = c.comments || ''
           steps.coating.foilId = c.foil_id ?? ''
           steps.coating.coatingId = c.coating_id ?? ''
+          steps.coating.coatingSidedness = c.coating_sidedness ?? ''
         }
       } catch {}
 
