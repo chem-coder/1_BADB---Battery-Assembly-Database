@@ -159,9 +159,14 @@ async function loadInstances(materialId) {
       // source-info is only meaningful for pure instances — backend
       // rejects non-pure with 400. Skip the load for composites (they
       // get a friendly "N/A" message in the template instead of a
-      // spinner-forever + error toast).
-      if (inst.is_pure && !sourceInfoLoaded.value[id]) loadSourceInfo(id)
-      if (!propertiesLoaded.value[id]) loadProperties(id)
+      // spinner-forever + error toast). File lists share the pure-only
+      // guard because they live under the source row.
+      if (inst.is_pure) {
+        if (!sourceInfoLoaded.value[id])   loadSourceInfo(id)
+        if (!sourceFilesLoaded.value[id])  loadSourceFiles(id)
+      }
+      if (!propertiesLoaded.value[id])   loadProperties(id)
+      if (!propertyFilesLoaded.value[id]) loadPropertyFiles(id)
     })
   } finally {
     instancesLoading.value = false
@@ -281,6 +286,185 @@ async function loadProperties(instanceId) {
   }
 }
 
+// ── Source-info and property files (d027) ────────────────────────────
+// Two independent file buckets keyed by instance_id. Backend stores
+// bytes as BYTEA with a mime type; we upload base64, list metadata,
+// and fetch download blobs authenticated so the Bearer token is sent
+// (direct <a href=/download> would lose the token in prod).
+const sourceFilesMap = ref({})
+const sourceFilesLoaded = ref({})
+const propertyFilesMap = ref({})
+const propertyFilesLoaded = ref({})
+const uploadingSourceFiles = ref({})
+const uploadingPropertyFiles = ref({})
+// In-flight delete flags keyed by "kind-fileId" — prevents the "click
+// twice, second click 404s" UX wart and stops the second toast from
+// appearing. source-files and property-files have separate primary-key
+// sequences so we namespace by kind to avoid a false-positive disable
+// on a property-file when the user deletes a source-file with the same
+// numeric id.
+const deletingFileIds = ref({})
+function deleteKey(kind, fileId) { return `${kind}-${fileId}` }
+
+// Upload size budget — Express body limit is 10 MB (app.js:19) and
+// base64 inflates bytes by 4/3. Leave headroom for the JSON envelope
+// and multi-file entries array → 7 MB per file, max.
+const MAX_FILE_BYTES = 7 * 1024 * 1024
+
+function validateUploadSize(files) {
+  const oversized = Array.from(files).filter(f => f.size > MAX_FILE_BYTES)
+  if (oversized.length === 0) return null
+  const names = oversized.map(f => f.name).join(', ')
+  return `Слишком большие файлы (лимит 7 MB): ${names}`
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      // readAsDataURL yields "data:<mime>;base64,<payload>" — strip the
+      // prefix so the backend gets just the payload.
+      const result = String(reader.result || '')
+      const commaIdx = result.indexOf(',')
+      resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result)
+    }
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function loadSourceFiles(instanceId) {
+  try {
+    const { data } = await api.get(`/api/materials/instances/${instanceId}/source-info/files`)
+    sourceFilesMap.value[instanceId] = Array.isArray(data) ? data : []
+    sourceFilesLoaded.value[instanceId] = true
+  } catch (err) {
+    // For composite instances the backend throws 400 — we guard upstream
+    // via is_pure so this branch is only hit on real network failures.
+    toast.add({ severity: 'error', summary: 'Файлы источника', detail: err.response?.data?.error || 'Не удалось загрузить', life: 4000 })
+  }
+}
+
+async function loadPropertyFiles(instanceId) {
+  try {
+    const { data } = await api.get(`/api/materials/instances/${instanceId}/properties/files`)
+    propertyFilesMap.value[instanceId] = Array.isArray(data) ? data : []
+    propertyFilesLoaded.value[instanceId] = true
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Файлы свойств', detail: err.response?.data?.error || 'Не удалось загрузить', life: 4000 })
+  }
+}
+
+async function uploadSourceFiles(instanceId, fileList) {
+  if (!fileList || fileList.length === 0) return
+  // Pre-flight size check so oversize uploads don't silently 413 or get
+  // a generic "Ошибка загрузки" — we explain exactly which file exceeds.
+  const sizeError = validateUploadSize(fileList)
+  if (sizeError) {
+    toast.add({ severity: 'warn', summary: 'Размер файла', detail: sizeError, life: 5000 })
+    return
+  }
+  uploadingSourceFiles.value[instanceId] = true
+  try {
+    const entries = await Promise.all(
+      Array.from(fileList).map(async (f) => ({
+        file_name: f.name,
+        mime_type: f.type || 'application/octet-stream',
+        file_content_base64: await fileToBase64(f),
+      }))
+    )
+    await api.post(`/api/materials/instances/${instanceId}/source-info/files`, { entries })
+    toast.add({ severity: 'success', summary: 'Файлы', detail: `Загружено: ${entries.length}`, life: 2500 })
+    await loadSourceFiles(instanceId)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Файлы', detail: err.response?.data?.error || 'Ошибка загрузки', life: 4000 })
+  } finally {
+    uploadingSourceFiles.value[instanceId] = false
+  }
+}
+
+async function uploadPropertyFiles(instanceId, fileList) {
+  if (!fileList || fileList.length === 0) return
+  const sizeError = validateUploadSize(fileList)
+  if (sizeError) {
+    toast.add({ severity: 'warn', summary: 'Размер файла', detail: sizeError, life: 5000 })
+    return
+  }
+  uploadingPropertyFiles.value[instanceId] = true
+  try {
+    const entries = await Promise.all(
+      Array.from(fileList).map(async (f) => ({
+        file_name: f.name,
+        mime_type: f.type || 'application/octet-stream',
+        file_content_base64: await fileToBase64(f),
+      }))
+    )
+    await api.post(`/api/materials/instances/${instanceId}/properties/files`, { entries })
+    toast.add({ severity: 'success', summary: 'Файлы', detail: `Загружено: ${entries.length}`, life: 2500 })
+    await loadPropertyFiles(instanceId)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Файлы', detail: err.response?.data?.error || 'Ошибка загрузки', life: 4000 })
+  } finally {
+    uploadingPropertyFiles.value[instanceId] = false
+  }
+}
+
+// Authenticated file download — fetches blob via axios (Bearer token
+// attached by the interceptor), creates an object URL, triggers a
+// click on a temporary <a download>. Avoids the "direct <a> loses
+// token in prod" trap and gives the user a proper Save dialog.
+async function downloadFile(kind, fileId, suggestedName) {
+  const path = kind === 'source'
+    ? `/api/materials/source-files/${fileId}/download`
+    : `/api/materials/property-files/${fileId}/download`
+  try {
+    const response = await api.get(path, { responseType: 'blob' })
+    const url = URL.createObjectURL(response.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = suggestedName || 'download'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    // Revoke the object URL on next tick so the browser finishes the
+    // download before we free it (revoking synchronously can race).
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Скачивание', detail: err.response?.data?.error || 'Ошибка', life: 4000 })
+  }
+}
+
+async function deleteFile(kind, fileId, instanceId) {
+  // In-flight guard — second click on the same file is a no-op, which
+  // prevents the "404 Not found" toast that would fire when the 2nd
+  // DELETE hits a row already removed by the 1st.
+  const key = deleteKey(kind, fileId)
+  if (deletingFileIds.value[key]) return
+  if (!confirm('Удалить файл?')) return
+  deletingFileIds.value[key] = true
+  const path = kind === 'source'
+    ? `/api/materials/source-files/${fileId}`
+    : `/api/materials/property-files/${fileId}`
+  try {
+    await api.delete(path)
+    toast.add({ severity: 'success', summary: 'Файл', detail: 'Удалён', life: 2500 })
+    if (kind === 'source') await loadSourceFiles(instanceId)
+    else await loadPropertyFiles(instanceId)
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Файл', detail: err.response?.data?.error || 'Ошибка удаления', life: 4000 })
+  } finally {
+    deletingFileIds.value[key] = false
+  }
+}
+
+function formatFileSize(bytes) {
+  const n = Number(bytes)
+  if (!Number.isFinite(n) || n <= 0) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
 async function saveProperties(instanceId) {
   const form = propertiesForm.value[instanceId]
   if (!form) return
@@ -316,8 +500,12 @@ function toggleInstance(inst) {
     openInstances.value = new Set([...openInstances.value, id])
     if (!componentsLoaded.value[id]) loadComponents(id)
     // Same pure-instance gate as loadInstances above.
-    if (inst.is_pure && !sourceInfoLoaded.value[id]) loadSourceInfo(id)
-    if (!propertiesLoaded.value[id]) loadProperties(id)
+    if (inst.is_pure) {
+      if (!sourceInfoLoaded.value[id])  loadSourceInfo(id)
+      if (!sourceFilesLoaded.value[id]) loadSourceFiles(id)
+    }
+    if (!propertiesLoaded.value[id])   loadProperties(id)
+    if (!propertyFilesLoaded.value[id]) loadPropertyFiles(id)
   }
 }
 
@@ -794,6 +982,48 @@ function onEditKeydown(e, saveFn, cancelFn) {
                           @click="saveSourceInfo(inst.material_instance_id)"
                         />
                       </div>
+
+                      <!-- Source files (datasheets, certificates) — d027 -->
+                      <div class="files-panel">
+                        <div class="files-panel-head">
+                          <span class="files-panel-title">📎 Прикреплённые файлы источника</span>
+                          <label class="file-upload-btn" :class="{ 'is-busy': !!uploadingSourceFiles[inst.material_instance_id] }">
+                            <i :class="uploadingSourceFiles[inst.material_instance_id] ? 'pi pi-spin pi-spinner' : 'pi pi-plus'"></i>
+                            Добавить
+                            <input
+                              type="file"
+                              multiple
+                              style="display:none"
+                              :disabled="!!uploadingSourceFiles[inst.material_instance_id]"
+                              @change="(e) => { uploadSourceFiles(inst.material_instance_id, e.target.files); e.target.value = '' }"
+                            />
+                          </label>
+                        </div>
+                        <ul v-if="sourceFilesLoaded[inst.material_instance_id] && (sourceFilesMap[inst.material_instance_id] || []).length" class="file-list">
+                          <li v-for="f in sourceFilesMap[inst.material_instance_id]" :key="f.material_source_file_id">
+                            <button
+                              type="button"
+                              class="file-link"
+                              :title="f.mime_type || ''"
+                              @click="downloadFile('source', f.material_source_file_id, f.file_name)"
+                            >
+                              <i class="pi pi-file" style="font-size:11px;margin-right:4px"></i>
+                              {{ f.file_name }}
+                            </button>
+                            <button
+                              type="button"
+                              class="file-del-btn"
+                              title="Удалить файл"
+                              :disabled="!!deletingFileIds[`source-${f.material_source_file_id}`]"
+                              @click="deleteFile('source', f.material_source_file_id, inst.material_instance_id)"
+                            >
+                              <i :class="deletingFileIds[`source-${f.material_source_file_id}`] ? 'pi pi-spin pi-spinner' : 'pi pi-trash'"></i>
+                            </button>
+                          </li>
+                        </ul>
+                        <div v-else-if="!sourceFilesLoaded[inst.material_instance_id]" class="loading-text loading-text--small">Загрузка файлов…</div>
+                        <div v-else class="empty-text empty-text--small">Файлы не прикреплены</div>
+                      </div>
                     </template>
                     <div v-else class="loading-text">Загрузка…</div>
                   </div>
@@ -837,6 +1067,48 @@ function onEditKeydown(e, saveFn, cancelFn) {
                           :disabled="!!propertiesSaving[inst.material_instance_id]"
                           @click="saveProperties(inst.material_instance_id)"
                         />
+                      </div>
+
+                      <!-- Property files (measurement reports etc) — d027 -->
+                      <div class="files-panel">
+                        <div class="files-panel-head">
+                          <span class="files-panel-title">📎 Файлы свойств</span>
+                          <label class="file-upload-btn" :class="{ 'is-busy': !!uploadingPropertyFiles[inst.material_instance_id] }">
+                            <i :class="uploadingPropertyFiles[inst.material_instance_id] ? 'pi pi-spin pi-spinner' : 'pi pi-plus'"></i>
+                            Добавить
+                            <input
+                              type="file"
+                              multiple
+                              style="display:none"
+                              :disabled="!!uploadingPropertyFiles[inst.material_instance_id]"
+                              @change="(e) => { uploadPropertyFiles(inst.material_instance_id, e.target.files); e.target.value = '' }"
+                            />
+                          </label>
+                        </div>
+                        <ul v-if="propertyFilesLoaded[inst.material_instance_id] && (propertyFilesMap[inst.material_instance_id] || []).length" class="file-list">
+                          <li v-for="f in propertyFilesMap[inst.material_instance_id]" :key="f.material_property_file_id">
+                            <button
+                              type="button"
+                              class="file-link"
+                              :title="f.mime_type || ''"
+                              @click="downloadFile('property', f.material_property_file_id, f.file_name)"
+                            >
+                              <i class="pi pi-file" style="font-size:11px;margin-right:4px"></i>
+                              {{ f.file_name }}
+                            </button>
+                            <button
+                              type="button"
+                              class="file-del-btn"
+                              title="Удалить файл"
+                              :disabled="!!deletingFileIds[`property-${f.material_property_file_id}`]"
+                              @click="deleteFile('property', f.material_property_file_id, inst.material_instance_id)"
+                            >
+                              <i :class="deletingFileIds[`property-${f.material_property_file_id}`] ? 'pi pi-spin pi-spinner' : 'pi pi-trash'"></i>
+                            </button>
+                          </li>
+                        </ul>
+                        <div v-else-if="!propertyFilesLoaded[inst.material_instance_id]" class="loading-text loading-text--small">Загрузка файлов…</div>
+                        <div v-else class="empty-text empty-text--small">Файлы не прикреплены</div>
                       </div>
                     </template>
                     <div v-else class="loading-text">Загрузка…</div>
@@ -1201,6 +1473,99 @@ function onEditKeydown(e, saveFn, cancelFn) {
 .form-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+/* ── File attachments (d027) ── */
+.files-panel {
+  margin-top: 0.75rem;
+  padding-top: 0.65rem;
+  border-top: 0.5px dashed rgba(0, 50, 116, 0.15);
+}
+.files-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+.files-panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+}
+.file-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid rgba(0, 50, 116, 0.15);
+  border-radius: 5px;
+  background: white;
+  color: #003274;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+.file-upload-btn:hover:not(.is-busy) {
+  background: #003274;
+  color: white;
+}
+.file-upload-btn.is-busy {
+  opacity: 0.6;
+  cursor: progress;
+}
+.file-upload-btn i { font-size: 11px; }
+.file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.file-list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+.file-list li:hover { background: rgba(0, 50, 116, 0.04); }
+.file-link {
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: #003274;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-family: inherit;
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-link:hover { text-decoration: underline; }
+.file-del-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: rgba(231, 76, 60, 0.7);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.file-del-btn:hover { background: rgba(231, 76, 60, 0.1); color: #E74C3C; }
+.file-del-btn i { font-size: 11px; }
+.loading-text--small,
+.empty-text--small {
+  font-size: 11px;
+  padding: 3px 0;
 }
 .comp-table {
   width: 100%;
