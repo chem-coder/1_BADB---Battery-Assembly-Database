@@ -392,7 +392,22 @@ router.get('/sessions', auth, async (req, res) => {
       SELECT cs.*,
         u.name AS uploader_name,
         b.form_factor,
-        p.name AS project_name
+        p.name AS project_name,
+        /* Related electrodes — every electrode whose used_in_battery_id
+           matches this session's battery. We expose electrode_mass_g so
+           the mass editor can show it as a reference (upper bound for
+           active_mass_mg: active material is typically 30-50 % of the
+           full electrode weight, the rest is foil + binder + carbon). */
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'electrode_id', e.electrode_id,
+            'electrode_mass_g', e.electrode_mass_g,
+            'number_in_batch', e.number_in_batch,
+            'cut_batch_id', e.cut_batch_id
+          ) ORDER BY e.electrode_id)
+          FROM electrodes e
+          WHERE e.used_in_battery_id = cs.battery_id
+        ), '[]'::json) AS related_electrodes
       FROM cycling_sessions cs
       LEFT JOIN users u ON u.user_id = cs.uploaded_by
       LEFT JOIN batteries b ON b.battery_id = cs.battery_id
@@ -415,7 +430,17 @@ router.get('/sessions/:id', auth, async (req, res) => {
       SELECT cs.*,
         u.name AS uploader_name,
         b.form_factor,
-        p.name AS project_name
+        p.name AS project_name,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+            'electrode_id', e.electrode_id,
+            'electrode_mass_g', e.electrode_mass_g,
+            'number_in_batch', e.number_in_batch,
+            'cut_batch_id', e.cut_batch_id
+          ) ORDER BY e.electrode_id)
+          FROM electrodes e
+          WHERE e.used_in_battery_id = cs.battery_id
+        ), '[]'::json) AS related_electrodes
       FROM cycling_sessions cs
       LEFT JOIN users u ON u.user_id = cs.uploaded_by
       LEFT JOIN batteries b ON b.battery_id = cs.battery_id

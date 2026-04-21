@@ -194,6 +194,29 @@ function openMassEditor() {
   showMassEditor.value = true
 }
 
+// Electrode mass hint for a session — sums electrode_mass_g of every
+// electrode used in the session's battery (filled by the backend join
+// on related_electrodes). Returned in mg to match the active_mass_mg
+// convention. Null when the session has no linked electrodes (e.g. an
+// old upload before electrode tracking landed in BADB).
+function electrodeMassHintMg(session) {
+  const rel = Array.isArray(session?.related_electrodes) ? session.related_electrodes : []
+  if (!rel.length) return null
+  const totalG = rel.reduce((s, e) => s + (Number(e?.electrode_mass_g) || 0), 0)
+  return totalG > 0 ? totalG * 1000 : null
+}
+function formatElectrodeMassHint(session) {
+  const mg = electrodeMassHintMg(session)
+  if (mg == null) return null
+  const rel = session.related_electrodes
+  const n = rel.length
+  // 30-50% = typical active material fraction (rest is foil + binder + carbon)
+  const lo = Math.round(mg * 0.30)
+  const hi = Math.round(mg * 0.50)
+  const label = n === 1 ? 'электрод' : 'электроды'
+  return `${n} ${label} · ${mg.toFixed(1)} mg всего → ожидаем active ≈ ${lo}–${hi} mg`
+}
+
 async function saveMasses() {
   const savers = massEditorRows.value
     .filter(r => Number.isFinite(Number(r.mass)) && Number(r.mass) > 0)
@@ -387,6 +410,11 @@ const columns = [
   { field: 'battery_id', header: 'Аккумулятор', width: 130, sortable: true },
   { field: 'equipment_type', header: 'Оборудование', width: 130, sortable: true, filterable: true },
   { field: 'total_cycles', header: 'Циклов', width: 80, sortable: true },
+  // Synthetic column: total electrode mass in this battery (mg). Sourced
+  // from the GET /api/cycling/sessions join on electrodes.used_in_battery_id.
+  // Shown as a sanity-check reference when the user fills active_mass_mg —
+  // active material is typically 30-50 % of the full electrode weight.
+  { field: 'electrode_mass_info', header: 'Электроды, мг', width: 110, sortable: false, filterable: false },
   { field: 'file_name', header: 'Файл', width: 200 },
   { field: 'uploader_name', header: 'Загрузил', width: 130, filterable: true },
   { field: 'uploaded_at', header: 'Дата', width: 140, sortable: true },
@@ -834,6 +862,17 @@ const batteryOptions = computed(() =>
           Акк. №{{ data.battery_id }}
         </span>
       </template>
+      <template #col-electrode_mass_info="{ data }">
+        <span
+          v-if="electrodeMassHintMg(data) != null"
+          class="electrode-mass-hint"
+          :title="formatElectrodeMassHint(data)"
+        >
+          {{ electrodeMassHintMg(data).toFixed(1) }}
+          <i class="pi pi-info-circle" style="font-size:10px;margin-left:3px;opacity:0.5"></i>
+        </span>
+        <span v-else class="electrode-mass-hint electrode-mass-hint--empty">—</span>
+      </template>
       <template #col-uploaded_at="{ data }">
         {{ formatDate(data.uploaded_at) }}
       </template>
@@ -1263,6 +1302,22 @@ const batteryOptions = computed(() =>
   cursor: pointer;
 }
 .battery-link:hover { text-decoration: underline; }
+
+/* Electrode-mass-hint cell — small right-aligned numeric, hovered tooltip
+   explains the breakdown (electrode count → sum in mg → expected active
+   mass range at 30-50 % loading). Keeps the table compact. */
+.electrode-mass-hint {
+  display: inline-flex;
+  align-items: center;
+  color: #003274;
+  font-family: monospace;
+  font-size: 12px;
+  cursor: help;
+}
+.electrode-mass-hint--empty {
+  color: rgba(0, 50, 116, 0.35);
+  cursor: default;
+}
 
 /* ── Active toggle (colored dot in table column) ── */
 /* Wrapper centers the button horizontally inside the td (PrimeVue defaults
