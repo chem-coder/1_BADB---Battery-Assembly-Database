@@ -9,6 +9,322 @@ const { trackChanges } = require('../middleware/trackChanges');
 const ALLOWED_COIN_LAYOUTS = new Set(['SE', 'ES', 'ESE']);
 const ALLOWED_POUCH_CASE_SIZE_CODES = new Set(['103x83', '86x56', 'other']);
 
+function toFiniteNumberOrNull(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function calculateCutBatchAreaMm2(batch) {
+  if (!batch) return null;
+
+  if (batch.shape === 'circle') {
+    const diameter = toFiniteNumberOrNull(batch.diameter_mm);
+    if (!(diameter > 0)) return null;
+    const radius = diameter / 2;
+    return Math.PI * radius * radius;
+  }
+
+  if (batch.shape === 'rectangle') {
+    const length = toFiniteNumberOrNull(batch.length_mm);
+    const width = toFiniteNumberOrNull(batch.width_mm);
+    if (!(length > 0) || !(width > 0)) return null;
+    return length * width;
+  }
+
+  return null;
+}
+
+function getSideCountFromSidedness(coatingSidedness) {
+  if (coatingSidedness === 'one_sided') return 1;
+  if (coatingSidedness === 'two_sided') return 2;
+  return null;
+}
+
+function averageOfFinite(values) {
+  const numeric = (Array.isArray(values) ? values : []).filter((value) => Number.isFinite(value));
+  if (!numeric.length) return null;
+  return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+}
+
+function sumOfFinite(values) {
+  const numeric = (Array.isArray(values) ? values : []).filter((value) => Number.isFinite(value));
+  if (!numeric.length) return null;
+  return numeric.reduce((sum, value) => sum + value, 0);
+}
+
+function computeElectrodeDerivedValues(electrode, capacityContext) {
+  const electrodeMass = toFiniteNumberOrNull(electrode?.electrode_mass_g);
+  const averageFoilMass = toFiniteNumberOrNull(capacityContext?.average_foil_mass_g);
+  const activeFractionTheoretical = toFiniteNumberOrNull(capacityContext?.active_fraction_theoretical);
+  const activeFractionActual = toFiniteNumberOrNull(capacityContext?.active_fraction_actual);
+  const specificCapacity = toFiniteNumberOrNull(capacityContext?.specific_capacity_mAh_g);
+
+  const coatingMass =
+    Number.isFinite(electrodeMass) && Number.isFinite(averageFoilMass)
+      ? electrodeMass - averageFoilMass
+      : null;
+
+  const normalizedCoatingMass = Number.isFinite(coatingMass) && coatingMass > 0 ? coatingMass : null;
+
+  const activeMaterialMassTheoretical =
+    Number.isFinite(normalizedCoatingMass) && Number.isFinite(activeFractionTheoretical)
+      ? normalizedCoatingMass * activeFractionTheoretical
+      : null;
+
+  const activeMaterialMassActual =
+    Number.isFinite(normalizedCoatingMass) && Number.isFinite(activeFractionActual)
+      ? normalizedCoatingMass * activeFractionActual
+      : null;
+
+  const capacityTheoretical =
+    Number.isFinite(activeMaterialMassTheoretical) && Number.isFinite(specificCapacity)
+      ? activeMaterialMassTheoretical * specificCapacity
+      : null;
+
+  const capacityActual =
+    Number.isFinite(activeMaterialMassActual) && Number.isFinite(specificCapacity)
+      ? activeMaterialMassActual * specificCapacity
+      : null;
+
+  return {
+    coating_mass_g: normalizedCoatingMass,
+    active_material_mass_theoretical_g: Number.isFinite(activeMaterialMassTheoretical) ? activeMaterialMassTheoretical : null,
+    active_material_mass_actual_g: Number.isFinite(activeMaterialMassActual) ? activeMaterialMassActual : null,
+    capacity_theoretical_mAh: Number.isFinite(capacityTheoretical) ? capacityTheoretical : null,
+    capacity_actual_mAh: Number.isFinite(capacityActual) ? capacityActual : null
+  };
+}
+
+async function fetchCutBatchCapacityContext(queryable, cutBatchId) {
+  const batchResult = await queryable.query(
+    `
+    SELECT
+      b.cut_batch_id,
+      b.tape_id,
+      b.shape,
+      b.diameter_mm,
+      b.length_mm,
+      b.width_mm,
+      (
+        SELECT c.coating_sidedness
+        FROM tape_process_steps ts_coating
+        JOIN operation_types ot_coating
+          ON ot_coating.operation_type_id = ts_coating.operation_type_id
+        JOIN tape_step_coating c
+          ON c.step_id = ts_coating.step_id
+        WHERE ts_coating.tape_id = b.tape_id
+          AND ot_coating.code = 'coating'
+        LIMIT 1
+      ) AS coating_sidedness
+    FROM electrode_cut_batches b
+    WHERE b.cut_batch_id = $1
+    `,
+    [cutBatchId]
+  );
+
+  if (!batchResult.rowCount) {
+    return null;
+  }
+
+  const batch = batchResult.rows[0];
+
+  const recipeLinesResult = await queryable.query(
+    `
+    SELECT
+      rl.recipe_line_id,
+      rl.recipe_role,
+      rl.include_in_pct,
+      rl.slurry_percent,
+      m.name AS material_name,
+      a.measure_mode,
+      a.actual_mass_g,
+      mp.specific_capacity_mah_g
+    FROM electrode_cut_batches b
+    JOIN tapes t
+      ON t.tape_id = b.tape_id
+    JOIN tape_recipe_lines rl
+      ON rl.tape_recipe_id = t.tape_recipe_id
+    JOIN materials m
+      ON m.material_id = rl.material_id
+    LEFT JOIN tape_recipe_line_actuals a
+      ON a.tape_id = t.tape_id
+     AND a.recipe_line_id = rl.recipe_line_id
+    LEFT JOIN material_properties mp
+      ON mp.material_instance_id = a.material_instance_id
+    WHERE b.cut_batch_id = $1
+    ORDER BY rl.recipe_role, rl.recipe_line_id
+    `,
+    [cutBatchId]
+  );
+
+  const rows = recipeLinesResult.rows;
+  const activeLine = rows.find(
+    (line) => line.recipe_role === 'cathode_active' || line.recipe_role === 'anode_active'
+  ) || null;
+
+  const totalDryPercent = rows
+    .filter((line) => line.include_in_pct)
+    .reduce((sum, line) => sum + Number(line.slurry_percent || 0), 0);
+
+  const activePercent = toFiniteNumberOrNull(activeLine?.slurry_percent);
+  const activeFractionTheoretical =
+    Number.isFinite(activePercent) &&
+    Number.isFinite(totalDryPercent) &&
+    totalDryPercent > 0
+      ? activePercent / totalDryPercent
+      : null;
+
+  const actualSolidsRows = rows.filter((line) =>
+    line.measure_mode === 'mass' &&
+    line.actual_mass_g != null &&
+    line.recipe_role !== 'solvent'
+  );
+
+  const actualSolidsMass = actualSolidsRows.reduce(
+    (sum, line) => sum + Number(line.actual_mass_g || 0),
+    0
+  );
+
+  const actualActiveMass = activeLine?.measure_mode === 'mass'
+    ? toFiniteNumberOrNull(activeLine?.actual_mass_g)
+    : null;
+
+  let activeFractionActual = null;
+  let actualFractionStatus = 'missing';
+
+  if (Number.isFinite(actualActiveMass) && actualSolidsMass > 0) {
+    activeFractionActual = actualActiveMass / actualSolidsMass;
+    actualFractionStatus = 'complete';
+  } else if (actualSolidsRows.length > 0) {
+    actualFractionStatus = 'incomplete';
+  }
+
+  const foilMassResult = await queryable.query(
+    `
+    SELECT mass_g
+    FROM foil_mass_measurements
+    WHERE cut_batch_id = $1
+    ORDER BY foil_measurement_id
+    `,
+    [cutBatchId]
+  );
+
+  const foilMasses = foilMassResult.rows
+    .map((row) => toFiniteNumberOrNull(row.mass_g))
+    .filter((value) => Number.isFinite(value));
+
+  const averageFoilMass = averageOfFinite(foilMasses);
+  const electrodeAreaMm2 = calculateCutBatchAreaMm2(batch);
+  const electrodeAreaCm2 =
+    Number.isFinite(electrodeAreaMm2) ? electrodeAreaMm2 / 100 : null;
+
+  return {
+    cut_batch_id: batch.cut_batch_id,
+    tape_id: batch.tape_id,
+    active_material_name: activeLine?.material_name || null,
+    active_recipe_role: activeLine?.recipe_role || null,
+    specific_capacity_mAh_g: toFiniteNumberOrNull(activeLine?.specific_capacity_mah_g),
+    active_fraction_theoretical: activeFractionTheoretical,
+    active_fraction_actual: activeFractionActual,
+    actual_fraction_status: actualFractionStatus,
+    average_foil_mass_g: averageFoilMass,
+    foil_measurement_count: foilMasses.length,
+    electrode_area_mm2: electrodeAreaMm2,
+    electrode_area_cm2: electrodeAreaCm2,
+    coating_sidedness: batch.coating_sidedness || null,
+    side_count: getSideCountFromSidedness(batch.coating_sidedness)
+  };
+}
+
+async function enrichBatteryElectrodesWithCapacity(queryable, rows) {
+  const inputRows = Array.isArray(rows) ? rows : [];
+  const cutBatchIds = [...new Set(
+    inputRows
+      .map((row) => Number(row.cut_batch_id))
+      .filter((value) => Number.isInteger(value))
+  )];
+
+  const contextEntries = await Promise.all(
+    cutBatchIds.map(async (cutBatchId) => [cutBatchId, await fetchCutBatchCapacityContext(queryable, cutBatchId)])
+  );
+  const contextByBatchId = new Map(contextEntries);
+
+  return inputRows.map((row) => {
+    const context = contextByBatchId.get(Number(row.cut_batch_id)) || null;
+    const derived = context ? computeElectrodeDerivedValues(row, context) : {
+      coating_mass_g: null,
+      active_material_mass_theoretical_g: null,
+      active_material_mass_actual_g: null,
+      capacity_theoretical_mAh: null,
+      capacity_actual_mAh: null
+    };
+
+    return {
+      ...row,
+      ...derived,
+      coating_sidedness: context?.coating_sidedness || null,
+      active_material_name: context?.active_material_name || null,
+      specific_capacity_mAh_g: context?.specific_capacity_mAh_g ?? null
+    };
+  });
+}
+
+function buildBatteryCapacitySummary(rows) {
+  const inputRows = Array.isArray(rows) ? rows : [];
+  const cathodes = inputRows.filter((row) => row.role === 'cathode');
+  const anodes = inputRows.filter((row) => row.role === 'anode');
+
+  const cathodeCapacityTheoretical = sumOfFinite(cathodes.map((row) => toFiniteNumberOrNull(row.capacity_theoretical_mAh)));
+  const cathodeCapacityActual = sumOfFinite(cathodes.map((row) => toFiniteNumberOrNull(row.capacity_actual_mAh)));
+  const anodeCapacityTheoretical = sumOfFinite(anodes.map((row) => toFiniteNumberOrNull(row.capacity_theoretical_mAh)));
+  const anodeCapacityActual = sumOfFinite(anodes.map((row) => toFiniteNumberOrNull(row.capacity_actual_mAh)));
+
+  const limitingCapacityTheoretical =
+    Number.isFinite(cathodeCapacityTheoretical) && Number.isFinite(anodeCapacityTheoretical)
+      ? Math.min(cathodeCapacityTheoretical, anodeCapacityTheoretical)
+      : Number.isFinite(cathodeCapacityTheoretical)
+        ? cathodeCapacityTheoretical
+        : Number.isFinite(anodeCapacityTheoretical)
+          ? anodeCapacityTheoretical
+          : null;
+
+  const limitingCapacityActual =
+    Number.isFinite(cathodeCapacityActual) && Number.isFinite(anodeCapacityActual)
+      ? Math.min(cathodeCapacityActual, anodeCapacityActual)
+      : Number.isFinite(cathodeCapacityActual)
+        ? cathodeCapacityActual
+        : Number.isFinite(anodeCapacityActual)
+          ? anodeCapacityActual
+          : null;
+
+  const npTheoretical =
+    Number.isFinite(cathodeCapacityTheoretical) &&
+    cathodeCapacityTheoretical > 0 &&
+    Number.isFinite(anodeCapacityTheoretical)
+      ? anodeCapacityTheoretical / cathodeCapacityTheoretical
+      : null;
+
+  const npActual =
+    Number.isFinite(cathodeCapacityActual) &&
+    cathodeCapacityActual > 0 &&
+    Number.isFinite(anodeCapacityActual)
+      ? anodeCapacityActual / cathodeCapacityActual
+      : null;
+
+  return {
+    cathode_count: cathodes.length,
+    anode_count: anodes.length,
+    cathode_capacity_theoretical_mAh: cathodeCapacityTheoretical,
+    cathode_capacity_actual_mAh: cathodeCapacityActual,
+    anode_capacity_theoretical_mAh: anodeCapacityTheoretical,
+    anode_capacity_actual_mAh: anodeCapacityActual,
+    limiting_capacity_theoretical_mAh: limitingCapacityTheoretical,
+    limiting_capacity_actual_mAh: limitingCapacityActual,
+    np_theoretical: npTheoretical,
+    np_actual: npActual
+  };
+}
+
 function validatePouchCaseSizeInput(pouchCaseSizeCode, pouchCaseSizeOther) {
   if (pouchCaseSizeCode == null || pouchCaseSizeCode === '') {
     return null;
@@ -2264,11 +2580,22 @@ router.get('/:id/assembly', auth, async (req, res) => {
         'electrodes',
         (
           SELECT COALESCE(
-            jsonb_agg(to_jsonb(el) ORDER BY el.position_index),
+            jsonb_agg(to_jsonb(elx) ORDER BY elx.position_index),
             '[]'::jsonb
           )
-          FROM battery_electrodes el
-          WHERE el.battery_id = $1
+          FROM (
+            SELECT
+              be.battery_id,
+              be.electrode_id,
+              be.role,
+              be.position_index,
+              e.electrode_mass_g,
+              e.cut_batch_id
+            FROM battery_electrodes be
+            LEFT JOIN electrodes e
+              ON e.electrode_id = be.electrode_id
+            WHERE be.battery_id = $1
+          ) elx
         )
 
       ) AS assembly
@@ -2281,6 +2608,9 @@ router.get('/:id/assembly', auth, async (req, res) => {
     if (!assembly.battery) {
       return res.status(404).json({ error: 'Батарея не найдена' });
     }
+
+    assembly.electrodes = await enrichBatteryElectrodesWithCapacity(pool, assembly.electrodes);
+    assembly.capacity_summary = buildBatteryCapacitySummary(assembly.electrodes);
 
     res.json(assembly);
 
@@ -2511,6 +2841,9 @@ router.get('/:id/report', async (req, res) => {
     if (!report.battery) {
       return res.status(404).json({ error: 'Батарея не найдена' });
     }
+
+    report.electrodes = await enrichBatteryElectrodesWithCapacity(pool, report.electrodes);
+    report.capacity_summary = buildBatteryCapacitySummary(report.electrodes);
 
     res.json(report);
 

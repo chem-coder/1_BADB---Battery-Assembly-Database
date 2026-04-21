@@ -1706,10 +1706,16 @@ router.get('/:id/electrode-cut-batches', auth, async (req, res) => {
             AND ot_coating.code = 'coating'
           LIMIT 1
         ) AS tape_coating_sidedness,
+        u_created.name AS created_by_name,
+        u_updated.name AS updated_by_name,
         d.start_time AS drying_start,
         d.end_time AS drying_end,
         COALESCE(ec.electrode_count, 0) AS electrode_count
       FROM electrode_cut_batches b
+      LEFT JOIN users u_created
+        ON u_created.user_id = b.created_by
+      LEFT JOIN users u_updated
+        ON u_updated.user_id = b.updated_by
       LEFT JOIN electrode_drying d
         ON d.cut_batch_id = b.cut_batch_id
       LEFT JOIN (

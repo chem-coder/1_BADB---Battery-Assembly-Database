@@ -1,5 +1,5 @@
 The last applied migrations:
 
-Dalia:  017_   and    d025_
+Dalia:  017_   and    d027_
 Dima:   
 Roma:    

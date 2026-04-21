@@ -77,6 +77,34 @@ function renderRow(label, value) {
   return `<div class="report_row"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value ?? '—')}</div>`;
 }
 
+function formatCapacity(value, digits = 3) {
+  const num = Number(value);
+  return Number.isFinite(num) ? `${num.toFixed(digits)} мАч` : '—';
+}
+
+function formatRatio(value, digits = 3) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toFixed(digits) : '—';
+}
+
+function renderDualMetric(label, factualValue, theoreticalValue) {
+  return `
+    <div class="report_dual_metric">
+      <div class="report_dual_label">${escapeHtml(label)}</div>
+      <div class="report_dual_values">
+        <div class="report_dual_col">
+          <span class="report_dual_col_label fact">По факту</span>
+          <div class="report_dual_fact">${escapeHtml(factualValue)}</div>
+        </div>
+        <div class="report_dual_col">
+          <span class="report_dual_col_label theor">Теоретически</span>
+          <div class="report_dual_theor">${escapeHtml(theoreticalValue)}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderConfigSection(report) {
   const formFactor = report?.battery?.form_factor;
 
@@ -273,6 +301,55 @@ function renderElectrochemSection(report) {
   `;
 }
 
+function renderCapacitySection(report) {
+  const summary = report?.capacity_summary;
+
+  if (!summary) return '';
+
+  const hasAnyValue =
+    Number.isFinite(Number(summary.cathode_capacity_theoretical_mAh)) ||
+    Number.isFinite(Number(summary.cathode_capacity_actual_mAh)) ||
+    Number.isFinite(Number(summary.anode_capacity_theoretical_mAh)) ||
+    Number.isFinite(Number(summary.anode_capacity_actual_mAh));
+
+  if (!hasAnyValue) {
+    return `
+      <section class="report_section">
+        <h2>Электрохимическая сводка</h2>
+        <p class="muted">Недостаточно данных для расчёта ёмкости элемента.</p>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="report_section">
+      <h2>Электрохимическая сводка</h2>
+      <div class="report_dual_grid">
+        ${renderDualMetric(
+          'Σ катодов',
+          formatCapacity(summary.cathode_capacity_actual_mAh),
+          formatCapacity(summary.cathode_capacity_theoretical_mAh)
+        )}
+        ${renderDualMetric(
+          'Σ анодов',
+          formatCapacity(summary.anode_capacity_actual_mAh),
+          formatCapacity(summary.anode_capacity_theoretical_mAh)
+        )}
+        ${renderDualMetric(
+          'Лимитирующая ёмкость',
+          formatCapacity(summary.limiting_capacity_actual_mAh),
+          formatCapacity(summary.limiting_capacity_theoretical_mAh)
+        )}
+        ${renderDualMetric(
+          'N/P',
+          formatRatio(summary.np_actual),
+          formatRatio(summary.np_theoretical)
+        )}
+      </div>
+    </section>
+  `;
+}
+
 function renderReport(report) {
   const battery = report.battery || {};
   const root = document.getElementById('reportRoot');
@@ -297,6 +374,7 @@ function renderReport(report) {
     ${renderConfigSection(report)}
     ${renderSourcesSection(report)}
     ${renderStackSection(report)}
+    ${renderCapacitySection(report)}
     ${renderAssemblySection(report)}
     ${renderQcSection(report)}
     ${renderElectrochemSection(report)}
@@ -332,6 +410,22 @@ document.getElementById('printReportBtn').addEventListener('click', () => {
 
 document.getElementById('closeReportBtn').addEventListener('click', () => {
   window.close();
+
+  setTimeout(() => {
+    if (!window.closed) {
+      if (window.opener) {
+        window.location.href = '/workflow/3-batteries.html';
+        return;
+      }
+
+      if (window.history.length > 1) {
+        window.history.back();
+        return;
+      }
+
+      window.location.href = '/workflow/3-batteries.html';
+    }
+  }, 50);
 });
 
 loadBatteryReport();

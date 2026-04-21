@@ -588,13 +588,13 @@ function renderMaterials(materials) {
 
           const detailsBtn = document.createElement('button');
           detailsBtn.type = 'button';
-          detailsBtn.textContent = '+ Details';
+          detailsBtn.textContent = '+ Свойства';
           detailsBtn.dataset.action = 'details';
           detailsBtn.style.marginLeft = '0.5rem';
 
           const sourceInfoBtn = document.createElement('button');
           sourceInfoBtn.type = 'button';
-          sourceInfoBtn.textContent = '+ Source Info';
+          sourceInfoBtn.textContent = '+ Инфо об источнике';
           sourceInfoBtn.dataset.action = 'source-info';
           sourceInfoBtn.style.marginLeft = '0.35rem';
           sourceInfoBtn.hidden = !inst.is_pure;

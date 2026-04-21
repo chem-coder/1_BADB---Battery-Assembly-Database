@@ -45,7 +45,8 @@
       return {
         selection: {
           currentCutBatchId: null,
-          currentTapeDryBoxState: null
+          currentTapeDryBoxState: null,
+          currentCutBatchDetails: null
         },
         reference: {
           tapes: [],
@@ -68,8 +69,23 @@
         },
         ui: {
           savedSectionSnapshots: {},
-          dirtySections: {}
+          dirtySections: {},
+          tableColumnVisibility: getDefaultElectrodeTableColumnVisibility()
         }
+      };
+    }
+
+    function getDefaultElectrodeTableColumnVisibility() {
+      return {
+        number: true,
+        coating_mass: true,
+        active_mass_theoretical: false,
+        active_mass_actual: false,
+        capacity_theoretical: true,
+        capacity_actual: true,
+        cup: true,
+        comments: true,
+        status: true
       };
     }
 
@@ -99,6 +115,10 @@
 
     function setCurrentTapeDryBoxState(nextState) {
       state.selection.currentTapeDryBoxState = nextState || null;
+    }
+
+    function setCurrentCutBatchDetails(nextDetails) {
+      state.selection.currentCutBatchDetails = nextDetails || null;
     }
 
     function setReferenceTapes(nextTapes) {
@@ -215,6 +235,13 @@
           Boolean(nextDirtySections?.[sectionKey])
         ])
       );
+    }
+
+    function setElectrodeTableColumnVisibility(nextVisibility) {
+      state.ui.tableColumnVisibility = {
+        ...getDefaultElectrodeTableColumnVisibility(),
+        ...(nextVisibility || {})
+      };
     }
 
     function renderElectrodeDirtyMarkers() {
@@ -409,8 +436,184 @@
       renderCutBatchForm();
       renderElectrodeDryingForm();
       renderFoilMassDrafts();
+      renderElectrodeCapacitySummary();
+      renderElectrodeColumnControls();
       renderElectrodeTableFromState();
+      applyElectrodeColumnVisibility();
       renderTapeDryBoxActions();
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatDerivedNumber(value, digits = 4, suffix = '') {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return '—';
+      return `${num.toFixed(digits)}${suffix}`;
+    }
+
+    function formatFractionPercent(value, digits = 2) {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return '—';
+      return `${(num * 100).toFixed(digits)} %`;
+    }
+
+    function renderCapacitySummaryItem({ label, title, primary, secondary }) {
+      return `
+        <div class="electrode-capacity-item">
+          <span class="electrode-capacity-label" title="${escapeHtml(title || '')}">${escapeHtml(label)}</span>
+          <span class="electrode-capacity-primary">${escapeHtml(primary ?? '—')}</span>
+          <span class="electrode-capacity-secondary">${escapeHtml(secondary ?? '—')}</span>
+        </div>
+      `;
+    }
+
+    function renderElectrodeCapacitySummary() {
+      const root = document.getElementById('electrode-capacity-summary');
+      if (!root) return;
+
+      const summary = state.selection.currentCutBatchDetails?.capacity_summary;
+      if (!summary) {
+        root.hidden = true;
+        root.innerHTML = '';
+        return;
+      }
+
+      const actualFractionSecondary =
+        summary.actual_fraction_status === 'complete'
+          ? `Факт.: ${formatFractionPercent(summary.active_fraction_actual, 2)}`
+          : 'Факт.: недоступно';
+
+      root.innerHTML = `
+        <div class="electrode-capacity-grid">
+          ${renderCapacitySummaryItem({
+            label: 'Активный материал',
+            title: 'Материал, по которому определяется активная фаза электрода.',
+            primary: summary.active_material_name || '—',
+            secondary: summary.coating_sidedness ? `Тип покрытия: ${formatElectrodeSidednessLabel(summary.coating_sidedness)}` : '—'
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Удельная ёмкость материала',
+            title: 'Справочное значение из свойств материала.',
+            primary: formatDerivedNumber(summary.specific_capacity_mAh_g, 2, ' мАч/г'),
+            secondary: 'Для теор. и факт. ветки используется одно и то же значение'
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Доля активного вещества',
+            title: 'Теоретическая — из состава рецепта. Фактическая — из сохранённых фактических масс твёрдых компонентов.',
+            primary: `Теор.: ${formatFractionPercent(summary.active_fraction_theoretical, 2)}`,
+            secondary: actualFractionSecondary
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Средняя масса фольги',
+            title: 'Среднее по измерениям фольги в текущей партии.',
+            primary: formatDerivedNumber(summary.average_foil_mass_g, 4, ' г'),
+            secondary: summary.foil_measurement_count ? `${summary.foil_measurement_count} изм.` : '—'
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Площадь электрода',
+            title: 'Используется для расчёта удельной ёмкости по площади.',
+            primary: formatDerivedNumber(summary.electrode_area_cm2, 3, ' см²'),
+            secondary: formatDerivedNumber(summary.electrode_area_mm2, 2, ' мм²')
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Средняя масса покрытия',
+            title: 'Средняя масса покрытия по нескрапнутым электродам.',
+            primary: formatDerivedNumber(summary.average_coating_mass_g, 4, ' г'),
+            secondary: '—'
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Средняя масса активного материала',
+            title: 'Теоретическая — по рецепту. Фактическая — по сохранённым фактическим массам твёрдой фазы.',
+            primary: `Теор.: ${formatDerivedNumber(summary.average_active_material_mass_theoretical_g, 4, ' г')}`,
+            secondary: `Факт.: ${formatDerivedNumber(summary.average_active_material_mass_actual_g, 4, ' г')}`
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Средняя ёмкость партии',
+            title: 'Среднее только по нескрапнутым электродам с валидной массой.',
+            primary: `Теор.: ${formatDerivedNumber(summary.average_capacity_theoretical_mAh, 3, ' мАч')}`,
+            secondary: `Факт.: ${formatDerivedNumber(summary.average_capacity_actual_mAh, 3, ' мАч')}`
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Удельная ёмкость по площади',
+            title: 'Средняя ёмкость партии, делённая на площадь электрода.',
+            primary: `Теор.: ${formatDerivedNumber(summary.areal_capacity_theoretical_mAh_cm2, 3, ' мАч/см²')}`,
+            secondary: `Факт.: ${formatDerivedNumber(summary.areal_capacity_actual_mAh_cm2, 3, ' мАч/см²')}`
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'Удельная ёмкость на сторону',
+            title: 'Удельная ёмкость по площади, делённая на число сторон покрытия.',
+            primary: `Теор.: ${formatDerivedNumber(summary.capacity_per_side_theoretical_mAh_cm2, 3, ' мАч/см²')}`,
+            secondary: `Факт.: ${formatDerivedNumber(summary.capacity_per_side_actual_mAh_cm2, 3, ' мАч/см²')}`
+          })}
+          ${renderCapacitySummaryItem({
+            label: 'В расчёте участвовало',
+            title: 'Количество нескрапнутых электродов, попавших в средние значения.',
+            primary: `${summary.included_electrode_count ?? 0} шт.`,
+            secondary: `Теор.: ${summary.included_capacity_theoretical_count ?? 0} | Факт.: ${summary.included_capacity_actual_count ?? 0}`
+          })}
+        </div>
+      `;
+
+      root.hidden = false;
+    }
+
+    const ELECTRODE_COLUMN_DEFS = [
+      { key: 'number', label: '№' },
+      { key: 'coating_mass', label: 'Масса покрытия' },
+      { key: 'active_mass_theoretical', label: 'Активная масса (теор.)' },
+      { key: 'active_mass_actual', label: 'Активная масса (факт.)' },
+      { key: 'capacity_theoretical', label: 'Ёмкость (теор.)' },
+      { key: 'capacity_actual', label: 'Ёмкость (факт.)' },
+      { key: 'cup', label: 'Стаканчик №' },
+      { key: 'comments', label: 'Комментарии' },
+      { key: 'status', label: 'Статус' }
+    ];
+
+    function renderElectrodeColumnControls() {
+      const root = document.getElementById('electrode-column-controls');
+      if (!root) return;
+
+      if (!state.selection.currentCutBatchId) {
+        root.hidden = true;
+        root.innerHTML = '';
+        return;
+      }
+
+      root.innerHTML = '';
+      ELECTRODE_COLUMN_DEFS.forEach((column) => {
+        const label = document.createElement('label');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = Boolean(state.ui.tableColumnVisibility[column.key]);
+        input.addEventListener('change', () => {
+          setElectrodeTableColumnVisibility({
+            ...state.ui.tableColumnVisibility,
+            [column.key]: input.checked
+          });
+          applyElectrodeColumnVisibility();
+        });
+        label.appendChild(input);
+        label.appendChild(document.createTextNode(column.label));
+        root.appendChild(label);
+      });
+
+      root.hidden = false;
+    }
+
+    function applyElectrodeColumnVisibility() {
+      Object.entries(state.ui.tableColumnVisibility || {}).forEach(([key, visible]) => {
+        document.querySelectorAll(`[data-col="${key}"]`).forEach((el) => {
+          el.hidden = !visible;
+          el.style.display = visible ? '' : 'none';
+        });
+      });
     }
 
     function tapeDryBoxStatusLabel(dryBoxState) {
@@ -422,26 +625,38 @@
           : 'Лента находится вне сушильного шкафа';
     }
 
+    function tapeDryBoxDetailLabel(dryBoxState) {
+      if (!dryBoxState) return '';
+      return dryBoxState.availability_status === 'in_dry_box'
+        ? 'По записи в системе лента уже возвращена в сушильный шкаф.'
+        : dryBoxState.availability_status === 'depleted'
+          ? 'По записи в системе лента уже отмечена как израсходованная.'
+          : 'По записи в системе после последнего вырезания лента ещё не возвращена в сушильный шкаф.';
+    }
+
     function renderTapeDryBoxActions() {
       const fieldset = document.getElementById('electrodes-tape-dry-box');
       const status = document.getElementById('electrodes-tape-dry-box-status');
+      const detail = document.getElementById('electrodes-tape-dry-box-detail');
       const returnBtn = document.getElementById('electrodes-return-tape-btn');
       const depleteBtn = document.getElementById('electrodes-deplete-tape-btn');
       const dryBoxState = state.selection.currentTapeDryBoxState;
       const hasBatch = Boolean(state.selection.currentCutBatchId);
 
-      if (!fieldset || !status || !returnBtn || !depleteBtn) return;
+      if (!fieldset || !status || !detail || !returnBtn || !depleteBtn) return;
 
       fieldset.hidden = !hasBatch || !dryBoxState;
 
       if (!hasBatch || !dryBoxState) {
         status.textContent = '';
+        detail.textContent = '';
         returnBtn.disabled = true;
         depleteBtn.disabled = true;
         return;
       }
 
       status.textContent = tapeDryBoxStatusLabel(dryBoxState);
+      detail.textContent = tapeDryBoxDetailLabel(dryBoxState);
       returnBtn.disabled = dryBoxState.availability_status !== 'out_of_dry_box';
       depleteBtn.disabled = dryBoxState.availability_status === 'depleted';
     }
@@ -743,6 +958,17 @@
       );
     }
 
+    async function fetchCutBatchDetails(cutBatchId) {
+      const res = await fetch(`/api/electrodes/electrode-cut-batches/${cutBatchId}`);
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data || typeof data !== 'object') {
+        throw new Error(data.error || 'Ошибка загрузки параметров партии');
+      }
+
+      return data;
+    }
+
     async function fetchFoilMassMeasurements(cutBatchId) {
       return fetchElectrodeArray(
         `/api/electrodes/electrode-cut-batches/${cutBatchId}/foil-masses`,
@@ -884,6 +1110,7 @@
     function clearElectrodeWorkspace() {
       setCurrentCutBatchId(null);
       setCurrentTapeDryBoxState(null);
+      setCurrentCutBatchDetails(null);
       setCurrentBatchElectrodes([]);
       setCutBatchFormState(getDefaultCutBatchFormState());
       setElectrodeDryingState(getDefaultElectrodeDryingState());
@@ -1073,6 +1300,7 @@
     function populateBatchWorkspace(batch) {
       workspace.hidden = false;
       setCurrentCutBatchId(batch.cut_batch_id);
+      setCurrentCutBatchDetails(null);
       batchTitle.textContent = `Batch ${batch.cut_batch_id}`;
 
       setElectrodeFiltersState({
@@ -1136,16 +1364,23 @@
     }
     
     async function loadElectrodes(cutBatchId) {
-      const electrodes = await fetchCutBatchElectrodes(cutBatchId);
+      const [electrodes, batchDetails] = await Promise.all([
+        fetchCutBatchElectrodes(cutBatchId),
+        fetchCutBatchDetails(cutBatchId)
+      ]);
+
+      setCurrentCutBatchDetails(batchDetails);
 
       if (!electrodes.length) {
         setCurrentBatchElectrodes([]);
         renderElectrodes([]);
+        renderElectrodeCapacitySummary();
         return;
       }
 
       setCurrentBatchElectrodes(electrodes);
       renderElectrodes(electrodes);
+      renderElectrodeCapacitySummary();
       syncElectrodeDraftStateFromDom();
       
     }
@@ -1168,6 +1403,7 @@
         
         const rowCell = document.createElement('td');
         rowCell.textContent = e.number_in_batch ?? '';
+        rowCell.dataset.col = 'number';
         
         tr.dataset.electrodeId = e.electrode_id;
         
@@ -1185,8 +1421,29 @@
           await loadElectrodes(state.selection.currentCutBatchId);
         });
         massCell.appendChild(massInput);
+
+        const coatingMassCell = document.createElement('td');
+        coatingMassCell.dataset.col = 'coating_mass';
+        coatingMassCell.textContent = formatDerivedNumber(e.coating_mass_g, 4);
+
+        const activeMassTheoreticalCell = document.createElement('td');
+        activeMassTheoreticalCell.dataset.col = 'active_mass_theoretical';
+        activeMassTheoreticalCell.textContent = formatDerivedNumber(e.active_material_mass_theoretical_g, 4);
+
+        const activeMassActualCell = document.createElement('td');
+        activeMassActualCell.dataset.col = 'active_mass_actual';
+        activeMassActualCell.textContent = formatDerivedNumber(e.active_material_mass_actual_g, 4);
+
+        const capacityTheoreticalCell = document.createElement('td');
+        capacityTheoreticalCell.dataset.col = 'capacity_theoretical';
+        capacityTheoreticalCell.textContent = formatDerivedNumber(e.capacity_theoretical_mAh, 3);
+
+        const capacityActualCell = document.createElement('td');
+        capacityActualCell.dataset.col = 'capacity_actual';
+        capacityActualCell.textContent = formatDerivedNumber(e.capacity_actual_mAh, 3);
         
         const cupCell = document.createElement('td');
+        cupCell.dataset.col = 'cup';
         const cupInput = document.createElement('input');
         cupInput.type = 'number';
         cupInput.step = '1';
@@ -1202,6 +1459,7 @@
         cupCell.appendChild(cupInput);
         
         const commentCell = document.createElement('td');
+        commentCell.dataset.col = 'comments';
         const commentInput = document.createElement('input');
         commentInput.type = 'text';
         commentInput.className = 'electrode-comments';
@@ -1215,6 +1473,7 @@
         commentCell.appendChild(commentInput);
         
         const statusCell = document.createElement('td');
+        statusCell.dataset.col = 'status';
         statusCell.textContent = renderStatus(e);
         
         const actionCell = document.createElement('td');
@@ -1253,6 +1512,11 @@
         
         tr.appendChild(rowCell);
         tr.appendChild(massCell);
+        tr.appendChild(coatingMassCell);
+        tr.appendChild(activeMassTheoreticalCell);
+        tr.appendChild(activeMassActualCell);
+        tr.appendChild(capacityTheoreticalCell);
+        tr.appendChild(capacityActualCell);
         tr.appendChild(cupCell);
         tr.appendChild(commentCell);
         tr.appendChild(statusCell);
@@ -1261,6 +1525,8 @@
         body.appendChild(tr);
         
       });
+
+      applyElectrodeColumnVisibility();
       
     }
     
@@ -1354,6 +1620,7 @@
     
     addCutBatchBtn.addEventListener('click', () => {
       setCurrentCutBatchId(null);
+      setCurrentCutBatchDetails(null);
       clearElectrodeWorkspace();
       workspace.hidden = false;
       batchTitle.textContent = 'Новая партия';
@@ -1682,6 +1949,7 @@
       
       const numTd = document.createElement('td');
       numTd.className = 'electrode-row-number';
+      numTd.dataset.col = 'number';
       
       const massTd = document.createElement('td');
       const massInput = document.createElement('input');
@@ -1699,8 +1967,29 @@
         tr.dataset.mass = massInput.value;
         syncElectrodeDraftStateFromDom();
       });
+
+      const coatingMassTd = document.createElement('td');
+      coatingMassTd.dataset.col = 'coating_mass';
+      coatingMassTd.textContent = '—';
+
+      const activeMassTheoreticalTd = document.createElement('td');
+      activeMassTheoreticalTd.dataset.col = 'active_mass_theoretical';
+      activeMassTheoreticalTd.textContent = '—';
+
+      const activeMassActualTd = document.createElement('td');
+      activeMassActualTd.dataset.col = 'active_mass_actual';
+      activeMassActualTd.textContent = '—';
+
+      const capacityTheoreticalTd = document.createElement('td');
+      capacityTheoreticalTd.dataset.col = 'capacity_theoretical';
+      capacityTheoreticalTd.textContent = '—';
+
+      const capacityActualTd = document.createElement('td');
+      capacityActualTd.dataset.col = 'capacity_actual';
+      capacityActualTd.textContent = '—';
       
       const cupTd = document.createElement('td');
+      cupTd.dataset.col = 'cup';
       const cupInput = document.createElement('input');
       cupInput.type = 'number';
       cupInput.step = '1';
@@ -1717,6 +2006,7 @@
       });
       
       const commentTd = document.createElement('td');
+      commentTd.dataset.col = 'comments';
       const commentInput = document.createElement('input');
       commentInput.type = 'text';
       commentInput.className = 'electrode-comments';
@@ -1731,6 +2021,7 @@
       });
       
       const statusTd = document.createElement('td');
+      statusTd.dataset.col = 'status';
       statusTd.textContent = 'новый';
       
       const actionTd = document.createElement('td');
@@ -1741,6 +2032,11 @@
       
       tr.appendChild(numTd);
       tr.appendChild(massTd);
+      tr.appendChild(coatingMassTd);
+      tr.appendChild(activeMassTheoreticalTd);
+      tr.appendChild(activeMassActualTd);
+      tr.appendChild(capacityTheoreticalTd);
+      tr.appendChild(capacityActualTd);
       tr.appendChild(cupTd);
       tr.appendChild(commentTd);
       tr.appendChild(statusTd);
@@ -1749,6 +2045,7 @@
       electrodesBody.appendChild(tr);
       
       renumberElectrodeRows();
+      applyElectrodeColumnVisibility();
       
       massInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
@@ -1915,6 +2212,19 @@
       return Object.values(state.ui.dirtySections).some(Boolean);
     }
 
+    function hasPendingTapeDryBoxDecision() {
+      const dryBoxState = state.selection.currentTapeDryBoxState;
+      return Boolean(
+        state.selection.currentCutBatchId &&
+        dryBoxState &&
+        dryBoxState.availability_status === 'out_of_dry_box'
+      );
+    }
+
+    function getPendingTapeDryBoxDecisionMessage() {
+      return 'Для ленты ещё не указано, что делать дальше: вернуть в сушильный шкаф или отметить как израсходованную. Выйти всё равно?';
+    }
+
     function getElectrodeDirtySnapshot() {
       const currentSnapshots = getAllCurrentElectrodeSectionSnapshots();
       const savedSnapshots = state.ui.savedSectionSnapshots;
@@ -1962,6 +2272,13 @@
           return;
         }
         
+      }
+
+      if (hasPendingTapeDryBoxDecision()) {
+        const confirmTapeDecisionExit = confirm(getPendingTapeDryBoxDecisionMessage());
+        if (!confirmTapeDecisionExit) {
+          return;
+        }
       }
       
       clearElectrodeWorkspace();
@@ -2207,7 +2524,7 @@
     }
 
     window.addEventListener('beforeunload', (e) => {
-      if (!hasUnsavedChanges()) return;
+      if (!hasUnsavedChanges() && !hasPendingTapeDryBoxDecision()) return;
       e.preventDefault();
       e.returnValue = '';
     });

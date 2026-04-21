@@ -2373,10 +2373,19 @@ function renderTapesList() {
     dateSpan.textContent = displayDate
       ? ' — ' + new Date(displayDate).toLocaleDateString()
       : '';
+
+    const creatorSpan = document.createElement('small');
+    creatorSpan.style.color = '#666';
+    creatorSpan.textContent = t.created_by_name
+      ? ` — ${t.created_by_name}`
+      : t.created_by
+        ? ` — ${t.created_by}`
+        : '';
     
     info.appendChild(nameSpan);
     info.appendChild(statusSpan);
     info.appendChild(dateSpan);
+    info.appendChild(creatorSpan);
     
     const actions = document.createElement('div');
     actions.className = 'actions';

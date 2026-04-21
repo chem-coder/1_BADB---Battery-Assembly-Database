@@ -69,6 +69,27 @@ function formatMass(value, digits = 4) {
   return `${num.toFixed(digits)} г`;
 }
 
+function formatCapacity(value, digits = 3) {
+  if (value == null || value === '') return '—';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return `${num.toFixed(digits)} мАч`;
+}
+
+function formatArealCapacity(value, digits = 3) {
+  if (value == null || value === '') return '—';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return `${num.toFixed(digits)} мАч/см²`;
+}
+
+function formatFraction(value, digits = 2) {
+  if (value == null || value === '') return '—';
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return `${(num * 100).toFixed(digits)} %`;
+}
+
 function formatTemperature(value) {
   if (value == null || value === '') return '—';
   return `${value} °C`;
@@ -117,6 +138,16 @@ function renderRow(label, value) {
 
 function renderCompactLine(value) {
   return `<div class="report_compact">${escapeHtml(value ?? '—')}</div>`;
+}
+
+function renderDualMetric(label, theoreticalValue, actualValue) {
+  return `
+    <div class="report_dual_metric">
+      <div class="report_dual_label">${escapeHtml(label)}</div>
+      <div class="report_dual_primary">Теор.: ${escapeHtml(theoreticalValue ?? '—')}</div>
+      <div class="report_dual_secondary">Факт.: ${escapeHtml(actualValue ?? '—')}</div>
+    </div>
+  `;
 }
 
 function renderFoilMassSection(foilMasses) {
@@ -181,6 +212,77 @@ function renderDryingSection(batch) {
   `;
 }
 
+function renderCapacitySection(summary) {
+  if (!summary) return '';
+
+  const actualFractionText = summary.actual_fraction_status === 'complete'
+    ? formatFraction(summary.active_fraction_actual, 2)
+    : 'недоступно';
+
+  return `
+    <section class="report_section">
+      <h2>Расчёт ёмкости</h2>
+      <div class="report_dual_grid">
+        ${renderDualMetric(
+          'Активный материал',
+          summary.active_material_name || '—',
+          summary.coating_sidedness ? formatTapeSidedness(summary.coating_sidedness) : '—'
+        )}
+        ${renderDualMetric(
+          'Удельная ёмкость материала',
+          formatCapacity(summary.specific_capacity_mAh_g, 2).replace(' мАч', ''),
+          formatCapacity(summary.specific_capacity_mAh_g, 2).replace(' мАч', '')
+        )}
+        ${renderDualMetric(
+          'Доля активного вещества',
+          formatFraction(summary.active_fraction_theoretical, 2),
+          actualFractionText
+        )}
+        ${renderDualMetric(
+          'Средняя масса фольги',
+          formatMass(summary.average_foil_mass_g, 4),
+          summary.foil_measurement_count ? `${summary.foil_measurement_count} изм.` : '—'
+        )}
+        ${renderDualMetric(
+          'Площадь электрода',
+          summary.electrode_area_cm2 != null ? `${Number(summary.electrode_area_cm2).toFixed(3)} см²` : '—',
+          summary.electrode_area_mm2 != null ? `${Number(summary.electrode_area_mm2).toFixed(2)} мм²` : '—'
+        )}
+        ${renderDualMetric(
+          'Средняя масса покрытия',
+          formatMass(summary.average_coating_mass_g, 4),
+          '—'
+        )}
+        ${renderDualMetric(
+          'Средняя масса активного материала',
+          formatMass(summary.average_active_material_mass_theoretical_g, 4),
+          formatMass(summary.average_active_material_mass_actual_g, 4)
+        )}
+        ${renderDualMetric(
+          'Средняя ёмкость партии',
+          formatCapacity(summary.average_capacity_theoretical_mAh, 3),
+          formatCapacity(summary.average_capacity_actual_mAh, 3)
+        )}
+        ${renderDualMetric(
+          'Удельная ёмкость по площади',
+          formatArealCapacity(summary.areal_capacity_theoretical_mAh_cm2, 3),
+          formatArealCapacity(summary.areal_capacity_actual_mAh_cm2, 3)
+        )}
+        ${renderDualMetric(
+          'Удельная ёмкость на сторону',
+          formatArealCapacity(summary.capacity_per_side_theoretical_mAh_cm2, 3),
+          formatArealCapacity(summary.capacity_per_side_actual_mAh_cm2, 3)
+        )}
+        ${renderDualMetric(
+          'В расчёте участвовало',
+          `${summary.included_capacity_theoretical_count ?? 0} шт.`,
+          `${summary.included_capacity_actual_count ?? 0} шт.`
+        )}
+      </div>
+    </section>
+  `;
+}
+
 function renderElectrodesSection(electrodes) {
   const rows = Array.isArray(electrodes) ? electrodes : [];
   const total = rows.length;
@@ -198,7 +300,12 @@ function renderElectrodesSection(electrodes) {
             <tr>
               <th>№</th>
               <th>ID</th>
-              <th>m, g</th>
+              <th>m, г</th>
+              <th>Покрытие, г</th>
+              <th>Активная масса (теор.), г</th>
+              <th>Активная масса (факт.), г</th>
+              <th>Ёмкость (теор.), мАч</th>
+              <th>Ёмкость (факт.), мАч</th>
               <th>Стаканчик</th>
               <th>Статус</th>
             </tr>
@@ -209,6 +316,11 @@ function renderElectrodesSection(electrodes) {
                 <td>${escapeHtml(row.number_in_batch ?? '—')}</td>
                 <td>${escapeHtml(row.electrode_id ?? '—')}</td>
                 <td>${escapeHtml(formatMass(row.electrode_mass_g))}</td>
+                <td>${escapeHtml(formatMass(row.coating_mass_g))}</td>
+                <td>${escapeHtml(formatMass(row.active_material_mass_theoretical_g))}</td>
+                <td>${escapeHtml(formatMass(row.active_material_mass_actual_g))}</td>
+                <td>${escapeHtml(formatCapacity(row.capacity_theoretical_mAh))}</td>
+                <td>${escapeHtml(formatCapacity(row.capacity_actual_mAh))}</td>
                 <td>${escapeHtml(row.cup_number ?? '—')}</td>
                 <td>${escapeHtml(formatElectrodeStatus(row))}</td>
               </tr>
@@ -284,6 +396,7 @@ function renderReport(report) {
   const batch = report.batch || {};
   const foilMasses = Array.isArray(report.foil_masses) ? report.foil_masses : [];
   const electrodes = Array.isArray(report.electrodes) ? report.electrodes : [];
+  const capacitySummary = report.capacity_summary || null;
   const root = document.getElementById('reportRoot');
 
   const sourceTapeLine = [
@@ -311,6 +424,7 @@ function renderReport(report) {
     </section>
 
     ${renderFoilMassSection(foilMasses)}
+    ${renderCapacitySection(capacitySummary)}
     ${renderDryingSection(batch)}
     ${renderElectrodesSection(electrodes)}
     ${renderCommentsSection(batch, electrodes)}
