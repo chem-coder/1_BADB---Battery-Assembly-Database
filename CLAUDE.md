@@ -101,7 +101,15 @@ Axios `baseURL` MUST be empty string `''` in dev. Direct cross-origin requests
 2. auth_log is append-only — never UPDATE or DELETE
 3. Contracts are versioned — new version = new file, never edit v1
 4. Migrations are forward-only — no DROP TABLE, no destructive ALTERs
-5. Do NOT modify public/ — Dalia's HTML files
+5. Do NOT modify public/ — Dalia's HTML files.
+   **Narrow exception:** a minimal, additive patch is acceptable in a
+   Dima-branch if it repairs a bug inside a file she authored AND the
+   Vue SPA depends on the fixed behaviour AND the commit message
+   spells out the override rationale for PR review. Examples: adding
+   an Authorization header to a fetch so her print page works in prod,
+   wiring in a field already in the schema. NOT acceptable: redesigning
+   her UI, refactoring structure, deleting features. When in doubt,
+   open a GitHub issue for Dalia instead of editing.
 6. LAN-only system — no external API calls
 7. Optimistic locking — WHERE version = $expected, 409 on mismatch
 
