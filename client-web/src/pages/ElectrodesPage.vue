@@ -35,6 +35,11 @@ const selectedTapeId = ref(null)
 // ── Columns ──
 const columns = [
   { field: '_constructor', header: '🔧', minWidth: '45px', width: '45px', sortable: false, filterable: false },
+  // Synthetic column: "🖨️ Print" opens Dalia's print-friendly HTML
+  // (/workflow/electrode-batch-print.html) in a new tab. Matches the
+  // vanilla-JS flow she added in d1382cb but triggered from the Vue
+  // electrodes table so users don't have to leave the SPA.
+  { field: '_print', header: '🖨️', minWidth: '42px', width: '42px', sortable: false, filterable: false },
   { field: 'cut_batch_id', header: '№', minWidth: '55px', width: '65px' },
   { field: 'tape_name', header: 'Лента', minWidth: '120px' },
   { field: 'project_name', header: 'Проект', minWidth: '100px' },
@@ -177,6 +182,17 @@ function toggleAllConstructor() {
   }
 }
 
+// Print report — opens Dalia's print-friendly HTML in a new tab.
+// The page itself lives at /workflow/electrode-batch-print.html and
+// fetches GET /api/electrodes/electrode-cut-batches/:id/report. We just
+// trigger it — no need to re-render the report inside the Vue SPA,
+// and the separate window works well for Ctrl+P / Сохранить как PDF.
+function openBatchPrint(cutBatchId) {
+  if (!cutBatchId) return
+  const url = `/workflow/electrode-batch-print.html?cut_batch_id=${encodeURIComponent(cutBatchId)}`
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
 function electrodeStateFactory(id) {
   return useElectrodeState({ batchId: id })
 }
@@ -306,6 +322,15 @@ onUnmounted(() => clearTimeout(saveTimer))
           v-tooltip.right="'В конструктор'"
         />
       </template>
+      <template #col-_print="{ data }">
+        <button
+          class="print-btn"
+          title="Печать отчёта по партии (открыть в новой вкладке)"
+          @click.stop="openBatchPrint(data.cut_batch_id)"
+        >
+          <i class="pi pi-print"></i>
+        </button>
+      </template>
       <template #col-cut_batch_id="{ data }">
         <span class="batch-id">#{{ data.cut_batch_id }}</span>
       </template>
@@ -373,6 +398,27 @@ onUnmounted(() => clearTimeout(saveTimer))
 
 /* ── Table cells ── */
 .batch-id { color: #003274; font-weight: 600; }
+
+/* Print button in its own narrow column — same visual language as the
+   constructor checkbox (small, borderless, hover fills with brand color). */
+.print-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: rgba(0, 50, 116, 0.55);
+  cursor: pointer;
+  border-radius: 5px;
+  transition: all 0.15s;
+}
+.print-btn:hover {
+  background: rgba(0, 50, 116, 0.08);
+  color: #003274;
+}
+.print-btn i { font-size: 13px; }
 
 .role-badge {
   display: inline-block;

@@ -15,6 +15,25 @@ export default defineConfig({
         target: 'http://localhost:3003',
         changeOrigin: true,
       },
+      // Dalia's vanilla-JS workflow pages live at :3003/public/workflow/*
+      // and are opened from the Vue SPA via window.open (e.g. the electrode
+      // batch print view from ElectrodesPage). We proxy /workflow + her
+      // stylesheet + her JS bundles so the page boots correctly when the
+      // user is connected to the Vite dev server on :5173. `/reference`
+      // is NOT proxied — Vue uses /reference/materials and other SPA
+      // routes there; overriding with proxy would break the SPA.
+      '/workflow': {
+        target: 'http://localhost:3003',
+        changeOrigin: true,
+      },
+      '/css': {
+        target: 'http://localhost:3003',
+        changeOrigin: true,
+      },
+      '/js': {
+        target: 'http://localhost:3003',
+        changeOrigin: true,
+      },
     },
   },
   build: {
