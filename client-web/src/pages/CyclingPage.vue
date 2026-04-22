@@ -14,6 +14,9 @@ import CrudTable from '@/components/CrudTable.vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
+import InputText from 'primevue/inputtext'
+import InputNumber from 'primevue/inputnumber'
+import Textarea from 'primevue/textarea'
 import CyclingStylePopover from '@/components/CyclingStylePopover.vue'
 import { useCyclingStyles, CHART_LABELS } from '@/composables/useCyclingStyles'
 import { useBackendCache } from '@/composables/useBackendCache'
@@ -1319,21 +1322,51 @@ const batteryOptions = computed(() =>
           <div class="upload-row">
             <div class="upload-field">
               <label>Канал</label>
-              <input v-model.number="uploadForm.channel" type="number" class="upload-input" placeholder="—" :disabled="uploading" />
+              <InputNumber
+                v-model="uploadForm.channel"
+                :useGrouping="false"
+                :min="0"
+                placeholder="—"
+                :disabled="uploading"
+                size="small"
+                fluid
+              />
             </div>
             <div class="upload-field">
               <label>Протокол</label>
-              <input v-model="uploadForm.protocol" class="upload-input" placeholder="—" :disabled="uploading" />
+              <InputText
+                v-model="uploadForm.protocol"
+                placeholder="—"
+                :disabled="uploading"
+                size="small"
+                fluid
+              />
             </div>
             <div class="upload-field">
               <label title="Масса активного материала в рабочем электроде. Нужна для графиков в mAh/g. Можно заполнить позже.">Масса акт. материала (mg)</label>
-              <input v-model.number="uploadForm.active_mass_mg" type="number" step="0.01" min="0" class="upload-input" placeholder="—" :disabled="uploading" />
+              <InputNumber
+                v-model="uploadForm.active_mass_mg"
+                :minFractionDigits="0"
+                :maxFractionDigits="3"
+                :min="0"
+                placeholder="—"
+                :disabled="uploading"
+                size="small"
+                fluid
+              />
             </div>
           </div>
 
           <div class="upload-field">
             <label>Заметки</label>
-            <textarea v-model="uploadForm.notes" class="upload-input upload-textarea" rows="2" placeholder="—" :disabled="uploading"></textarea>
+            <Textarea
+              v-model="uploadForm.notes"
+              :rows="2"
+              placeholder="—"
+              :disabled="uploading"
+              autoResize
+              style="width: 100%"
+            />
           </div>
         </fieldset>
 
