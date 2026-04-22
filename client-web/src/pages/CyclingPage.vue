@@ -205,16 +205,112 @@ function electrodeMassHintMg(session) {
   const totalG = rel.reduce((s, e) => s + (Number(e?.electrode_mass_g) || 0), 0)
   return totalG > 0 ? totalG * 1000 : null
 }
+
+// ── Precise active-mass hint (Item D, design-first) ───────────────────
+// Older revision of this file (commit 296aec3) used a crude "30-50 % of
+// total electrode mass" heuristic for the tooltip. For foil+coating
+// electrodes the foil often weighs 50-70 % of the total, so the crude
+// range was systematically wrong. Replace with:
+//   active_mg = Σ_electrodes (electrode_mass_g - avg_foil_mass_g) × 1000
+// where avg_foil_mass_g is taken from Dalia's capacity_summary per each
+// electrode's cut_batch. The per-electrode sum is mandatory — summing
+// electrode_mass_g first and subtracting one "average foil" is wrong
+// when electrodes come from different batches with different foil
+// thicknesses (common in half-cells with custom cathode).
+//
+// Cache `batchReportsCache` is populated lazily by `loadBatchReports`
+// after loadData lands. While a batch's summary is still in flight, the
+// hint falls back to an honest "масса фольги неизвестна" message rather
+// than the misleading heuristic.
+const batchReportsCache = ref({})
+const batchReportsLoading = ref({})
+const MAX_CONCURRENT_BATCH_FETCHES = 3
+let _batchInFlight = 0
+const _batchQueue = []
+
+async function loadBatchReport(cutBatchId) {
+  if (!Number.isInteger(cutBatchId)) return
+  if (batchReportsCache.value[cutBatchId] !== undefined) return
+  if (batchReportsLoading.value[cutBatchId]) return
+  if (_batchInFlight >= MAX_CONCURRENT_BATCH_FETCHES) {
+    await new Promise(resolve => _batchQueue.push(resolve))
+  }
+  if (batchReportsLoading.value[cutBatchId]) {
+    const next = _batchQueue.shift()
+    if (next) next()
+    return
+  }
+  _batchInFlight++
+  batchReportsLoading.value[cutBatchId] = true
+  try {
+    const { data } = await api.get(`/api/electrodes/electrode-cut-batches/${cutBatchId}/report`)
+    batchReportsCache.value[cutBatchId] = data?.capacity_summary || null
+  } catch (err) {
+    // Silent cell fallback — tooltip shows "неизвестна" text. Keep a
+    // console.debug trail so a broken endpoint isn't totally invisible.
+    // eslint-disable-next-line no-console
+    console.debug('cut-batch /report failed', cutBatchId, err?.response?.status || err?.message)
+    batchReportsCache.value[cutBatchId] = null
+  } finally {
+    batchReportsLoading.value[cutBatchId] = false
+    _batchInFlight--
+    const next = _batchQueue.shift()
+    if (next) next()
+  }
+}
+
+// Fire lazily for every unique cut_batch_id referenced by current sessions.
+// `null` cut_batch_ids are filtered out — the backend route would 400 on
+// them. Realistic load: on a 50-session page with ~3 unique batches per
+// session, ~150 parallel-capped fetches at ~200-400 ms each → 10-15 s
+// progressive fill in the background. Tooltip is reactive: formatElectrode-
+// MassHint reads batchReportsCache.value inside its body, so when cache
+// updates, Vue re-renders bindings that use it.
+function loadBatchReportsForCurrentSessions() {
+  const ids = new Set()
+  for (const s of sessions.value) {
+    const rel = Array.isArray(s?.related_electrodes) ? s.related_electrodes : []
+    for (const e of rel) {
+      if (Number.isInteger(e?.cut_batch_id)) ids.add(e.cut_batch_id)
+    }
+  }
+  for (const id of ids) loadBatchReport(id)
+}
+
 function formatElectrodeMassHint(session) {
-  const mg = electrodeMassHintMg(session)
-  if (mg == null) return null
-  const rel = session.related_electrodes
+  const rel = Array.isArray(session?.related_electrodes) ? session.related_electrodes : []
+  if (!rel.length) return null
+
+  const totalG = rel.reduce((s, e) => s + (Number(e?.electrode_mass_g) || 0), 0)
+  if (!(totalG > 0)) return null
+  const totalMg = totalG * 1000
   const n = rel.length
-  // 30-50% = typical active material fraction (rest is foil + binder + carbon)
-  const lo = Math.round(mg * 0.30)
-  const hi = Math.round(mg * 0.50)
   const label = n === 1 ? 'электрод' : 'электроды'
-  return `${n} ${label} · ${mg.toFixed(1)} mg всего → ожидаем active ≈ ${lo}–${hi} mg`
+
+  // Per-electrode active mass: electrode_mass - avg_foil_for_its_batch.
+  // Any missing foil data (batch not yet fetched, no foil measurements)
+  // makes the whole sum null — we only report a precise number when ALL
+  // electrodes have their foil data available. Partial precision would
+  // be misleading.
+  let activeMg = 0
+  let allFoilKnown = true
+  for (const e of rel) {
+    const cbid = e?.cut_batch_id
+    const summary = Number.isInteger(cbid) ? batchReportsCache.value[cbid] : null
+    const avgFoil = summary && Number.isFinite(Number(summary.average_foil_mass_g))
+      ? Number(summary.average_foil_mass_g) : null
+    if (avgFoil == null) { allFoilKnown = false; break }
+    const electrodeG = Number(e?.electrode_mass_g) || 0
+    const netG = electrodeG - avgFoil
+    if (netG > 0) activeMg += netG * 1000
+  }
+
+  if (allFoilKnown && activeMg > 0) {
+    return `${n} ${label} · ${totalMg.toFixed(1)} mg всего, фольга учтена → active ≈ ${activeMg.toFixed(1)} mg`
+  }
+  // Fallback — admit we don't know the foil mass instead of guessing.
+  // Points the user at the fix: fill foil_masses for the relevant batch.
+  return `${n} ${label} · ${totalMg.toFixed(1)} mg всего · масса фольги неизвестна — заполните замеры в партии нарезки`
 }
 
 async function saveMasses() {
@@ -412,8 +508,11 @@ const columns = [
   { field: 'total_cycles', header: 'Циклов', width: 80, sortable: true },
   // Synthetic column: total electrode mass in this battery (mg). Sourced
   // from the GET /api/cycling/sessions join on electrodes.used_in_battery_id.
-  // Shown as a sanity-check reference when the user fills active_mass_mg —
-  // active material is typically 30-50 % of the full electrode weight.
+  // The cell shows the raw sum; the tooltip (formatElectrodeMassHint) does
+  // the precise active-mass calculation per electrode using Dalia's
+  // capacity_summary.average_foil_mass_g (Item D, design-first flow).
+  // When foil data isn't yet loaded or is missing, the tooltip reports
+  // "масса фольги неизвестна" rather than guessing.
   { field: 'electrode_mass_info', header: 'Электроды, мг', width: 110, sortable: false, filterable: false },
   { field: 'file_name', header: 'Файл', width: 200 },
   { field: 'uploader_name', header: 'Загрузил', width: 130, filterable: true },
@@ -430,6 +529,10 @@ async function loadData() {
     ])
     if (sessionsRes.status === 'fulfilled') sessions.value = sessionsRes.value.data
     if (batteriesRes.status === 'fulfilled') batteries.value = batteriesRes.value.data
+    // Kick off the /report fetches for every unique cut_batch_id
+    // referenced by current sessions — feeds the precise active-mass
+    // hint tooltip (Item D). Background, capped at 3 concurrent.
+    loadBatchReportsForCurrentSessions()
   } catch { /* silent */ }
   loading.value = false
 }
