@@ -304,24 +304,66 @@ router.delete('/:id', auth, async (req, res) => {
     return res.status(400).json({ error: 'Некорректный material_id' });
   }
 
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    const stillUsedByInstances = await client.query(
+      `
+      SELECT COUNT(*)::int AS cnt
+      FROM material_instances
+      WHERE material_id = $1
+      `,
+      [id]
+    );
+
+    if ((stillUsedByInstances.rows[0]?.cnt || 0) > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Нельзя удалить материал: существуют экземпляры' });
+    }
+
+    await client.query(
+      `
+      DELETE FROM material_source_files
+      WHERE source_id IN (
+        SELECT source_id
+        FROM material_sources
+        WHERE material_id = $1
+      )
+      `,
+      [id]
+    );
+
+    await client.query(
+      `
+      DELETE FROM material_sources
+      WHERE material_id = $1
+      `,
+      [id]
+    );
+
+    const result = await client.query(
       'DELETE FROM materials WHERE material_id = $1',
       [id]
     );
 
     if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Материал не найден' });
     }
 
+    await client.query('COMMIT');
     res.status(204).end();
   } catch (err) {
-    // likely FK restrict from material_instances (ON DELETE RESTRICT)
+    await client.query('ROLLBACK');
     if (err.code === '23503') {
-      return res.status(409).json({ error: 'Нельзя удалить материал: существуют экземпляры (instances)' });
+      return res.status(409).json({ error: 'Нельзя удалить материал: он всё ещё связан с другими записями' });
     }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
+  } finally {
+    client.release();
   }
 });
 
@@ -405,6 +447,7 @@ router.get('/instances', auth, async (req, res) => {
         mi.source_id,
         m.name AS material_name,
         m.role AS material_role,
+        mp.density_g_ml,
         NOT EXISTS (
           SELECT 1
           FROM material_instance_components mic
@@ -413,6 +456,8 @@ router.get('/instances', auth, async (req, res) => {
       FROM material_instances mi
       JOIN materials m
         ON mi.material_id = m.material_id
+      LEFT JOIN material_properties mp
+        ON mp.material_instance_id = mi.material_instance_id
       ORDER BY mi.name, mi.material_instance_id
       `
     );
@@ -436,20 +481,23 @@ router.get('/:id/instances', auth, async (req, res) => {
     const result = await pool.query(
       `
       SELECT
-        material_instance_id,
-        material_id,
-        name,
-        notes,
-        created_at,
-        source_id,
+        material_instances.material_instance_id,
+        material_instances.material_id,
+        material_instances.name,
+        material_instances.notes,
+        material_instances.created_at,
+        material_instances.source_id,
+        mp.density_g_ml,
         NOT EXISTS (
           SELECT 1
           FROM material_instance_components mic
           WHERE mic.parent_material_instance_id = material_instances.material_instance_id
         ) AS is_pure
       FROM material_instances
-      WHERE material_id = $1
-      ORDER BY created_at DESC, material_instance_id DESC
+      LEFT JOIN material_properties mp
+        ON mp.material_instance_id = material_instances.material_instance_id
+      WHERE material_instances.material_id = $1
+      ORDER BY material_instances.created_at DESC, material_instances.material_instance_id DESC
       `,
       [materialId]
     );
@@ -521,20 +569,84 @@ router.delete('/instances/:id', auth, async (req, res) => {
     return res.status(400).json({ error: 'Некорректный material_instance_id' });
   }
 
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    const context = await getMaterialInstanceContext(client, instanceId);
+    if (!context) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Экземпляр материала не найден' });
+    }
+
+    await client.query(
+      `
+      DELETE FROM material_property_files
+      WHERE material_property_id IN (
+        SELECT material_property_id
+        FROM material_properties
+        WHERE material_instance_id = $1
+      )
+      `,
+      [instanceId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM material_properties
+      WHERE material_instance_id = $1
+      `,
+      [instanceId]
+    );
+
+    const result = await client.query(
       'DELETE FROM material_instances WHERE material_instance_id = $1',
       [instanceId]
     );
 
     if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Экземпляр материала не найден' });
     }
 
+    if (context.source_id) {
+      const sourceStillUsed = await client.query(
+        `
+        SELECT COUNT(*)::int AS cnt
+        FROM material_instances
+        WHERE source_id = $1
+        `,
+        [context.source_id]
+      );
+
+      if ((sourceStillUsed.rows[0]?.cnt || 0) === 0) {
+        await client.query(
+          `
+          DELETE FROM material_source_files
+          WHERE source_id = $1
+          `,
+          [context.source_id]
+        );
+
+        await client.query(
+          `
+          DELETE FROM material_sources
+          WHERE source_id = $1
+          `,
+          [context.source_id]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
     res.status(204).end();
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
+  } finally {
+    client.release();
   }
 });
 

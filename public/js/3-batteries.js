@@ -1463,6 +1463,190 @@ function renderBatchCompatibilityWarnings() {
   }
 }
 
+function toFiniteBatteryNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function formatBatteryCapacity(value, digits = 3) {
+  const num = toFiniteBatteryNumber(value);
+  return Number.isFinite(num) ? `${num.toFixed(digits)} мАч` : '—';
+}
+
+function formatBatteryRatio(value, digits = 3) {
+  const num = toFiniteBatteryNumber(value);
+  return Number.isFinite(num) ? num.toFixed(digits) : '—';
+}
+
+function sumFiniteBatteryValues(values) {
+  const numeric = (Array.isArray(values) ? values : []).filter((value) => Number.isFinite(value));
+  if (!numeric.length) return null;
+  return numeric.reduce((sum, value) => sum + value, 0);
+}
+
+function getEffectiveBatterySelections() {
+  const formFactor = state.meta.form_factor;
+  const coinCellMode = state.config.coin?.coin_cell_mode || null;
+  const halfCellType = state.config.coin?.half_cell_type || null;
+  let cathodes = [...state.stack.selectedCathodes];
+  let anodes = [...state.stack.selectedAnodes];
+
+  if (formFactor === 'coin' && coinCellMode === 'half_cell') {
+    if (halfCellType === 'cathode_vs_li') {
+      cathodes = cathodes.slice(0, 1);
+      anodes = [];
+    }
+
+    if (halfCellType === 'anode_vs_li') {
+      anodes = anodes.slice(0, 1);
+      cathodes = [];
+    }
+  }
+
+  if (formFactor === 'coin' && coinCellMode === 'full_cell') {
+    cathodes = cathodes.slice(0, 1);
+    anodes = anodes.slice(0, 1);
+  }
+
+  return { cathodes, anodes, formFactor, coinCellMode, halfCellType };
+}
+
+function buildBatteryCapacitySummaryFromSelections() {
+  const { cathodes, anodes } = getEffectiveBatterySelections();
+
+  const cathodeCapacityTheoretical = sumFiniteBatteryValues(
+    cathodes.map((row) => toFiniteBatteryNumber(row.capacity_theoretical_mAh))
+  );
+  const cathodeCapacityActual = sumFiniteBatteryValues(
+    cathodes.map((row) => toFiniteBatteryNumber(row.capacity_actual_mAh))
+  );
+  const anodeCapacityTheoretical = sumFiniteBatteryValues(
+    anodes.map((row) => toFiniteBatteryNumber(row.capacity_theoretical_mAh))
+  );
+  const anodeCapacityActual = sumFiniteBatteryValues(
+    anodes.map((row) => toFiniteBatteryNumber(row.capacity_actual_mAh))
+  );
+
+  const limitingCapacityTheoretical =
+    Number.isFinite(cathodeCapacityTheoretical) && Number.isFinite(anodeCapacityTheoretical)
+      ? Math.min(cathodeCapacityTheoretical, anodeCapacityTheoretical)
+      : Number.isFinite(cathodeCapacityTheoretical)
+        ? cathodeCapacityTheoretical
+        : Number.isFinite(anodeCapacityTheoretical)
+          ? anodeCapacityTheoretical
+          : null;
+
+  const limitingCapacityActual =
+    Number.isFinite(cathodeCapacityActual) && Number.isFinite(anodeCapacityActual)
+      ? Math.min(cathodeCapacityActual, anodeCapacityActual)
+      : Number.isFinite(cathodeCapacityActual)
+        ? cathodeCapacityActual
+        : Number.isFinite(anodeCapacityActual)
+          ? anodeCapacityActual
+          : null;
+
+  const npTheoretical =
+    Number.isFinite(cathodeCapacityTheoretical) &&
+    cathodeCapacityTheoretical > 0 &&
+    Number.isFinite(anodeCapacityTheoretical)
+      ? anodeCapacityTheoretical / cathodeCapacityTheoretical
+      : null;
+
+  const npActual =
+    Number.isFinite(cathodeCapacityActual) &&
+    cathodeCapacityActual > 0 &&
+    Number.isFinite(anodeCapacityActual)
+      ? anodeCapacityActual / cathodeCapacityActual
+      : null;
+
+  return {
+    cathode_count: cathodes.length,
+    anode_count: anodes.length,
+    cathode_capacity_theoretical_mAh: cathodeCapacityTheoretical,
+    cathode_capacity_actual_mAh: cathodeCapacityActual,
+    anode_capacity_theoretical_mAh: anodeCapacityTheoretical,
+    anode_capacity_actual_mAh: anodeCapacityActual,
+    limiting_capacity_theoretical_mAh: limitingCapacityTheoretical,
+    limiting_capacity_actual_mAh: limitingCapacityActual,
+    np_theoretical: npTheoretical,
+    np_actual: npActual
+  };
+}
+
+function renderBatteryCapacityMetric(label, primary, secondary, title = '') {
+  return `
+    <div class="battery-capacity-item">
+      <span class="battery-capacity-label"${title ? ` title="${escapeHtml(title)}"` : ''}>${escapeHtml(label)}</span>
+      <span class="battery-capacity-primary">${escapeHtml(primary)}</span>
+      <span class="battery-capacity-secondary">${escapeHtml(secondary)}</span>
+    </div>
+  `;
+}
+
+function renderBatteryCapacitySummary() {
+  const root = document.getElementById('battery_capacity_summary');
+  if (!root) return;
+
+  const summary = buildBatteryCapacitySummaryFromSelections();
+  const { cathodes, anodes } = getEffectiveBatterySelections();
+  const hasAnySelection = cathodes.length > 0 || anodes.length > 0;
+  const hasAnyCapacity =
+    Number.isFinite(summary.cathode_capacity_theoretical_mAh) ||
+    Number.isFinite(summary.cathode_capacity_actual_mAh) ||
+    Number.isFinite(summary.anode_capacity_theoretical_mAh) ||
+    Number.isFinite(summary.anode_capacity_actual_mAh);
+
+  if (!hasAnySelection) {
+    root.hidden = true;
+    root.innerHTML = '';
+    return;
+  }
+
+  if (!hasAnyCapacity) {
+    root.innerHTML = `
+      <div class="battery-capacity-grid">
+        <div class="battery-capacity-item">
+          <span class="battery-capacity-label">Электрохимическая сводка</span>
+          <span class="battery-capacity-primary">Недостаточно данных для расчёта</span>
+          <span class="battery-capacity-secondary">Проверьте, что для исходных партий рассчитана ёмкость электродов.</span>
+        </div>
+      </div>
+    `;
+    root.hidden = false;
+    return;
+  }
+
+  root.innerHTML = `
+    <div class="battery-capacity-grid">
+      ${renderBatteryCapacityMetric(
+        'Σ катодов',
+        formatBatteryCapacity(summary.cathode_capacity_actual_mAh),
+        `теор.: ${formatBatteryCapacity(summary.cathode_capacity_theoretical_mAh)}`,
+        'Основное значение — расчёт по фактическому составу. Вторичная строка — теоретическое значение по рецепту.'
+      )}
+      ${renderBatteryCapacityMetric(
+        'Σ анодов',
+        formatBatteryCapacity(summary.anode_capacity_actual_mAh),
+        `теор.: ${formatBatteryCapacity(summary.anode_capacity_theoretical_mAh)}`,
+        'Основное значение — расчёт по фактическому составу. Вторичная строка — теоретическое значение по рецепту.'
+      )}
+      ${renderBatteryCapacityMetric(
+        'Лимитирующая ёмкость',
+        formatBatteryCapacity(summary.limiting_capacity_actual_mAh),
+        `теор.: ${formatBatteryCapacity(summary.limiting_capacity_theoretical_mAh)}`,
+        'Основное значение — лимитирующая ёмкость по фактическому составу. Вторичная строка — теоретическое значение.'
+      )}
+      ${renderBatteryCapacityMetric(
+        'N/P',
+        formatBatteryRatio(summary.np_actual),
+        `теор.: ${formatBatteryRatio(summary.np_theoretical)}`,
+        'Основное значение — N/P по фактическому составу. Вторичная строка — теоретическое отношение.'
+      )}
+    </div>
+  `;
+  root.hidden = false;
+}
+
 function renderAssemblyForm() {
   populateFieldset(document.getElementById('coin_assembly'), state.assembly.coin);
   populateFieldset(document.getElementById('pouch_assembly'), state.assembly.pouch);
@@ -1506,6 +1690,7 @@ function renderBatteryPage() {
   renderCoinCellModeUi();
   renderHalfCellTypeUi();
   renderStackTables();
+  renderBatteryCapacitySummary();
   renderBatteryWorkspaceVisibility();
   renderBatteryHeader();
   renderBatteryCreateButton();
@@ -2502,6 +2687,7 @@ function applyStackToState(data) {
 
   data.electrodes.forEach(row => {
     const electrode = {
+      ...row,
       electrode_id: row.electrode_id,
       electrode_mass_g: row.electrode_mass_g ?? null
     };
@@ -2759,11 +2945,20 @@ function renderBatteriesList() {
     sizeSpan.style.color = '#666';
     sizeSpan.textContent = sizeInfo ? ` — ${sizeInfo}` : '';
 
+    const creatorSpan = document.createElement('small');
+    creatorSpan.style.color = '#666';
+    creatorSpan.textContent = b.created_by_name
+      ? ` — ${b.created_by_name}`
+      : b.created_by
+        ? ` — ${b.created_by}`
+        : '';
+
     info.appendChild(title);
     info.appendChild(statusSpan);
     info.appendChild(dateSpan);
     info.appendChild(materialsSpan);
     info.appendChild(sizeSpan);
+    info.appendChild(creatorSpan);
 
     const actions = document.createElement('div');
     actions.className = 'actions';
@@ -3181,36 +3376,7 @@ function renderStackSummary() {
   document.getElementById('battery_stack_summary_body');
   
   body.innerHTML = '';
-  
-  const mode = state.config.coin?.coin_cell_mode || null;
-  
-  const halfType = state.config.coin?.half_cell_type || null;
-  
-  let cathodes = [...state.stack.selectedCathodes];
-  let anodes = [...state.stack.selectedAnodes];
-  
-  /* ---------- enforce selection rules ---------- */
-  
-  if (mode === 'half_cell') {
-    
-    if (halfType === 'cathode_vs_li') {
-      cathodes = cathodes.slice(0, 1);
-      anodes = [];
-    }
-    
-    if (halfType === 'anode_vs_li') {
-      anodes = anodes.slice(0, 1);
-      cathodes = [];
-    }
-    
-  }
-  
-  if (mode === 'full_cell') {
-    
-    cathodes = cathodes.slice(0, 1);
-    anodes = anodes.slice(0, 1);
-    
-  }
+  const { cathodes, anodes } = getEffectiveBatterySelections();
   
   /* ---------- sort by mass (descending) ---------- */
   
@@ -3267,6 +3433,8 @@ function renderStackSummary() {
     body.appendChild(tr);
     
   });
+
+  renderBatteryCapacitySummary();
   
 }
 
@@ -3848,11 +4016,8 @@ const printBatteryBtn = document.getElementById('printBatteryBtn');
 
 printBatteryBtn.addEventListener('click', () => {
   if (!state.selection.currentBatteryId) return;
-  window.open(
-    `/workflow/battery-print.html?battery_id=${state.selection.currentBatteryId}`,
-    '_blank',
-    'noopener'
-  );
+  const targetUrl = `/workflow/battery-print.html?battery_id=${state.selection.currentBatteryId}`;
+  window.open(targetUrl, '_blank');
 });
 
 const exitBatteriesBtn = document.getElementById('exitBatteriesBtn');

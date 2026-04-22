@@ -181,6 +181,19 @@ body[data-page] button:hover {
   background: #f1f5f9;
 }
 
+body[data-page] button:disabled {
+  background: #f3f5f7;
+  color: #98a2af;
+  border-color: #d9e0e7;
+  cursor: not-allowed;
+  box-shadow: none;
+  opacity: 0.8;
+}
+
+body[data-page] button:disabled:hover {
+  background: #f3f5f7;
+}
+
 body[data-page] a {
   color: #315f86;
   text-decoration-color: rgba(49, 95, 134, 0.38);

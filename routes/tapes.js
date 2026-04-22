@@ -213,6 +213,26 @@ function isBeforeIso(isoA, isoB) {
   return Number.isFinite(a.getTime()) && Number.isFinite(b.getTime()) && a.getTime() < b.getTime();
 }
 
+function getEffectiveActualMassFromLine(line) {
+  if (!line) return null;
+
+  if (line.measure_mode === 'mass') {
+    const actualMass = Number(line.actual_mass_g);
+    return isPositiveFiniteNumber(actualMass) ? actualMass : null;
+  }
+
+  if (line.measure_mode === 'volume') {
+    const actualVolumeMl = Number(line.actual_volume_ml);
+    const density = Number(line.density_g_ml);
+    if (!isPositiveFiniteNumber(actualVolumeMl) || !isPositiveFiniteNumber(density)) {
+      return null;
+    }
+    return actualVolumeMl * density;
+  }
+
+  return null;
+}
+
 function computeTapeMixtureRows({ tape, recipeLines, componentsByInstanceId }) {
   const rows = Array.isArray(recipeLines) ? recipeLines : [];
   const inputValue = Number(tape?.target_mass_g);
@@ -351,7 +371,7 @@ function computeTapeMixtureRows({ tape, recipeLines, componentsByInstanceId }) {
       }
     }
 
-    const actualMass = line.measure_mode === 'mass' ? Number(line.actual_mass_g) : null;
+    const actualMass = getEffectiveActualMassFromLine(line);
     const difference =
       Number.isFinite(actualMass) && Number.isFinite(targetQuantity)
         ? actualMass - targetQuantity
@@ -1711,10 +1731,16 @@ router.get('/:id/electrode-cut-batches', auth, async (req, res) => {
             AND ot_coating.code = 'coating'
           LIMIT 1
         ) AS tape_coating_sidedness,
+        u_created.name AS created_by_name,
+        u_updated.name AS updated_by_name,
         d.start_time AS drying_start,
         d.end_time AS drying_end,
         COALESCE(ec.electrode_count, 0) AS electrode_count
       FROM electrode_cut_batches b
+      LEFT JOIN users u_created
+        ON u_created.user_id = b.created_by
+      LEFT JOIN users u_updated
+        ON u_updated.user_id = b.updated_by
       LEFT JOIN electrode_drying d
         ON d.cut_batch_id = b.cut_batch_id
       LEFT JOIN (
@@ -1793,6 +1819,7 @@ router.get('/:id/report', async (req, res) => {
           a.measure_mode,
           a.actual_mass_g,
           a.actual_volume_ml,
+          mp.density_g_ml,
           a.recorded_at
         FROM tapes t
         JOIN tape_recipe_lines rl
@@ -1804,6 +1831,8 @@ router.get('/:id/report', async (req, res) => {
          AND a.recipe_line_id = rl.recipe_line_id
         LEFT JOIN material_instances mi
           ON mi.material_instance_id = a.material_instance_id
+        LEFT JOIN material_properties mp
+          ON mp.material_instance_id = a.material_instance_id
         WHERE t.tape_id = $1
         ORDER BY rl.recipe_role, m.name ASC, rl.recipe_line_id
         `,

@@ -33,6 +33,61 @@
       .electrode-inline-status.is-error {
         color: #a33;
       }
+
+      .electrode-capacity-summary {
+        margin-top: 10px;
+        padding: 12px 14px;
+        border: 1px solid #d6dde8;
+        border-radius: 10px;
+        background: #fafbfd;
+      }
+
+      .electrode-capacity-summary[hidden] {
+        display: none !important;
+      }
+
+      .electrode-capacity-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 8px 18px;
+      }
+
+      .electrode-capacity-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .electrode-capacity-label {
+        color: #5e6572;
+        font-size: 0.92em;
+        cursor: help;
+      }
+
+      .electrode-capacity-primary {
+        font-weight: 700;
+        color: #263245;
+      }
+
+      .electrode-capacity-secondary {
+        font-size: 0.92em;
+        color: #748094;
+      }
+
+      .electrode-column-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 14px;
+        margin: 10px 0 12px;
+        color: #4a5566;
+        font-size: 0.95em;
+      }
+
+      .electrode-column-controls label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
     </style>
     
   </head>
@@ -179,6 +234,9 @@
             <!-- electrodes table -->
             <fieldset id="electrodes-table-block">
               <legend> Масса электродов </legend>
+
+              <div id="electrode-capacity-summary" class="electrode-capacity-summary" hidden></div>
+              <div id="electrode-column-controls" class="electrode-column-controls" hidden></div>
               
               
               <div class="electrodes-table-wrapper">
@@ -186,11 +244,16 @@
                   <thead>
                     <tr>
                       <th class="row-index"></th>
-                      <th>№</th>
+                      <th data-col="number">№</th>
                       <th>Масса, г</th>
-                      <th>Стаканчик №</th>
-                      <th>Комментарии</th>
-                      <th>Статус</th>
+                      <th data-col="coating_mass">Масса покрытия, г</th>
+                      <th data-col="active_mass_theoretical">Масса активн. мат. (теор.), г</th>
+                      <th data-col="active_mass_actual">Масса активн. мат. (факт.), г</th>
+                      <th data-col="capacity_theoretical">Ёмкость (теор.), мАч</th>
+                      <th data-col="capacity_actual">Ёмкость (факт.), мАч</th>
+                      <th data-col="cup">Стаканчик №</th>
+                      <th data-col="comments">Комментарии</th>
+                      <th data-col="status">Статус</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -288,6 +351,7 @@
         <fieldset id="electrodes-tape-dry-box" hidden>
           <legend>Что дальше с лентой?</legend>
           <div id="electrodes-tape-dry-box-status" aria-live="polite"></div>
+          <div id="electrodes-tape-dry-box-detail" style="margin:6px 0 10px; color:#666;"></div>
           <button type="button" id="electrodes-return-tape-btn">Вернуть в шкаф сейчас</button>
           <button type="button" id="electrodes-deplete-tape-btn">Лента израсходована</button>
         </fieldset>
