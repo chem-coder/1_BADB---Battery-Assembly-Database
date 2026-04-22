@@ -160,6 +160,178 @@ Goes into PageHeader `#actions` slot. Two states: unsaved (ochre) / saved (green
 3. Use `<CrudTable>` + `<SaveIndicator>` — zero table CSS needed
 4. Add custom `#col-{field}` slots only for non-standard cells (badges, dates, etc.)
 
+## Vue frontend conventions
+
+Foundational principles + a pattern catalog for Vue work. Accumulated
+from the Item 1–5 / A–E / Phase β/γ/δ integration sprints. Read this
+BEFORE designing any new Vue feature — it saves the "how does Vue do
+X?" grep cycle every time.
+
+### Port functionality, not UX
+
+Dalia's HTML shows what a feature DOES (upload file, edit actual
+mass, grant access). It does NOT dictate how the Vue SPA renders it.
+When porting, grep Vue for the nearest existing pattern — don't
+invent new UX because "that's how her page looked". The integration
+work is a translation, not a transplant.
+
+Concrete: if her legacy page uses a green "Delete" button per row,
+do not copy that. Vue tables use right-click context menu for delete
+(`CrudTable` pattern); Vue file-attachment lists use an inline
+`pi-trash` button (`MaterialsPage` pattern). Pick the Vue-idiom that
+matches the shape of your data.
+
+### UX pattern catalog (canonical homes)
+
+| UI kind | Use this | Located |
+|---|---|---|
+| CRUD table | `CrudTable` + `#col-{field}` slots; right-click → context menu | `components/CrudTable.vue` |
+| File attachment list | Card with inline `pi-trash` button per row + `confirm('...')` + in-flight guard | `pages/reference/MaterialsPage.vue` — `deleteFile` pattern |
+| File upload queue | Staged queue with per-file notes, sequential POSTs, client-side size cap | `components/BatteryElectrochemEditor.vue` |
+| Modal dialog | PrimeVue `<Dialog v-model:visible="…">` + `#footer` slot with Cancel + Action | scoped per page |
+| Popover | PrimeVue `<Popover>` via parent ref `.toggle(event)` anchoring | `components/CyclingStylePopover.vue` |
+| Toolbar save indicator | `SaveIndicator` in `PageHeader #actions` slot | `components/SaveIndicator.vue` |
+| Multi-entity constructor | `TapeConstructor` (generic) with `:stageConfigs`/`:stateFactory`/`:entityType` props | `components/TapeConstructor.vue` |
+| Stage navigator + field editor | `StageNavigator` + `StageCompareEditor` | `components/` |
+| Auto-save per stage | 800 ms debounce via `_scheduleAutoSave` in `use*State.js` | composable |
+| Async fetch-by-id cache | `useBackendCache` with concurrency cap + invalidation-race guard + `isEmpty` verdict | `composables/useBackendCache.js` |
+| Error surfacing | `classifyAxiosError(err)` → `errorMessageRu(code, context)` → toast | `utils/errorClassifier.js` |
+| Contextual "why is this cell missing" hint | `capacityIncompleteHint(summary, context)` + ochre `pi-question-circle` icon | `utils/formatCapacity.js` |
+| File → base64 upload | `fileToBase64(file)` util | `utils/fileToBase64.js` |
+| Tooltip | `v-tooltip.top="'text'"` directive (PrimeVue, globally registered in `main.js`) | `main.js` registers |
+| Glass-card panel | White bg, `border: 1px solid rgba(0,50,116,0.12)`, `border-radius: 10px`, padding 10–14 px | project-wide convention |
+| Section header (uppercase) | `font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(0,50,116,0.50)` | project-wide convention |
+| Accent colors | Primary `#003274` navy · accent `#52C9A6` green · warning/hint `#d4a441` ochre · danger `rgba(200,80,70,…)` | project-wide palette |
+
+### Shared singletons (single source of truth)
+
+Before writing a helper, check if one exists here. Factor a new one
+out only when the second copy appears — two usage sites is the
+threshold, not one.
+
+- **`config/navigation.js`** — sidebar + router + pages, derived from
+  one `workflowSections` / `testSections` / `referenceSections` /
+  `adminSections` array. Update here, everything else follows.
+- **`utils/formatCapacity.js`** — every capacity / mass / voltage /
+  fraction-status display string. `capacityIncompleteHint` for
+  contextual tooltips when a cell shows "—".
+- **`utils/errorClassifier.js`** — axios error → `'auth' | 'missing'
+  | 'server' | 'network'` → Russian message. `'empty'` is a separate
+  verdict produced by `useBackendCache.isEmpty`.
+- **`utils/fileToBase64.js`** — browser `File` → base64 payload
+  (strips the `data:<mime>;base64,` prefix).
+- **`composables/useBackendCache.js`** — fetch-by-id with cache,
+  dedup, throttle, invalidation-race guard via gen counter. The
+  pattern for any per-id side-channel (capacity summaries, electrochem
+  file lists, electrode-batch reports).
+- **`composables/useCyclingStyles.js`** — per-chart style presets
+  keyed by user, palette library + preset save/rename/delete.
+
+### Composable return conventions
+
+`use*State.js` composables return a MIX of refs and reactive objects.
+Consumers MUST handle them correctly:
+
+```js
+const s = useTapeState({ tapeId })
+
+// refs — USE .value
+s.currentTapeId.value
+s.currentRecipeLines.value
+s.loading.value
+s.anyDirty.value          // (computed ref — also .value)
+
+// reactive objects — DIRECT access, no .value
+s.general.tapeRecipeId
+s.steps.coating.operator
+s.slurryActuals[lineId].mode
+s.instancesByLineId[lineId]
+```
+
+Passing a composable instance through a prop — refs inside the prop
+object are NOT auto-unwrapped:
+
+```js
+<MyEditor :tapeState="state" />
+
+// Inside MyEditor — still need .value
+const lines = computed(() => props.tapeState?.currentRecipeLines?.value || [])
+```
+
+### Preference order when a feature touches Dalia's side
+
+Prefer lower-impact changes to higher-impact ones. From most to least
+preferable:
+
+1. **Our-side utility** in `client-web/src/utils/` or
+   `client-web/src/composables/` — e.g. `fileToBase64`,
+   `capacityIncompleteHint`.
+2. **Our-side middleware** in `app.js` — e.g. Phase δ legacy
+   redirect (commit `0798001`). Intercepts user-facing behaviour
+   without touching her files.
+3. **New route** in `routes/*.js` — purely additive endpoints we
+   own (Dima-added functionality she hasn't built), e.g. a future
+   `DELETE /api/batteries/battery_electrochem/:id`.
+4. **Narrow patch to `public/*.js` or `public/*.html`** — ONLY for
+   bugfixes where her file has a real defect AND the Vue SPA depends
+   on the fixed behaviour. Commit body MUST spell out the override
+   rationale for her PR review. Precedent: auth-header patches on
+   her print JS (commits `2cca4b4` + `93d9471`). NOT acceptable:
+   UX redesign, structural refactor, feature deletion. When in
+   doubt → open a GitHub issue on her repo instead.
+
+Phase δ (`0798001`) is the template for option 2 when a change spans
+multiple of her files.
+
+### Common pitfalls (from this project's history)
+
+Numbered so we can link to them from PR reviews.
+
+1. **`|| null` silently drops `0`.** For numeric fields that legitimately
+   accept zero (OCV, ESR, masses), use `x === '' ? null : Number(x)`
+   with a `Number.isFinite` guard. See commit `e6b6232`; G1's
+   `toNum()` helper in `useBatteryState.saveStep('qc')` is the canonical
+   shape.
+
+2. **Vue 3 `watch(ref, cb, { deep: true })` on in-place mutations**
+   delivers `oldValue === newValue` — the deep-watcher doesn't snapshot
+   before the mutation. Use the getter form:
+   ```js
+   watch(() => [...constructorIds.value], (ids, oldIds) => { ... })
+   ```
+   Diagnosed during Phase 0 `useBackendCache` migration.
+
+3. **Refs inside prop objects are NOT auto-unwrapped.** See the
+   "Composable return conventions" table above. Always `.value` when
+   reaching through a prop to a ref property.
+
+4. **"Script exists, template missing" regression class.** State and
+   handlers wired in `<script setup>`, but the `<Dialog>` / component
+   that consumes them was never committed. Silent no-op on user
+   click, build passes clean. Example: mass editor regression in
+   commit `6508738` → fixed `ddef3b1`. Sweep periodically for `show*`
+   / `*Visible` refs referenced only in script.
+
+5. **Static `/uploads/*` has no auth** (pre-existing Dalia behaviour).
+   File-attachment links work without a Bearer token — insecure on a
+   LAN. Tracked in Dalia PR backlog. Don't build Vue features that
+   assume auth-gated downloads until this is fixed.
+
+6. **`express.json({ limit: '10mb' })` + base64 inflation `×1.34`**
+   → practical per-file upload cap is ~7 MB raw. We enforce 6 MB
+   client-side (`BatteryElectrochemEditor.vue` `MAX_FILE_BYTES`) for
+   margin. Sequential per-file POST avoids batch compounding.
+
+7. **`/reference/users` is admin-gated.** Non-admin users landing there
+   (e.g. via a legacy `/reference/users.html` bookmark after Phase δ
+   redirect) get silently bounced to `/` by `router.beforeEach`.
+   TODO: toast on role-gate denial.
+
+8. **`actual_fraction_status === 'incomplete' | 'unavailable' | 'complete'`**
+   are three different states. `'unavailable'` = no recipe actuals at
+   all; `'incomplete'` = some but not all; `'complete'` = all present.
+   `capacityIncompleteHint` picks the right message per case.
+
 ## Remotes
 
 - **origin: `git@github.com:chem-coder/1_BADB---Battery-Assembly-Database.git` (Dalia) — main repo**
