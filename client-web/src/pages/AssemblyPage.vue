@@ -19,6 +19,7 @@ import { BATTERY_STAGES } from '@/config/batteryStages'
 import { useBatteryState } from '@/composables/useBatteryState'
 import { useBackendCache } from '@/composables/useBackendCache'
 import { errorMessageRu } from '@/utils/errorClassifier'
+import { capacityIncompleteHint } from '@/utils/formatCapacity'
 
 const router = useRouter()
 const route = useRoute()
@@ -387,28 +388,56 @@ onUnmounted(() => clearTimeout(saveTimer))
               <div class="capacity-label">Катод ({{ capacity.cache.value[id].cathode_count }} шт.)</div>
               <div class="capacity-value">
                 <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].cathode_capacity_theoretical_mAh) }}</strong></div>
-                <div>факт.: <strong>{{ fmtCap(capacity.cache.value[id].cathode_capacity_actual_mAh) }}</strong></div>
+                <div class="capacity-actual-row">
+                  факт.: <strong>{{ fmtCap(capacity.cache.value[id].cathode_capacity_actual_mAh) }}</strong>
+                  <i
+                    v-if="capacity.cache.value[id].cathode_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-cathode')"
+                    class="pi pi-question-circle capacity-hint-icon"
+                    v-tooltip.top="capacityIncompleteHint(capacity.cache.value[id], 'battery-cathode')"
+                  ></i>
+                </div>
               </div>
             </div>
             <div class="capacity-cell">
               <div class="capacity-label">Анод ({{ capacity.cache.value[id].anode_count }} шт.)</div>
               <div class="capacity-value">
                 <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].anode_capacity_theoretical_mAh) }}</strong></div>
-                <div>факт.: <strong>{{ fmtCap(capacity.cache.value[id].anode_capacity_actual_mAh) }}</strong></div>
+                <div class="capacity-actual-row">
+                  факт.: <strong>{{ fmtCap(capacity.cache.value[id].anode_capacity_actual_mAh) }}</strong>
+                  <i
+                    v-if="capacity.cache.value[id].anode_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-anode')"
+                    class="pi pi-question-circle capacity-hint-icon"
+                    v-tooltip.top="capacityIncompleteHint(capacity.cache.value[id], 'battery-anode')"
+                  ></i>
+                </div>
               </div>
             </div>
             <div class="capacity-cell capacity-cell--primary">
               <div class="capacity-label" title="Ограничивающая ёмкость ячейки — min(катод, анод)">Ёмкость ячейки</div>
               <div class="capacity-value">
                 <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].limiting_capacity_theoretical_mAh) }}</strong></div>
-                <div>факт.: <strong>{{ fmtCap(capacity.cache.value[id].limiting_capacity_actual_mAh) }}</strong></div>
+                <div class="capacity-actual-row">
+                  факт.: <strong>{{ fmtCap(capacity.cache.value[id].limiting_capacity_actual_mAh) }}</strong>
+                  <i
+                    v-if="capacity.cache.value[id].limiting_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
+                    class="pi pi-question-circle capacity-hint-icon"
+                    v-tooltip.top="capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
+                  ></i>
+                </div>
               </div>
             </div>
             <div class="capacity-cell" title="N/P ratio = Q_анод / Q_катод; обычно 1.05–1.2 для Li-ion">
               <div class="capacity-label">N/P соотношение</div>
               <div class="capacity-value">
                 <div>теор.: <strong>{{ fmtRatio(capacity.cache.value[id].np_theoretical) }}</strong></div>
-                <div>факт.: <strong>{{ fmtRatio(capacity.cache.value[id].np_actual) }}</strong></div>
+                <div class="capacity-actual-row">
+                  факт.: <strong>{{ fmtRatio(capacity.cache.value[id].np_actual) }}</strong>
+                  <i
+                    v-if="!Number.isFinite(Number(capacity.cache.value[id].np_actual)) && capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
+                    class="pi pi-question-circle capacity-hint-icon"
+                    v-tooltip.top="capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
+                  ></i>
+                </div>
               </div>
             </div>
           </div>
@@ -584,6 +613,16 @@ onUnmounted(() => clearTimeout(saveTimer))
   line-height: 1.5;
 }
 .capacity-value strong { font-weight: 600; }
+.capacity-actual-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.capacity-hint-icon {
+  font-size: 12px;
+  color: rgba(212, 164, 65, 0.80);
+  cursor: help;
+}
 .capacity-empty {
   font-size: 12px;
   color: rgba(0, 50, 116, 0.55);

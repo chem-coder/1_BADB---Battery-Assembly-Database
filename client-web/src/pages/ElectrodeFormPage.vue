@@ -12,6 +12,7 @@ import {
   fmtSpecCapacity,
   fmtCoatingSidedness,
   fmtActualFractionStatus,
+  capacityIncompleteHint,
 } from '@/utils/formatCapacity'
 import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
@@ -840,26 +841,46 @@ onMounted(async () => {
                     <div class="capacity-label">Ср. ёмкость электрода</div>
                     <div class="capacity-value">
                       <div>теор.: <strong>{{ fmtCapacity(capacitySummary.average_capacity_theoretical_mAh) }}</strong></div>
-                      <div>факт.: <strong>{{ fmtCapacity(capacitySummary.average_capacity_actual_mAh) }}</strong></div>
+                      <div class="capacity-actual-row">
+                        факт.: <strong>{{ fmtCapacity(capacitySummary.average_capacity_actual_mAh) }}</strong>
+                        <i
+                          v-if="capacitySummary.average_capacity_actual_mAh == null && capacityIncompleteHint(capacitySummary, 'electrode')"
+                          class="pi pi-question-circle capacity-hint-icon"
+                          v-tooltip.top="capacityIncompleteHint(capacitySummary, 'electrode')"
+                        ></i>
+                      </div>
                     </div>
                   </div>
                   <div class="capacity-cell" title="Поверхностная плотность ёмкости">
                     <div class="capacity-label">Поверхн. ёмкость</div>
                     <div class="capacity-value">
                       <div>теор.: <strong>{{ fmtArealCapacity(capacitySummary.areal_capacity_theoretical_mAh_cm2) }}</strong></div>
-                      <div>факт.: <strong>{{ fmtArealCapacity(capacitySummary.areal_capacity_actual_mAh_cm2) }}</strong></div>
+                      <div class="capacity-actual-row">
+                        факт.: <strong>{{ fmtArealCapacity(capacitySummary.areal_capacity_actual_mAh_cm2) }}</strong>
+                        <i
+                          v-if="capacitySummary.areal_capacity_actual_mAh_cm2 == null && capacityIncompleteHint(capacitySummary, 'electrode')"
+                          class="pi pi-question-circle capacity-hint-icon"
+                          v-tooltip.top="capacityIncompleteHint(capacitySummary, 'electrode')"
+                        ></i>
+                      </div>
                     </div>
                   </div>
-                  <div
-                    class="capacity-cell capacity-cell--wide"
-                    :title="capacitySummary.actual_fraction_status === 'complete'
-                      ? 'Все массы рецепта и фольги измерены — реальные значения доступны'
-                      : 'Часть масс не введена — поле «факт» недоступно'"
-                  >
+                  <div class="capacity-cell capacity-cell--wide">
                     <div class="capacity-label">Статус расчёта фактич. значений</div>
                     <div class="capacity-value">
-                      <strong :class="capacitySummary.actual_fraction_status === 'complete' ? 'status-complete' : 'status-incomplete'">
+                      <strong
+                        :class="capacitySummary.actual_fraction_status === 'complete' ? 'status-complete' : 'status-incomplete'"
+                        :tabindex="capacitySummary.actual_fraction_status === 'complete' ? -1 : 0"
+                        v-tooltip.top="capacitySummary.actual_fraction_status === 'complete'
+                          ? 'Все массы рецепта и фольги измерены — реальные значения доступны'
+                          : (capacityIncompleteHint(capacitySummary, 'electrode') || 'Часть масс не введена')"
+                      >
                         {{ fmtActualFractionStatus(capacitySummary.actual_fraction_status) }}
+                        <i
+                          v-if="capacitySummary.actual_fraction_status !== 'complete'"
+                          class="pi pi-question-circle capacity-hint-icon"
+                          style="margin-left:4px"
+                        ></i>
                       </strong>
                     </div>
                   </div>
@@ -1020,7 +1041,17 @@ label { font-weight: 500; font-size: 0.9rem; margin-top: 0.3rem; }
   font-weight: 400;
 }
 .status-complete   { color: #1a8a64; }
-.status-incomplete { color: #9a7030; }
+.status-incomplete { color: #9a7030; cursor: help; }
+.capacity-actual-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.capacity-hint-icon {
+  font-size: 12px;
+  color: rgba(212, 164, 65, 0.80);
+  cursor: help;
+}
 .capacity-empty {
   font-size: 12px;
   color: rgba(0, 50, 116, 0.55);

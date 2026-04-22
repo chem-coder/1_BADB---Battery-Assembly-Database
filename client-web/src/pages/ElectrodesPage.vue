@@ -8,7 +8,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import { fmtCapacity } from '@/utils/formatCapacity'
+import { fmtCapacity, capacityIncompleteHint } from '@/utils/formatCapacity'
 import { useBackendCache } from '@/composables/useBackendCache'
 import Select from 'primevue/select'
 import PageHeader from '@/components/PageHeader.vue'
@@ -398,6 +398,15 @@ onUnmounted(() => clearTimeout(saveTimer))
       <template #col-avg_cap_actual_mAh="{ data }">
         <span class="cap-cell">
           <template v-if="reports.loading.value[data.cut_batch_id]">…</template>
+          <template v-else-if="data.avg_cap_actual_mAh == null && capacityIncompleteHint(reports.cache.value[data.cut_batch_id], 'electrode')">
+            <span
+              class="cap-cell-missing"
+              v-tooltip.top="capacityIncompleteHint(reports.cache.value[data.cut_batch_id], 'electrode')"
+            >
+              —
+              <i class="pi pi-question-circle cap-cell-hint-icon"></i>
+            </span>
+          </template>
           <template v-else>{{ fmtCapacity(data.avg_cap_actual_mAh) }}</template>
         </span>
       </template>
@@ -487,6 +496,17 @@ onUnmounted(() => clearTimeout(saveTimer))
   font-size: 12px;
   color: #003274;
   font-variant-numeric: tabular-nums;
+}
+.cap-cell-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(0, 50, 116, 0.45);
+  cursor: help;
+}
+.cap-cell-hint-icon {
+  font-size: 11px;
+  color: rgba(212, 164, 65, 0.75);
 }
 
 .role-badge {
