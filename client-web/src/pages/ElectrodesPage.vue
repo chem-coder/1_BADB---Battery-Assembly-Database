@@ -8,6 +8,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
+import { fmtCapacity } from '@/utils/formatCapacity'
 import Select from 'primevue/select'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
@@ -46,6 +47,12 @@ const columns = [
   { field: 'role_display', header: 'Роль', minWidth: '60px', width: '75px' },
   { field: 'shape_display', header: 'Форма', minWidth: '80px', width: '120px' },
   { field: 'electrode_count', header: 'Эл-дов', minWidth: '65px', width: '75px' },
+  // Capacity columns — values sourced from /api/electrodes/electrode-cut-batches/:id/report
+  // (capacity_summary.average_capacity_*_mAh). Loaded lazily after the
+  // batch list lands and flattened into tableData so CrudTable / PrimeVue
+  // sort by the numeric field correctly (the slot only handles display).
+  { field: 'avg_cap_theoretical_mAh', header: 'Ёмкость теор., мАч', minWidth: '110px', width: '130px', sortable: true, filterable: false },
+  { field: 'avg_cap_actual_mAh',      header: 'Ёмкость факт., мАч', minWidth: '110px', width: '130px', sortable: true, filterable: false },
   { field: 'status_display', header: 'Статус', minWidth: '80px', width: '100px' },
   { field: 'created_at', header: 'Дата', minWidth: '90px', width: '110px' },
   { field: 'created_by_name', header: 'Оператор', minWidth: '100px' },
@@ -76,12 +83,25 @@ const tableData = computed(() => {
   if (selectedProjectId.value) items = items.filter(b => String(b.project_id) === String(selectedProjectId.value))
   if (selectedTapeId.value) items = items.filter(b => String(b.tape_id) === String(selectedTapeId.value))
 
-  return items.map(b => ({
-    ...b,
-    role_display: b.tape_role === 'cathode' ? 'К' : b.tape_role === 'anode' ? 'А' : '—',
-    shape_display: formatShapeDisplay(b),
-    status_display: batchStatus(b),
-  }))
+  return items.map(b => {
+    // Pull capacity from the reactive reportsByBatchId cache. The
+    // `.value` dependency means this computed re-runs whenever a
+    // /report fetch resolves → rows fill in progressively without
+    // any per-cell refs. Null when fetch is in flight or returned null.
+    const summary = reportsByBatchId.value[b.cut_batch_id]
+    const theo = summary && Number.isFinite(Number(summary.average_capacity_theoretical_mAh))
+      ? Number(summary.average_capacity_theoretical_mAh) : null
+    const actual = summary && Number.isFinite(Number(summary.average_capacity_actual_mAh))
+      ? Number(summary.average_capacity_actual_mAh) : null
+    return {
+      ...b,
+      role_display: b.tape_role === 'cathode' ? 'К' : b.tape_role === 'anode' ? 'А' : '—',
+      shape_display: formatShapeDisplay(b),
+      status_display: batchStatus(b),
+      avg_cap_theoretical_mAh: theo,
+      avg_cap_actual_mAh: actual,
+    }
+  })
 })
 
 function formatShapeDisplay(b) {
@@ -119,10 +139,71 @@ async function loadAllBatches() {
   try {
     const { data } = await api.get('/api/electrodes/electrode-cut-batches')
     allBatches.value = data
+    // Clear the capacity cache so stale numbers from a previous tenant
+    // of the page (e.g. after a batch was edited on the form route)
+    // don't carry over. The background fetch below re-populates.
+    reportsByBatchId.value = {}
+    reportsLoading.value = {}
+    loadAllCapacities()
   } catch {
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить партии', life: 3000 })
   } finally {
     loading.value = false
+  }
+}
+
+// ── Capacity summary fetch (Dalia's 026efbf per-batch capacity_summary) ──
+// List endpoint is NOT enriched with capacity fields, so we fan out a
+// background fetch of `/report` per batch after the list loads. The
+// /report endpoint is a pure read (no side-effects — unlike /assembly
+// on batteries) but it runs several SQL joins, so we cap at 3 parallel
+// to keep the database happy on 100+ batch lists. Fresh semaphore per
+// page mount — no cross-component sharing.
+const reportsByBatchId = ref({})  // { [cutBatchId]: capacity_summary | null }
+const reportsLoading  = ref({})   // { [cutBatchId]: bool }
+
+const MAX_CONCURRENT_REPORT_FETCHES = 3
+let _reportInFlight = 0
+const _reportQueue = []
+
+async function loadBatchReport(cutBatchId) {
+  if (!cutBatchId) return
+  if (reportsLoading.value[cutBatchId]) return
+  if (_reportInFlight >= MAX_CONCURRENT_REPORT_FETCHES) {
+    await new Promise(resolve => _reportQueue.push(resolve))
+  }
+  // Post-acquire dedup (matches AssemblyPage pattern — prevents a racing
+  // concurrent call for the same ID from issuing a second /report fetch).
+  if (reportsLoading.value[cutBatchId]) {
+    const next = _reportQueue.shift()
+    if (next) next()
+    return
+  }
+  _reportInFlight++
+  reportsLoading.value[cutBatchId] = true
+  try {
+    const { data } = await api.get(`/api/electrodes/electrode-cut-batches/${cutBatchId}/report`)
+    reportsByBatchId.value[cutBatchId] = data?.capacity_summary || null
+  } catch (err) {
+    // Silent in the table cell — the user sees "—". Form-page variant
+    // of this data has full error classification; here we only log for
+    // local triage so a broken endpoint isn't completely invisible.
+    // eslint-disable-next-line no-console
+    console.debug('capacity /report failed for batch', cutBatchId, err?.response?.status || err?.message)
+    reportsByBatchId.value[cutBatchId] = null
+  } finally {
+    reportsLoading.value[cutBatchId] = false
+    _reportInFlight--
+    const next = _reportQueue.shift()
+    if (next) next()
+  }
+}
+
+function loadAllCapacities() {
+  for (const b of allBatches.value) {
+    if (reportsByBatchId.value[b.cut_batch_id] === undefined) {
+      loadBatchReport(b.cut_batch_id)
+    }
   }
 }
 
@@ -341,6 +422,18 @@ onUnmounted(() => clearTimeout(saveTimer))
       </template>
       <template #col-created_at="{ data }">{{ formatDate(data.created_at) }}</template>
       <template #col-electrode_count="{ data }">{{ Number(data.electrode_count) || 0 }}</template>
+      <template #col-avg_cap_theoretical_mAh="{ data }">
+        <span class="cap-cell">
+          <template v-if="reportsLoading[data.cut_batch_id]">…</template>
+          <template v-else>{{ fmtCapacity(data.avg_cap_theoretical_mAh) }}</template>
+        </span>
+      </template>
+      <template #col-avg_cap_actual_mAh="{ data }">
+        <span class="cap-cell">
+          <template v-if="reportsLoading[data.cut_batch_id]">…</template>
+          <template v-else>{{ fmtCapacity(data.avg_cap_actual_mAh) }}</template>
+        </span>
+      </template>
       <template #col-status_display="{ data }">
         <span :class="['status-badge', `status-badge--${data.status_display === 'готово' ? 'done' : data.status_display === 'сушится' ? 'drying' : 'work'}`]">
           {{ data.status_display }}
@@ -419,6 +512,15 @@ onUnmounted(() => clearTimeout(saveTimer))
   color: #003274;
 }
 .print-btn i { font-size: 13px; }
+
+/* Capacity cells — monospace so three decimals align vertically down
+   the column, matching Dalia's print-report typography. */
+.cap-cell {
+  font-family: monospace;
+  font-size: 12px;
+  color: #003274;
+  font-variant-numeric: tabular-nums;
+}
 
 .role-badge {
   display: inline-block;
