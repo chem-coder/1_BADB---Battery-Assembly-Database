@@ -9,6 +9,7 @@ import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
 import PageHeader from '@/components/PageHeader.vue'
+import { fileToBase64 } from '@/utils/fileToBase64'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
@@ -63,21 +64,37 @@ function openCreate() {
   dialogVisible.value = true
 }
 
-function onFileSelect(event) {
-  const files = event.target.files
+async function onFileSelect(event) {
+  // Snapshot the FileList synchronously so clearing the input below can't
+  // race with the async reads. `event.target.files` is live and gets
+  // replaced on the next user interaction.
+  const files = Array.from(event.target.files || [])
+  event.target.value = ''
+
+  // Awaited read per file — the previous FileReader + onload callback
+  // path could push entries AFTER the user clicked «Отправить», leading
+  // to a submit that silently dropped files that hadn't finished
+  // reading yet. Routing through the shared fileToBase64 util makes
+  // the read part of the same promise chain as the caller's await.
   for (const file of files) {
-    const reader = new FileReader()
-    reader.onload = () => {
+    try {
+      const base64 = await fileToBase64(file)
       pendingFiles.value.push({
         name: file.name,
         mime: file.type,
         size: file.size,
-        base64: reader.result.split(',')[1], // remove data:... prefix
+        base64,
+      })
+    } catch (err) {
+      console.error('[Feedback] file read failed', file.name, err)
+      toast.add({
+        severity: 'error',
+        summary: 'Не удалось прочитать файл',
+        detail: file.name,
+        life: 3500,
       })
     }
-    reader.readAsDataURL(file)
   }
-  event.target.value = '' // reset input
 }
 
 function removeFile(index) {

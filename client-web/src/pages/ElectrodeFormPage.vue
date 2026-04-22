@@ -400,7 +400,11 @@ async function saveBatch() {
       await api.post('/api/electrodes', {
         cut_batch_id: currentBatchId.value,
         electrode_mass_g: mass,
-        cup_number: e.cup_number || null,
+        // ?? null not || null: stand zero (cup_number === 0) is a
+        // legitimate input per L249 comment, same policy as the inline
+        // updateElectrode path above. The bulk-save path was missed
+        // when that fix landed.
+        cup_number: e.cup_number ?? null,
         comments: e.comments || null,
       })
     }

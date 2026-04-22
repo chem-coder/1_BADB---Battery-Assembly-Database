@@ -307,15 +307,17 @@ const deletingFileIds = ref({})
 function deleteKey(kind, fileId) { return `${kind}-${fileId}` }
 
 // Upload size budget — Express body limit is 10 MB (app.js:19) and
-// base64 inflates bytes by 4/3. Leave headroom for the JSON envelope
-// and multi-file entries array → 7 MB per file, max.
-const MAX_FILE_BYTES = 7 * 1024 * 1024
+// base64 inflates bytes by 4/3. A 7 MB raw file → 9.4 MB base64 +
+// JSON wrapper, which hugs the 10 MB wall with no margin; a long
+// filename or a multi-file entries[] array can push it over. 6 MB
+// leaves ~1.8 MB of headroom and matches BatteryElectrochemEditor.
+const MAX_FILE_BYTES = 6 * 1024 * 1024
 
 function validateUploadSize(files) {
   const oversized = Array.from(files).filter(f => f.size > MAX_FILE_BYTES)
   if (oversized.length === 0) return null
   const names = oversized.map(f => f.name).join(', ')
-  return `Слишком большие файлы (лимит 7 MB): ${names}`
+  return `Слишком большие файлы (лимит 6 МБ): ${names}`
 }
 
 function fileToBase64(file) {

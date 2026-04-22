@@ -5,6 +5,17 @@
 import { ref, reactive, computed } from 'vue'
 import api from '@/services/api'
 
+// Coerce an input value to a finite number or null. Preserves zero —
+// critical for physical measurements where 0 is a legitimate reading
+// (shorted cell OCV/ESR, zero spacers, zero-thickness spacer) rather
+// than "no data". `|| null` coerces 0 to null and drops the reading;
+// this helper is the CLAUDE.md pitfall #1 fix applied uniformly.
+function toNum(v) {
+  if (v === '' || v == null) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
 export function useBatteryState({ batteryId }) {
   const currentBatchId = ref(batteryId)
   const loading = ref(false)
@@ -269,14 +280,18 @@ export function useBatteryState({ batteryId }) {
             cyl_notes: c.cyl_notes || null,
           })
         } else {
-          // Coin (default) config
+          // Coin (default) config. Numeric spacer fields go through toNum
+          // so zero (no spacer / zero-thickness spacer — legitimate for
+          // some half-cell recipes) is preserved instead of dropped by
+          // `|| null`. Enum/text fields keep `|| null` — empty string is
+          // not a meaningful "zero" for them.
           await api.patch(`/api/batteries/battery_coin_config/${id}`, {
             coin_cell_mode: c.coin_cell_mode || null,
             coin_size_code: c.coin_size_code || null,
             half_cell_type: c.half_cell_type || null,
             coin_layout: c.coin_layout || null,
-            spacer_thickness_mm: c.spacer_thickness_mm || null,
-            spacer_count: c.spacer_count || null,
+            spacer_thickness_mm: toNum(c.spacer_thickness_mm),
+            spacer_count: toNum(c.spacer_count),
             spacer_notes: c.spacer_notes || null,
             li_foil_notes: c.li_foil_notes || null,
           })
@@ -313,14 +328,9 @@ export function useBatteryState({ batteryId }) {
       } else if (code === 'qc') {
         // QC → dedicated battery_qc table. UPSERT via POST (ON CONFLICT
         // battery_id) is idempotent and safer than PATCH which 404s when
-        // no row exists yet. Empty string maps to null; zero is preserved
-        // as 0 (a shorted cell can legitimately read 0 V / 0 mΩ). NaN
-        // from a garbage input also maps to null via isFinite check.
-        const toNum = (v) => {
-          if (v === '' || v == null) return null
-          const n = Number(v)
-          return Number.isFinite(n) ? n : null
-        }
+        // no row exists yet. `toNum` (module-level, above) preserves
+        // legitimate zeros (shorted cell reads 0 V / 0 mΩ) while
+        // mapping empty strings and non-numeric input to null.
         await api.post('/api/batteries/battery_qc', {
           battery_id: id,
           ocv_v: toNum(steps.qc.ocv_v),

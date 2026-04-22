@@ -19,7 +19,7 @@ import { BATTERY_STAGES } from '@/config/batteryStages'
 import { useBatteryState } from '@/composables/useBatteryState'
 import { useBackendCache } from '@/composables/useBackendCache'
 import { errorMessageRu } from '@/utils/errorClassifier'
-import { capacityIncompleteHint } from '@/utils/formatCapacity'
+import { fmtCapacity, capacityIncompleteHint } from '@/utils/formatCapacity'
 
 const router = useRouter()
 const route = useRoute()
@@ -211,14 +211,9 @@ watch(() => [...constructorIds.value], (ids, oldIds) => {
   }
 })
 
-function fmtCap(v) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
-  // 3 decimals — matches Dalia's formatCapacity in battery-print.js,
-  // so the same battery shows identical numbers in the inline panel
-  // and the printed report.
-  return `${n.toFixed(3)} мАч`
-}
+// Capacity values use the shared `fmtCapacity` from utils (same 3-decimal
+// "X.XXX мАч" format as Dalia's print-report — single source of truth).
+// Only `fmtRatio` stays local — it's dimensionless and not in the util.
 function fmtRatio(v) {
   const n = Number(v)
   if (!Number.isFinite(n)) return '—'
@@ -387,9 +382,9 @@ onUnmounted(() => clearTimeout(saveTimer))
             <div class="capacity-cell">
               <div class="capacity-label">Катод ({{ capacity.cache.value[id].cathode_count }} шт.)</div>
               <div class="capacity-value">
-                <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].cathode_capacity_theoretical_mAh) }}</strong></div>
+                <div>теор.: <strong>{{ fmtCapacity(capacity.cache.value[id].cathode_capacity_theoretical_mAh) }}</strong></div>
                 <div class="capacity-actual-row">
-                  факт.: <strong>{{ fmtCap(capacity.cache.value[id].cathode_capacity_actual_mAh) }}</strong>
+                  факт.: <strong>{{ fmtCapacity(capacity.cache.value[id].cathode_capacity_actual_mAh) }}</strong>
                   <i
                     v-if="capacity.cache.value[id].cathode_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-cathode')"
                     class="pi pi-question-circle capacity-hint-icon"
@@ -401,9 +396,9 @@ onUnmounted(() => clearTimeout(saveTimer))
             <div class="capacity-cell">
               <div class="capacity-label">Анод ({{ capacity.cache.value[id].anode_count }} шт.)</div>
               <div class="capacity-value">
-                <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].anode_capacity_theoretical_mAh) }}</strong></div>
+                <div>теор.: <strong>{{ fmtCapacity(capacity.cache.value[id].anode_capacity_theoretical_mAh) }}</strong></div>
                 <div class="capacity-actual-row">
-                  факт.: <strong>{{ fmtCap(capacity.cache.value[id].anode_capacity_actual_mAh) }}</strong>
+                  факт.: <strong>{{ fmtCapacity(capacity.cache.value[id].anode_capacity_actual_mAh) }}</strong>
                   <i
                     v-if="capacity.cache.value[id].anode_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-anode')"
                     class="pi pi-question-circle capacity-hint-icon"
@@ -415,9 +410,9 @@ onUnmounted(() => clearTimeout(saveTimer))
             <div class="capacity-cell capacity-cell--primary">
               <div class="capacity-label" title="Ограничивающая ёмкость ячейки — min(катод, анод)">Ёмкость ячейки</div>
               <div class="capacity-value">
-                <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].limiting_capacity_theoretical_mAh) }}</strong></div>
+                <div>теор.: <strong>{{ fmtCapacity(capacity.cache.value[id].limiting_capacity_theoretical_mAh) }}</strong></div>
                 <div class="capacity-actual-row">
-                  факт.: <strong>{{ fmtCap(capacity.cache.value[id].limiting_capacity_actual_mAh) }}</strong>
+                  факт.: <strong>{{ fmtCapacity(capacity.cache.value[id].limiting_capacity_actual_mAh) }}</strong>
                   <i
                     v-if="capacity.cache.value[id].limiting_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
                     class="pi pi-question-circle capacity-hint-icon"
