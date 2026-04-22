@@ -873,7 +873,11 @@ onMounted(async () => {
                     <div class="capacity-label">Статус расчёта фактич. значений</div>
                     <div class="capacity-value">
                       <strong
-                        :class="capacitySummary.actual_fraction_status === 'complete' ? 'status-complete' : 'status-incomplete'"
+                        :class="{
+                          'status-complete':    capacitySummary.actual_fraction_status === 'complete',
+                          'status-incomplete':  capacitySummary.actual_fraction_status === 'incomplete',
+                          'status-unavailable': capacitySummary.actual_fraction_status === 'unavailable',
+                        }"
                         :tabindex="capacitySummary.actual_fraction_status === 'complete' ? -1 : 0"
                         v-tooltip.top="capacitySummary.actual_fraction_status === 'complete'
                           ? 'Все массы рецепта и фольги измерены — реальные значения доступны'
@@ -1044,8 +1048,13 @@ label { font-weight: 500; font-size: 0.9rem; margin-top: 0.3rem; }
   color: #6B7280;
   font-weight: 400;
 }
-.status-complete   { color: #1a8a64; }
-.status-incomplete { color: #9a7030; cursor: help; }
+.status-complete    { color: #1a8a64; }
+.status-incomplete  { color: #9a7030; cursor: help; }
+/* 'unavailable' — neutral "no data entered yet" vs 'incomplete's "partially
+   filled" warning. Muted primary-navy at 0.45 opacity reads as informational
+   rather than warning-grade. Tooltip + fmtActualFractionStatus('unavailable')
+   = "—" still distinguishes the case; this CSS split lines up the visual. */
+.status-unavailable { color: rgba(0, 50, 116, 0.45); cursor: help; }
 .capacity-actual-row {
   display: inline-flex;
   align-items: center;

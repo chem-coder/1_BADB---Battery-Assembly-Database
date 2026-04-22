@@ -8,7 +8,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
-import { toastApiError } from '@/utils/errorClassifier'
+import { toastApiError, classifyAxiosError, errorMessageRu } from '@/utils/errorClassifier'
 import PageHeader from '@/components/PageHeader.vue'
 import CrudTable from '@/components/CrudTable.vue'
 import Button from 'primevue/button'
@@ -765,7 +765,14 @@ async function doUpload() {
       f.duplicate = !!data.duplicate
     } catch (err) {
       f.state = 'error'
-      f.error = err.response?.data?.error || 'Не удалось загрузить файл'
+      // Per-file inline error (NOT a toast — shown next to the file row in
+      // the upload queue). Still routes through the classifier so auth /
+      // network / server states get a specific Russian message instead of
+      // the bare "Не удалось загрузить файл" fallback. Caught-but-not-
+      // toasted twin of `toastApiError`.
+      f.error = err?.response?.data?.error
+             || errorMessageRu(classifyAxiosError(err))
+             || 'Не удалось загрузить файл'
     }
   }
   uploading.value = false
