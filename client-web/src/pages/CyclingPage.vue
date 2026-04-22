@@ -15,6 +15,7 @@ import Dialog from 'primevue/dialog'
 import Select from 'primevue/select'
 import CyclingStylePopover from '@/components/CyclingStylePopover.vue'
 import { useCyclingStyles, CHART_LABELS } from '@/composables/useCyclingStyles'
+import { useBackendCache } from '@/composables/useBackendCache'
 
 const CyclingCharts = defineAsyncComponent(() => import('@/components/CyclingCharts.vue'))
 
@@ -218,54 +219,26 @@ function electrodeMassHintMg(session) {
 // when electrodes come from different batches with different foil
 // thicknesses (common in half-cells with custom cathode).
 //
-// Cache `batchReportsCache` is populated lazily by `loadBatchReports`
-// after loadData lands. While a batch's summary is still in flight, the
-// hint falls back to an honest "масса фольги неизвестна" message rather
-// than the misleading heuristic.
-const batchReportsCache = ref({})
-const batchReportsLoading = ref({})
-const MAX_CONCURRENT_BATCH_FETCHES = 3
-let _batchInFlight = 0
-const _batchQueue = []
-
-async function loadBatchReport(cutBatchId) {
-  if (!Number.isInteger(cutBatchId)) return
-  if (batchReportsCache.value[cutBatchId] !== undefined) return
-  if (batchReportsLoading.value[cutBatchId]) return
-  if (_batchInFlight >= MAX_CONCURRENT_BATCH_FETCHES) {
-    await new Promise(resolve => _batchQueue.push(resolve))
-  }
-  if (batchReportsLoading.value[cutBatchId]) {
-    const next = _batchQueue.shift()
-    if (next) next()
-    return
-  }
-  _batchInFlight++
-  batchReportsLoading.value[cutBatchId] = true
-  try {
+// Cache migrated from inline fetch/semaphore (~60 lines) to
+// useBackendCache (Phase 0.3d). Behaviour preserved; race-guard
+// against invalidate-during-fetch comes free with the composable.
+// `null` cut_batch_ids are filtered at the call site below — the
+// backend 400s on a null id parameter.
+const batchReports = useBackendCache({
+  fetchFn: async (cutBatchId) => {
     const { data } = await api.get(`/api/electrodes/electrode-cut-batches/${cutBatchId}/report`)
-    batchReportsCache.value[cutBatchId] = data?.capacity_summary || null
-  } catch (err) {
-    // Silent cell fallback — tooltip shows "неизвестна" text. Keep a
-    // console.debug trail so a broken endpoint isn't totally invisible.
-    // eslint-disable-next-line no-console
-    console.debug('cut-batch /report failed', cutBatchId, err?.response?.status || err?.message)
-    batchReportsCache.value[cutBatchId] = null
-  } finally {
-    batchReportsLoading.value[cutBatchId] = false
-    _batchInFlight--
-    const next = _batchQueue.shift()
-    if (next) next()
-  }
-}
+    return data?.capacity_summary || null
+  },
+  maxConcurrent: 3,
+})
 
-// Fire lazily for every unique cut_batch_id referenced by current sessions.
-// `null` cut_batch_ids are filtered out — the backend route would 400 on
-// them. Realistic load: on a 50-session page with ~3 unique batches per
-// session, ~150 parallel-capped fetches at ~200-400 ms each → 10-15 s
-// progressive fill in the background. Tooltip is reactive: formatElectrode-
-// MassHint reads batchReportsCache.value inside its body, so when cache
-// updates, Vue re-renders bindings that use it.
+// Fire lazily for every unique cut_batch_id referenced by current
+// sessions. Realistic load: on a 50-session page with ~3 unique
+// batches per session, ~150 parallel-capped fetches at ~200–400 ms
+// each → 10–15 s progressive fill in the background. Tooltip is
+// reactive: formatElectrodeMassHint reads batchReports.cache.value
+// inside its body, so when the cache updates Vue re-renders bindings
+// that consume it.
 function loadBatchReportsForCurrentSessions() {
   const ids = new Set()
   for (const s of sessions.value) {
@@ -274,7 +247,7 @@ function loadBatchReportsForCurrentSessions() {
       if (Number.isInteger(e?.cut_batch_id)) ids.add(e.cut_batch_id)
     }
   }
-  for (const id of ids) loadBatchReport(id)
+  for (const id of ids) batchReports.load(id)
 }
 
 function formatElectrodeMassHint(session) {
@@ -296,7 +269,7 @@ function formatElectrodeMassHint(session) {
   let allFoilKnown = true
   for (const e of rel) {
     const cbid = e?.cut_batch_id
-    const summary = Number.isInteger(cbid) ? batchReportsCache.value[cbid] : null
+    const summary = Number.isInteger(cbid) ? batchReports.cache.value[cbid] : null
     const avgFoil = summary && Number.isFinite(Number(summary.average_foil_mass_g))
       ? Number(summary.average_foil_mass_g) : null
     if (avgFoil == null) { allFoilKnown = false; break }

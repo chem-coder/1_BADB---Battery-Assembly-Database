@@ -16,6 +16,8 @@ import TapeConstructor from '@/components/TapeConstructor.vue'
 import Checkbox from 'primevue/checkbox'
 import { BATTERY_STAGES } from '@/config/batteryStages'
 import { useBatteryState } from '@/composables/useBatteryState'
+import { useBackendCache } from '@/composables/useBackendCache'
+import { errorMessageRu } from '@/utils/errorClassifier'
 
 const router = useRouter()
 const route = useRoute()
@@ -165,71 +167,28 @@ function openBatteryPrint(batteryId) {
 
 // ── Capacity summary (Dalia's commit 026efbf) ─────────────────────
 // Fetched lazily via /api/batteries/:id/assembly when a battery is in
-// the constructor. That endpoint is a heavy read (9 subqueries + a
-// side-effect write to batteries.status inside ensureBatteryAssembledStatus)
-// so we:
-//   1. only load summaries for batteries currently in constructorIds;
-//   2. cap concurrency at 3 parallel requests (prevents "toggle all"
-//      fanning out to 50+ simultaneous /assembly calls);
-//   3. cache by batteryId — re-open is a no-op unless the cache is
-//      explicitly invalidated (toggle-close clears the entry so the
-//      next toggle-in always re-fetches, giving free retry on transient
-//      errors at no cost to happy-path traffic).
-// A lighter server-side /capacity_summary endpoint would make points
-// 1-2 unnecessary, but that's Dalia's backend scope.
-const capacitySummaries = ref({})          // { [id]: capacity_summary | null }
-const capacitySummaryErrors = ref({})       // { [id]: 'auth'|'server'|'empty'|null }
-const capacitySummariesLoading = ref({})   // { [id]: bool }
-
-const MAX_CONCURRENT_CAPACITY_FETCHES = 3
-let _capacityInFlight = 0
-const _capacityQueue = []
-
-async function loadCapacitySummary(batteryId) {
-  if (!batteryId) return
-  if (capacitySummariesLoading.value[batteryId]) return
-  // Throttle — wait our turn if 3 are already in flight.
-  if (_capacityInFlight >= MAX_CONCURRENT_CAPACITY_FETCHES) {
-    await new Promise(resolve => _capacityQueue.push(resolve))
-  }
-  // Re-check dedup after acquiring the slot: during our queue wait a
-  // concurrent caller for the same ID may have raced past the top guard
-  // and started its own fetch. Without this second check, we'd issue a
-  // duplicate /assembly call — harmless for correctness but wasteful.
-  if (capacitySummariesLoading.value[batteryId]) {
-    const next = _capacityQueue.shift()
-    if (next) next()
-    return
-  }
-  _capacityInFlight++
-  capacitySummariesLoading.value[batteryId] = true
-  try {
+// the constructor. The /assembly endpoint is a heavy read — 9 subqueries
+// + a hidden side-effect UPDATE on batteries.status inside
+// ensureBatteryAssembledStatus. A lighter /capacity_summary endpoint
+// would make the concurrency cap unnecessary; that's tracked in the
+// Dalia-PR backlog (drawer_BADB_decisions_3de8b01e).
+//
+// Migrated from an inline fetch/cache/semaphore (commits 93d9471,
+// c24890e era) to useBackendCache (Phase 0.1). Behavior preserved:
+// load on toggle-in, invalidate on toggle-out for free retry on
+// transient failures. Error classification now flows through the
+// shared errorClassifier util.
+const capacity = useBackendCache({
+  fetchFn: async (batteryId) => {
     const { data } = await api.get(`/api/batteries/${batteryId}/assembly`)
-    const summary = data?.capacity_summary || null
-    capacitySummaries.value[batteryId] = summary
-    // Distinguish "no data yet" (draft battery) from "failed to load".
-    // empty = no cathode + no anode → UI shows "заполните массы" hint.
-    capacitySummaryErrors.value[batteryId] =
-      summary && (summary.cathode_count > 0 || summary.anode_count > 0)
-        ? null
-        : 'empty'
-  } catch (err) {
-    capacitySummaries.value[batteryId] = null
-    // Classify the error so the UI can show a meaningful message instead
-    // of collapsing 401 / 500 / network into the "draft battery" hint.
-    const status = err?.response?.status
-    capacitySummaryErrors.value[batteryId] =
-      status === 401 || status === 403 ? 'auth' :
-      status >= 500 ? 'server' :
-      status === 404 ? 'missing' :
-      'network'
-  } finally {
-    capacitySummariesLoading.value[batteryId] = false
-    _capacityInFlight--
-    const next = _capacityQueue.shift()
-    if (next) next()
-  }
-}
+    return data?.capacity_summary || null
+  },
+  // "Empty" = draft battery, no cathode + no anode. UI shows the "fill
+  // recipe masses" hint; classifier picks 'empty' over HTTP-error codes.
+  isEmpty: (summary) =>
+    !summary || (summary.cathode_count === 0 && summary.anode_count === 0),
+  maxConcurrent: 3,
+})
 
 // Re-load summaries when constructorIds changes (user opens/closes a
 // battery). Getter form `() => [...constructorIds.value]` is critical:
@@ -243,16 +202,10 @@ async function loadCapacitySummary(batteryId) {
 watch(() => [...constructorIds.value], (ids, oldIds) => {
   const now = new Set(ids)
   for (const old of (oldIds || [])) {
-    if (!now.has(old)) {
-      // Battery dropped out of the constructor — purge the cached
-      // summary + any error. Next toggle-in triggers a fresh fetch,
-      // giving free retry on transient failures.
-      delete capacitySummaries.value[old]
-      delete capacitySummaryErrors.value[old]
-    }
+    if (!now.has(old)) capacity.invalidate(old)
   }
   for (const id of ids) {
-    if (capacitySummaries.value[id] === undefined) loadCapacitySummary(id)
+    if (!capacity.isLoaded(id)) capacity.load(id)
   }
 })
 
@@ -270,15 +223,11 @@ function fmtRatio(v) {
   return n.toFixed(3)
 }
 
-// Friendly message per error state — lets the user distinguish an
-// actual server issue from a "draft battery needs more data" case.
+// Context 'capacity' is interpreted by errorMessageRu — 'empty' becomes
+// "заполните массы…", the other codes get generic auth/server/network
+// messages. One line vs the old 10-line inline function.
 function capacityErrorMessage(id) {
-  const e = capacitySummaryErrors.value[id]
-  if (e === 'empty' || e == null) return 'Нет данных для расчёта — заполните массы в рецептах лент и удельную ёмкость в карточке материала.'
-  if (e === 'auth')    return 'Требуется вход — обновите страницу и авторизуйтесь.'
-  if (e === 'missing') return 'Аккумулятор не найден.'
-  if (e === 'server')  return 'Ошибка сервера при расчёте. Попробуйте позже.'
-  return 'Не удалось загрузить — проверьте подключение.'
+  return errorMessageRu(capacity.errors.value[id], 'capacity')
 }
 
 // ── Delete flow ──
@@ -402,50 +351,50 @@ onUnmounted(() => clearTimeout(saveTimer))
       >
         <div class="capacity-head">
           <span class="capacity-title">Ёмкость · Аккумулятор #{{ id }}</span>
-          <span v-if="capacitySummariesLoading[id]" class="capacity-loading">
+          <span v-if="capacity.loading.value[id]" class="capacity-loading">
             <i class="pi pi-spin pi-spinner" style="font-size:11px"></i> расчёт…
           </span>
         </div>
 
-        <template v-if="capacitySummaries[id]">
+        <template v-if="capacity.cache.value[id]">
           <div class="capacity-grid">
             <div class="capacity-cell">
-              <div class="capacity-label">Катод ({{ capacitySummaries[id].cathode_count }} шт.)</div>
+              <div class="capacity-label">Катод ({{ capacity.cache.value[id].cathode_count }} шт.)</div>
               <div class="capacity-value">
-                <div>теор.: <strong>{{ fmtCap(capacitySummaries[id].cathode_capacity_theoretical_mAh) }}</strong></div>
-                <div>факт.: <strong>{{ fmtCap(capacitySummaries[id].cathode_capacity_actual_mAh) }}</strong></div>
+                <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].cathode_capacity_theoretical_mAh) }}</strong></div>
+                <div>факт.: <strong>{{ fmtCap(capacity.cache.value[id].cathode_capacity_actual_mAh) }}</strong></div>
               </div>
             </div>
             <div class="capacity-cell">
-              <div class="capacity-label">Анод ({{ capacitySummaries[id].anode_count }} шт.)</div>
+              <div class="capacity-label">Анод ({{ capacity.cache.value[id].anode_count }} шт.)</div>
               <div class="capacity-value">
-                <div>теор.: <strong>{{ fmtCap(capacitySummaries[id].anode_capacity_theoretical_mAh) }}</strong></div>
-                <div>факт.: <strong>{{ fmtCap(capacitySummaries[id].anode_capacity_actual_mAh) }}</strong></div>
+                <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].anode_capacity_theoretical_mAh) }}</strong></div>
+                <div>факт.: <strong>{{ fmtCap(capacity.cache.value[id].anode_capacity_actual_mAh) }}</strong></div>
               </div>
             </div>
             <div class="capacity-cell capacity-cell--primary">
               <div class="capacity-label" title="Ограничивающая ёмкость ячейки — min(катод, анод)">Ёмкость ячейки</div>
               <div class="capacity-value">
-                <div>теор.: <strong>{{ fmtCap(capacitySummaries[id].limiting_capacity_theoretical_mAh) }}</strong></div>
-                <div>факт.: <strong>{{ fmtCap(capacitySummaries[id].limiting_capacity_actual_mAh) }}</strong></div>
+                <div>теор.: <strong>{{ fmtCap(capacity.cache.value[id].limiting_capacity_theoretical_mAh) }}</strong></div>
+                <div>факт.: <strong>{{ fmtCap(capacity.cache.value[id].limiting_capacity_actual_mAh) }}</strong></div>
               </div>
             </div>
             <div class="capacity-cell" title="N/P ratio = Q_анод / Q_катод; обычно 1.05–1.2 для Li-ion">
               <div class="capacity-label">N/P соотношение</div>
               <div class="capacity-value">
-                <div>теор.: <strong>{{ fmtRatio(capacitySummaries[id].np_theoretical) }}</strong></div>
-                <div>факт.: <strong>{{ fmtRatio(capacitySummaries[id].np_actual) }}</strong></div>
+                <div>теор.: <strong>{{ fmtRatio(capacity.cache.value[id].np_theoretical) }}</strong></div>
+                <div>факт.: <strong>{{ fmtRatio(capacity.cache.value[id].np_actual) }}</strong></div>
               </div>
             </div>
           </div>
         </template>
-        <template v-else-if="!capacitySummariesLoading[id]">
+        <template v-else-if="!capacity.loading.value[id]">
           <div
             class="capacity-empty"
             :class="{
-              'capacity-empty--auth':    capacitySummaryErrors[id] === 'auth',
-              'capacity-empty--server':  capacitySummaryErrors[id] === 'server' || capacitySummaryErrors[id] === 'network',
-              'capacity-empty--missing': capacitySummaryErrors[id] === 'missing',
+              'capacity-empty--auth':    capacity.errors.value[id] === 'auth',
+              'capacity-empty--server':  capacity.errors.value[id] === 'server' || capacity.errors.value[id] === 'network',
+              'capacity-empty--missing': capacity.errors.value[id] === 'missing',
             }"
           >
             {{ capacityErrorMessage(id) }}

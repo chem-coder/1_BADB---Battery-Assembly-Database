@@ -54,7 +54,10 @@ export function useBackendCache({
   // (i.e. `invalidate(id)` wasn't called during the fetch). Prevents
   // stale responses from resurrecting a freshly-invalidated entry.
   // Stored in a Map (not a reactive ref) — it's internal bookkeeping
-  // and doesn't need to trigger rerenders.
+  // and doesn't need to trigger rerenders. Map grows monotonically
+  // across the component's lifetime (entries are only bumped, never
+  // deleted) — bounded by distinct ids seen during one mount. Freed
+  // when the composable instance itself is GC'd on unmount.
   const invalidationGen = new Map()
 
   let inFlight = 0

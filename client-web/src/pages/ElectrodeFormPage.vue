@@ -3,6 +3,16 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import api from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
+import { useBackendCache } from '@/composables/useBackendCache'
+import { errorMessageRu } from '@/utils/errorClassifier'
+import {
+  fmtCapacity,
+  fmtArealCapacity,
+  fmtMass,
+  fmtSpecCapacity,
+  fmtCoatingSidedness,
+  fmtActualFractionStatus,
+} from '@/utils/formatCapacity'
 import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import Panel from 'primevue/panel'
@@ -175,88 +185,46 @@ async function loadElectrodes(cutBatchId) {
 // re-fetch this summary so the displayed numbers stay in sync after any
 // write. Endpoint is a pure read (no side-effects, unlike /assembly on
 // batteries), so no concurrency cap needed on this page.
-const capacitySummary = ref(null)
-const capacitySummaryLoading = ref(false)
-// Error state enum: 'auth' | 'server' | 'missing' | 'network' | 'empty' | null.
-// 'empty' means the batch exists but has no capacity data yet (no active
-// material in recipe / no foil mass / actual_fraction_status !== 'complete').
-const capacitySummaryError = ref(null)
-
-async function loadCapacitySummary(cutBatchId) {
-  if (!cutBatchId) {
-    capacitySummary.value = null
-    capacitySummaryError.value = null
-    return
-  }
-  capacitySummaryLoading.value = true
-  try {
+// Capacity summary fetching — migrated from inline state/loader (~50
+// lines) to useBackendCache (Phase 0.3c). Single-batch on this page
+// (always the currently-edited batch), so only one cache entry is
+// ever populated, but the composable handles dedup/error classification/
+// race-guard uniformly with other pages.
+//
+// The isEmpty callback decides whether a 2xx response counts as "draft
+// batch with no numbers yet" vs "real capacity present". Matches the
+// user-visible distinction: empty → blue italic "fill masses" hint,
+// error → red "server broke" message.
+const capacity = useBackendCache({
+  fetchFn: async (cutBatchId) => {
     const { data } = await api.get(`/api/electrodes/electrode-cut-batches/${cutBatchId}/report`)
-    const summary = data?.capacity_summary || null
-    capacitySummary.value = summary
-    // "Empty" when backend returned no numbers — draft recipe / unmeasured
-    // foil. UX distinguishes this from real errors so the user sees the
-    // right hint ("fill recipe masses" vs "server error").
-    const hasAnyNumber =
-      summary && (
-        Number.isFinite(Number(summary.average_capacity_theoretical_mAh)) ||
-        Number.isFinite(Number(summary.average_capacity_actual_mAh))
-      )
-    capacitySummaryError.value = hasAnyNumber ? null : 'empty'
-  } catch (err) {
-    capacitySummary.value = null
-    const status = err?.response?.status
-    capacitySummaryError.value =
-      status === 401 || status === 403 ? 'auth' :
-      status === 404 ? 'missing' :
-      Number(status) >= 500 ? 'server' :
-      'network'
-  } finally {
-    capacitySummaryLoading.value = false
-  }
+    return data?.capacity_summary || null
+  },
+  isEmpty: (summary) => !summary || !(
+    Number.isFinite(Number(summary.average_capacity_theoretical_mAh)) ||
+    Number.isFinite(Number(summary.average_capacity_actual_mAh))
+  ),
+  maxConcurrent: 1, // single-batch page, no need for parallel slots
+})
+
+// Thin wrapper that reloads after every write mutation (saveBatch,
+// updateElectrode, deleteElectrode, scrapElectrode) — invalidate first,
+// then load for a guaranteed-fresh fetch. Also the call site for
+// restoreBatch on mount. Null cutBatchId is a no-op.
+async function loadCapacitySummary(cutBatchId) {
+  if (!cutBatchId) return
+  capacity.invalidate(cutBatchId)
+  await capacity.load(cutBatchId)
 }
+
+// Current-batch shortcuts for template bindings. `currentBatchId.value`
+// is reactive, so these re-evaluate when the batch identity changes.
+const capacitySummary        = computed(() => capacity.cache.value[currentBatchId.value])
+const capacitySummaryLoading = computed(() => !!capacity.loading.value[currentBatchId.value])
+const capacitySummaryError   = computed(() => capacity.errors.value[currentBatchId.value])
 
 function capacitySummaryMessage() {
-  const e = capacitySummaryError.value
-  if (e === 'empty' || e == null)
-    return 'Нет данных для расчёта — заполните массы в рецепте ленты и удельную ёмкость в карточке материала.'
-  if (e === 'auth')    return 'Требуется вход — обновите страницу и авторизуйтесь.'
-  if (e === 'missing') return 'Партия не найдена.'
-  if (e === 'server')  return 'Ошибка сервера при расчёте. Попробуйте позже.'
-  return 'Не удалось загрузить — проверьте подключение.'
-}
-
-// Formatting — match Dalia's formatCapacity (3 decimals) from
-// electrode-batch-print.js so the same batch reads identically in the
-// inline panel and in the printed report.
-function fmtCapacity(v) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
-  return `${n.toFixed(3)} мАч`
-}
-function fmtAreal(v) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
-  return `${n.toFixed(3)} мАч/см²`
-}
-function fmtMass(v) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
-  return `${n.toFixed(4)} г`
-}
-function fmtSidedness(v) {
-  if (v === 'one_sided') return '1-сторонняя'
-  if (v === 'two_sided') return '2-сторонняя'
-  return '—'
-}
-function fmtActualStatus(v) {
-  if (v === 'complete')   return 'полный'
-  if (v === 'incomplete') return 'неполный'
-  return '—'
-}
-function fmtSpecCap(v) {
-  const n = Number(v)
-  if (!Number.isFinite(n)) return '—'
-  return `${n.toFixed(2)} мАч/г`
+  return errorMessageRu(capacitySummaryError.value, 'capacity')
 }
 
 function appendElectrodeRow() {
@@ -857,14 +825,14 @@ onMounted(async () => {
                         v-if="capacitySummary.specific_capacity_mAh_g != null"
                         class="capacity-sub"
                       >
-                        {{ fmtSpecCap(capacitySummary.specific_capacity_mAh_g) }}
+                        {{ fmtSpecCapacity(capacitySummary.specific_capacity_mAh_g) }}
                       </span>
                     </div>
                   </div>
                   <div class="capacity-cell">
                     <div class="capacity-label">Покрытие</div>
                     <div class="capacity-value">
-                      <strong>{{ fmtSidedness(capacitySummary.coating_sidedness) }}</strong>
+                      <strong>{{ fmtCoatingSidedness(capacitySummary.coating_sidedness) }}</strong>
                       <span class="capacity-sub">ср. масса фольги: {{ fmtMass(capacitySummary.average_foil_mass_g) }}</span>
                     </div>
                   </div>
@@ -878,8 +846,8 @@ onMounted(async () => {
                   <div class="capacity-cell" title="Поверхностная плотность ёмкости">
                     <div class="capacity-label">Поверхн. ёмкость</div>
                     <div class="capacity-value">
-                      <div>теор.: <strong>{{ fmtAreal(capacitySummary.areal_capacity_theoretical_mAh_cm2) }}</strong></div>
-                      <div>факт.: <strong>{{ fmtAreal(capacitySummary.areal_capacity_actual_mAh_cm2) }}</strong></div>
+                      <div>теор.: <strong>{{ fmtArealCapacity(capacitySummary.areal_capacity_theoretical_mAh_cm2) }}</strong></div>
+                      <div>факт.: <strong>{{ fmtArealCapacity(capacitySummary.areal_capacity_actual_mAh_cm2) }}</strong></div>
                     </div>
                   </div>
                   <div
@@ -891,7 +859,7 @@ onMounted(async () => {
                     <div class="capacity-label">Статус расчёта фактич. значений</div>
                     <div class="capacity-value">
                       <strong :class="capacitySummary.actual_fraction_status === 'complete' ? 'status-complete' : 'status-incomplete'">
-                        {{ fmtActualStatus(capacitySummary.actual_fraction_status) }}
+                        {{ fmtActualFractionStatus(capacitySummary.actual_fraction_status) }}
                       </strong>
                     </div>
                   </div>

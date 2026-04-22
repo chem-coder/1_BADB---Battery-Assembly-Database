@@ -9,6 +9,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
 import { fmtCapacity } from '@/utils/formatCapacity'
+import { useBackendCache } from '@/composables/useBackendCache'
 import Select from 'primevue/select'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
@@ -84,11 +85,12 @@ const tableData = computed(() => {
   if (selectedTapeId.value) items = items.filter(b => String(b.tape_id) === String(selectedTapeId.value))
 
   return items.map(b => {
-    // Pull capacity from the reactive reportsByBatchId cache. The
-    // `.value` dependency means this computed re-runs whenever a
-    // /report fetch resolves → rows fill in progressively without
-    // any per-cell refs. Null when fetch is in flight or returned null.
-    const summary = reportsByBatchId.value[b.cut_batch_id]
+    // Pull capacity from the shared useBackendCache. Reading
+    // `reports.cache.value` inside this computed registers the ref as
+    // a dependency — the computed re-runs whenever any /report fetch
+    // resolves and rows fill in progressively. Undefined when fetch
+    // is in flight; null when the response had no capacity numbers.
+    const summary = reports.cache.value[b.cut_batch_id]
     const theo = summary && Number.isFinite(Number(summary.average_capacity_theoretical_mAh))
       ? Number(summary.average_capacity_theoretical_mAh) : null
     const actual = summary && Number.isFinite(Number(summary.average_capacity_actual_mAh))
@@ -139,11 +141,10 @@ async function loadAllBatches() {
   try {
     const { data } = await api.get('/api/electrodes/electrode-cut-batches')
     allBatches.value = data
-    // Clear the capacity cache so stale numbers from a previous tenant
-    // of the page (e.g. after a batch was edited on the form route)
-    // don't carry over. The background fetch below re-populates.
-    reportsByBatchId.value = {}
-    reportsLoading.value = {}
+    // Invalidate every cached capacity summary so stale numbers from
+    // a previous visit to the page don't leak in. The background
+    // refetch below re-populates.
+    reports.invalidateAll()
     loadAllCapacities()
   } catch {
     toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить партии', life: 3000 })
@@ -153,57 +154,23 @@ async function loadAllBatches() {
 }
 
 // ── Capacity summary fetch (Dalia's 026efbf per-batch capacity_summary) ──
-// List endpoint is NOT enriched with capacity fields, so we fan out a
-// background fetch of `/report` per batch after the list loads. The
-// /report endpoint is a pure read (no side-effects — unlike /assembly
-// on batteries) but it runs several SQL joins, so we cap at 3 parallel
-// to keep the database happy on 100+ batch lists. Fresh semaphore per
-// page mount — no cross-component sharing.
-const reportsByBatchId = ref({})  // { [cutBatchId]: capacity_summary | null }
-const reportsLoading  = ref({})   // { [cutBatchId]: bool }
-
-const MAX_CONCURRENT_REPORT_FETCHES = 3
-let _reportInFlight = 0
-const _reportQueue = []
-
-async function loadBatchReport(cutBatchId) {
-  if (!cutBatchId) return
-  if (reportsLoading.value[cutBatchId]) return
-  if (_reportInFlight >= MAX_CONCURRENT_REPORT_FETCHES) {
-    await new Promise(resolve => _reportQueue.push(resolve))
-  }
-  // Post-acquire dedup (matches AssemblyPage pattern — prevents a racing
-  // concurrent call for the same ID from issuing a second /report fetch).
-  if (reportsLoading.value[cutBatchId]) {
-    const next = _reportQueue.shift()
-    if (next) next()
-    return
-  }
-  _reportInFlight++
-  reportsLoading.value[cutBatchId] = true
-  try {
+// The list endpoint is NOT enriched with capacity fields, so after the
+// batch list lands we fan out /report calls per-batch to pull
+// capacity_summary. /report is a pure read (no side-effects, unlike
+// /assembly on batteries), but it runs several SQL joins — a 100-batch
+// page would DOS the DB without throttling. useBackendCache provides
+// the semaphore + dedup + race-guard we used to write inline here.
+const reports = useBackendCache({
+  fetchFn: async (cutBatchId) => {
     const { data } = await api.get(`/api/electrodes/electrode-cut-batches/${cutBatchId}/report`)
-    reportsByBatchId.value[cutBatchId] = data?.capacity_summary || null
-  } catch (err) {
-    // Silent in the table cell — the user sees "—". Form-page variant
-    // of this data has full error classification; here we only log for
-    // local triage so a broken endpoint isn't completely invisible.
-    // eslint-disable-next-line no-console
-    console.debug('capacity /report failed for batch', cutBatchId, err?.response?.status || err?.message)
-    reportsByBatchId.value[cutBatchId] = null
-  } finally {
-    reportsLoading.value[cutBatchId] = false
-    _reportInFlight--
-    const next = _reportQueue.shift()
-    if (next) next()
-  }
-}
+    return data?.capacity_summary || null
+  },
+  maxConcurrent: 3,
+})
 
 function loadAllCapacities() {
   for (const b of allBatches.value) {
-    if (reportsByBatchId.value[b.cut_batch_id] === undefined) {
-      loadBatchReport(b.cut_batch_id)
-    }
+    if (!reports.isLoaded(b.cut_batch_id)) reports.load(b.cut_batch_id)
   }
 }
 
@@ -424,13 +391,13 @@ onUnmounted(() => clearTimeout(saveTimer))
       <template #col-electrode_count="{ data }">{{ Number(data.electrode_count) || 0 }}</template>
       <template #col-avg_cap_theoretical_mAh="{ data }">
         <span class="cap-cell">
-          <template v-if="reportsLoading[data.cut_batch_id]">…</template>
+          <template v-if="reports.loading.value[data.cut_batch_id]">…</template>
           <template v-else>{{ fmtCapacity(data.avg_cap_theoretical_mAh) }}</template>
         </span>
       </template>
       <template #col-avg_cap_actual_mAh="{ data }">
         <span class="cap-cell">
-          <template v-if="reportsLoading[data.cut_batch_id]">…</template>
+          <template v-if="reports.loading.value[data.cut_batch_id]">…</template>
           <template v-else>{{ fmtCapacity(data.avg_cap_actual_mAh) }}</template>
         </span>
       </template>
