@@ -39,6 +39,10 @@ const hasRecipe = computed(() => !!props.tapeState?.general?.tapeRecipeId)
 
 const statusMessage = computed(() => {
   if (!props.tapeState) return 'Выберите ленту в конструкторе для редактирования навесок'
+  // While restore() is in flight, currentRecipeLines may be empty even
+  // when a recipe is assigned — show a loading notice instead of the
+  // "empty recipe" one which would be misleading.
+  if (props.tapeState.loading?.value) return 'Загрузка данных ленты…'
   if (!hasTape.value) return 'Сохраните ленту, прежде чем редактировать навески'
   if (!hasRecipe.value) return 'Выберите рецепт в разделе «Общая информация»'
   if (lines.value.length === 0) return 'Рецепт не содержит материалов'
@@ -117,10 +121,15 @@ function unitFor(lineId) {
 }
 
 // ── Save ────────────────────────────────────────────────────────────
+// Snapshot tapeState at call-time so a tape swap during the in-flight
+// await can't retarget the POST to a different tape (e.g. user clicks
+// a different tab between blur and save). The captured `ts` closure
+// keeps the original tape's `saveActualLine` bound.
 async function saveLine(lineId) {
-  if (!props.tapeState?.saveActualLine) return
+  const ts = props.tapeState
+  if (!ts?.saveActualLine) return
   try {
-    await props.tapeState.saveActualLine(lineId)
+    await ts.saveActualLine(lineId)
   } catch (e) {
     console.error('[RecipeActualsEditor] saveActualLine failed', e)
     const code = classifyAxiosError(e)

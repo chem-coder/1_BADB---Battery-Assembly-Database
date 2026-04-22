@@ -35,7 +35,7 @@ const props = defineProps({
   entityType: { type: String, default: 'tape' },
 })
 
-const emit = defineEmits(['dirty', 'remove-tape'])
+const emit = defineEmits(['dirty', 'remove-tape', 'update:active-tape-id'])
 
 const toast = useToast()
 
@@ -73,6 +73,11 @@ const anyDirty = computed(() =>
 )
 
 watch(anyDirty, (val) => emit('dirty', val))
+
+// Forward active-tape changes so the parent can mount tape-specific
+// panels (e.g. RecipeActualsEditor) without reaching into this
+// component's internals.
+watch(activeTapeId, (val) => emit('update:active-tape-id', val), { immediate: true })
 
 // ── Watch selectedTapeIds ──
 watch(

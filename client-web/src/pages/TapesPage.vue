@@ -16,6 +16,7 @@ import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
 // StatusBadge removed — status column replaced by project/operator
 import TapeConstructor from '@/components/TapeConstructor.vue'
+import RecipeActualsEditor from '@/components/RecipeActualsEditor.vue'
 import Checkbox from 'primevue/checkbox'
 import { useExportTapes } from '@/composables/useExportTapes'
 // Button removed — undo/redo now in TapeConstructor
@@ -121,6 +122,17 @@ onUnmounted(() => clearTimeout(saveTimer))
 // ── Constructor: selected tapes ───────────────────────────────────────
 const constructorIds = ref([])
 const constructorDirty = ref(false)
+
+// Active tape in the constructor — forwarded via emit from TapeConstructor
+// so TapesPage can mount the per-tape RecipeActualsEditor without reaching
+// into the constructor's internals. Null when no tape is being edited.
+const activeTapeId = ref(null)
+const activeTapeState = computed(() => {
+  const tid = activeTapeId.value
+  if (tid == null) return null
+  const states = constructorRef.value?.tapeStates
+  return states?.[String(tid)] || null
+})
 
 function toggleConstructor(tapeId) {
   const idx = constructorIds.value.indexOf(tapeId)
@@ -296,7 +308,14 @@ function formatDate(dt) {
       :authStore="authStore"
       @dirty="constructorDirty = $event"
       @remove-tape="toggleConstructor"
+      @update:active-tape-id="activeTapeId = $event"
     />
+
+    <!-- ── Recipe actuals editor (for the active tape in the constructor) ── -->
+    <!-- Always rendered; the editor itself handles the "no tape selected"
+         state with an inline notice, so the user always sees where it would
+         appear rather than the section jumping in and out. -->
+    <RecipeActualsEditor :tapeState="activeTapeState" />
 
   </div>
 </template>
