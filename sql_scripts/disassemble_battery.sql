@@ -10,7 +10,8 @@ BEGIN;
 
 -- 1. Mark electrodes as available again
 UPDATE electrodes e
-SET status_code = 1  	-- available
+SET status_code = 1,      -- available
+    used_in_battery_id = NULL
 WHERE e.electrode_id IN (
   SELECT electrode_id
   FROM battery_electrodes
