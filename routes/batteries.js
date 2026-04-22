@@ -2512,6 +2512,54 @@ router.patch('/battery_electrochem/:battery_id', auth, async (req, res) => {
 
 });
 
+// Delete a single battery electrochem file (row + file on disk)
+//
+// Route shape matches /battery_electrochem/* sibling routes (POST/GET/PATCH
+// are keyed by battery_id; this one is keyed by the per-file primary key
+// battery_electrochem_id since a delete needs to target exactly one row).
+//
+// Disk cleanup is best-effort: if the DB row is removed successfully we
+// try to unlink the file under /uploads/electrochem/ but swallow ENOENT
+// and other filesystem errors — the row is the source of truth; a missing
+// file behind a deleted row is harmless, and the directory is app-owned
+// so no path-traversal concern beyond the file_link we stored ourselves.
+router.delete('/battery_electrochem/:electrochem_id', auth, async (req, res) => {
+  const id = Number(req.params.electrochem_id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный battery_electrochem_id' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      DELETE FROM battery_electrochem
+      WHERE battery_electrochem_id = $1
+      RETURNING battery_electrochem_id, file_link
+      `,
+      [id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({ error: 'Файл не найден' });
+    }
+
+    // Best-effort disk cleanup — stored as /uploads/electrochem/<name>,
+    // relative to the project root (see POST handler above).
+    const link = result.rows[0].file_link;
+    if (typeof link === 'string' && link.startsWith('/uploads/electrochem/')) {
+      const absolutePath = path.join(__dirname, '..', link);
+      await fs.unlink(absolutePath).catch(() => {
+        // File missing / permission — not fatal, DB row is gone.
+      });
+    }
+
+    res.json({ deleted: true, battery_electrochem_id: id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Ошибка удаления файла электрохимических испытаний' });
+  }
+});
+
 
 
 // ---------- LOAD THE FULL BATTERY RECORD ----------

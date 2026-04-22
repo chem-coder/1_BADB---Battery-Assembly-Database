@@ -31,7 +31,7 @@
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import { fileToBase64 } from '@/utils/fileToBase64'
-import { errorMessageRu } from '@/utils/errorClassifier'
+import { errorMessageRu, toastApiError } from '@/utils/errorClassifier'
 import api from '@/services/api'
 
 // Per-file client-side cap. Express JSON body limit is 10 MB (app.js:19)
@@ -66,6 +66,12 @@ const errorMsg = computed(() => {
 const staged = ref([])      // [{ file: File, notes: string }]
 const uploading = ref(false)
 
+// In-flight delete guard, keyed by battery_electrochem_id. Second click
+// on the same file is a no-op — prevents the "404 Not found" toast that
+// would fire when the 2nd DELETE hits a row already removed by the 1st.
+// Same pattern as MaterialsPage.deleteFile's deletingFileIds.
+const deletingIds = ref({})
+
 function onPick(e) {
   const picked = Array.from(e.target.files || [])
   for (const f of picked) {
@@ -86,6 +92,34 @@ function onPick(e) {
 
 function removeStaged(i) {
   staged.value.splice(i, 1)
+}
+
+// Delete an already-uploaded file. Mirrors MaterialsPage.deleteFile:
+// confirm prompt + in-flight guard + invalidate-then-reload the cache
+// on success. Toast on failure routes through toastApiError for the
+// standard Russian classifier message.
+async function deleteFile(f) {
+  const id = f.battery_electrochem_id
+  if (deletingIds.value[id]) return
+  if (!confirm(`Удалить файл «${f.file_name}»?`)) return
+  deletingIds.value[id] = true
+  try {
+    await api.delete(`/api/batteries/battery_electrochem/${id}`)
+    // Refresh via parent's cache — same invalidate-then-load pattern as
+    // onUpload() below so the list reflects the removed row.
+    props.cache.invalidate(props.batteryId)
+    await props.cache.load(props.batteryId)
+    toast.add({
+      severity: 'success',
+      summary: 'Файл удалён',
+      detail: f.file_name,
+      life: 2500,
+    })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось удалить файл', { life: 4000 })
+  } finally {
+    deletingIds.value[id] = false
+  }
 }
 
 async function onUpload() {
@@ -220,6 +254,15 @@ onBeforeUnmount(() => {
           <span class="ec-file-name">{{ f.file_name }}</span>
         </a>
         <span class="ec-uploaded-at">{{ formatDate(f.uploaded_at) }}</span>
+        <button
+          type="button"
+          class="ec-delete-btn"
+          :disabled="!!deletingIds[f.battery_electrochem_id]"
+          :title="`Удалить файл «${f.file_name}»`"
+          @click="deleteFile(f)"
+        >
+          <i :class="deletingIds[f.battery_electrochem_id] ? 'pi pi-spin pi-spinner' : 'pi pi-trash'"></i>
+        </button>
         <div v-if="f.electrochem_notes" class="ec-notes">{{ f.electrochem_notes }}</div>
       </div>
     </div>
@@ -338,7 +381,9 @@ onBeforeUnmount(() => {
 
 .ec-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  /* 3 cols: file-link (flex-takes-rest) | uploaded-at | 🗑 delete button.
+     Notes span all three via `grid-column: 1 / -1`. */
+  grid-template-columns: 1fr auto 28px;
   gap: 4px 12px;
   padding: 6px 8px;
   background: rgba(0, 50, 116, 0.02);
@@ -377,6 +422,33 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: rgba(0, 50, 116, 0.5);
   white-space: nowrap;
+}
+
+/* Trash button per uploaded file — mirrors MaterialsPage.file-del-btn
+   style. Muted red, subtle until hovered; spinner icon while the
+   DELETE is in flight (deletingIds[id] === true). */
+.ec-delete-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(200, 80, 70, 0.55);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transition: background 0.15s, color 0.15s;
+}
+.ec-delete-btn:hover:not(:disabled) {
+  background: rgba(200, 80, 70, 0.10);
+  color: rgba(200, 80, 70, 0.9);
+}
+.ec-delete-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .ec-notes {
