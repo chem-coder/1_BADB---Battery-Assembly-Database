@@ -167,6 +167,98 @@ async function loadElectrodes(cutBatchId) {
   electrodes.value = data
 }
 
+// ── Capacity summary (Dalia's 026efbf — per-batch capacity_summary) ──
+// Lives in the server's /report endpoint; we fetch lazily whenever the
+// current batch identity or its electrode data changes. Read-only —
+// all four mutations below (saveBatch / updateElectrode / deleteElectrode /
+// scrapElectrode) reload electrodes first (existing behaviour) and then
+// re-fetch this summary so the displayed numbers stay in sync after any
+// write. Endpoint is a pure read (no side-effects, unlike /assembly on
+// batteries), so no concurrency cap needed on this page.
+const capacitySummary = ref(null)
+const capacitySummaryLoading = ref(false)
+// Error state enum: 'auth' | 'server' | 'missing' | 'network' | 'empty' | null.
+// 'empty' means the batch exists but has no capacity data yet (no active
+// material in recipe / no foil mass / actual_fraction_status !== 'complete').
+const capacitySummaryError = ref(null)
+
+async function loadCapacitySummary(cutBatchId) {
+  if (!cutBatchId) {
+    capacitySummary.value = null
+    capacitySummaryError.value = null
+    return
+  }
+  capacitySummaryLoading.value = true
+  try {
+    const { data } = await api.get(`/api/electrodes/electrode-cut-batches/${cutBatchId}/report`)
+    const summary = data?.capacity_summary || null
+    capacitySummary.value = summary
+    // "Empty" when backend returned no numbers — draft recipe / unmeasured
+    // foil. UX distinguishes this from real errors so the user sees the
+    // right hint ("fill recipe masses" vs "server error").
+    const hasAnyNumber =
+      summary && (
+        Number.isFinite(Number(summary.average_capacity_theoretical_mAh)) ||
+        Number.isFinite(Number(summary.average_capacity_actual_mAh))
+      )
+    capacitySummaryError.value = hasAnyNumber ? null : 'empty'
+  } catch (err) {
+    capacitySummary.value = null
+    const status = err?.response?.status
+    capacitySummaryError.value =
+      status === 401 || status === 403 ? 'auth' :
+      status === 404 ? 'missing' :
+      Number(status) >= 500 ? 'server' :
+      'network'
+  } finally {
+    capacitySummaryLoading.value = false
+  }
+}
+
+function capacitySummaryMessage() {
+  const e = capacitySummaryError.value
+  if (e === 'empty' || e == null)
+    return 'Нет данных для расчёта — заполните массы в рецепте ленты и удельную ёмкость в карточке материала.'
+  if (e === 'auth')    return 'Требуется вход — обновите страницу и авторизуйтесь.'
+  if (e === 'missing') return 'Партия не найдена.'
+  if (e === 'server')  return 'Ошибка сервера при расчёте. Попробуйте позже.'
+  return 'Не удалось загрузить — проверьте подключение.'
+}
+
+// Formatting — match Dalia's formatCapacity (3 decimals) from
+// electrode-batch-print.js so the same batch reads identically in the
+// inline panel and in the printed report.
+function fmtCapacity(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return `${n.toFixed(3)} мАч`
+}
+function fmtAreal(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return `${n.toFixed(3)} мАч/см²`
+}
+function fmtMass(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return `${n.toFixed(4)} г`
+}
+function fmtSidedness(v) {
+  if (v === 'one_sided') return '1-сторонняя'
+  if (v === 'two_sided') return '2-сторонняя'
+  return '—'
+}
+function fmtActualStatus(v) {
+  if (v === 'complete')   return 'полный'
+  if (v === 'incomplete') return 'неполный'
+  return '—'
+}
+function fmtSpecCap(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return `${n.toFixed(2)} мАч/г`
+}
+
 function appendElectrodeRow() {
   electrodes.value.push({
     _new: true,
@@ -190,6 +282,7 @@ async function updateElectrode(e, field, value) {
     // (mass=0 for calibration records, cup_number=0 for "stand zero").
     await api.put(`/api/electrodes/${e.electrode_id}`, { [field]: value ?? null })
     await loadElectrodes(currentBatchId.value)
+    await loadCapacitySummary(currentBatchId.value)
   } catch (err) {
     showStatus(err.response?.data?.error || 'Ошибка обновления электрода', true)
   }
@@ -201,6 +294,7 @@ async function deleteElectrode(e, index) {
   try {
     await api.delete(`/api/electrodes/${e.electrode_id}`)
     await loadElectrodes(currentBatchId.value)
+    await loadCapacitySummary(currentBatchId.value)
   } catch (err) {
     showStatus(err.response?.data?.error || 'Ошибка удаления', true)
   }
@@ -216,6 +310,7 @@ async function scrapElectrode(e) {
       used_in_battery_id: null,
     })
     await loadElectrodes(currentBatchId.value)
+    await loadCapacitySummary(currentBatchId.value)
   } catch (err) {
     showStatus(err.response?.data?.error || 'Ошибка списания', true)
   }
@@ -368,6 +463,7 @@ async function saveBatch() {
     hasChanges.value = false
     showStatus('Партия сохранена')
     await loadElectrodes(currentBatchId.value)
+    await loadCapacitySummary(currentBatchId.value)
   } catch (err) {
     showStatus(err.response?.data?.error || 'Ошибка сохранения', true)
   }
@@ -394,6 +490,7 @@ async function restoreBatch() {
       loadElectrodes(data.cut_batch_id),
       loadFoilMasses(data.cut_batch_id),
       loadDrying(data.cut_batch_id),
+      loadCapacitySummary(data.cut_batch_id),
     ])
   } catch {
     showStatus('Партия не найдена', true)
@@ -741,6 +838,78 @@ onMounted(async () => {
               </div>
             </Panel>
 
+            <!-- Capacity summary (Dalia's 026efbf, computed on the backend
+                 from recipe actuals + foil mass + material spec capacity).
+                 Lives in the /report endpoint → fetched lazily when the batch
+                 is loaded + after every write that could affect the numbers. -->
+            <Panel v-if="currentBatchId" header="Расчёт ёмкости" toggleable>
+              <div v-if="capacitySummaryLoading" class="capacity-loading">
+                <i class="pi pi-spin pi-spinner" style="font-size:12px"></i>
+                Расчёт…
+              </div>
+              <template v-else-if="capacitySummary && capacitySummaryError === null">
+                <div class="capacity-grid">
+                  <div class="capacity-cell">
+                    <div class="capacity-label">Активный материал</div>
+                    <div class="capacity-value">
+                      <strong>{{ capacitySummary.active_material_name || '—' }}</strong>
+                      <span
+                        v-if="capacitySummary.specific_capacity_mAh_g != null"
+                        class="capacity-sub"
+                      >
+                        {{ fmtSpecCap(capacitySummary.specific_capacity_mAh_g) }}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="capacity-cell">
+                    <div class="capacity-label">Покрытие</div>
+                    <div class="capacity-value">
+                      <strong>{{ fmtSidedness(capacitySummary.coating_sidedness) }}</strong>
+                      <span class="capacity-sub">ср. масса фольги: {{ fmtMass(capacitySummary.average_foil_mass_g) }}</span>
+                    </div>
+                  </div>
+                  <div class="capacity-cell capacity-cell--primary">
+                    <div class="capacity-label">Ср. ёмкость электрода</div>
+                    <div class="capacity-value">
+                      <div>теор.: <strong>{{ fmtCapacity(capacitySummary.average_capacity_theoretical_mAh) }}</strong></div>
+                      <div>факт.: <strong>{{ fmtCapacity(capacitySummary.average_capacity_actual_mAh) }}</strong></div>
+                    </div>
+                  </div>
+                  <div class="capacity-cell" title="Поверхностная плотность ёмкости">
+                    <div class="capacity-label">Поверхн. ёмкость</div>
+                    <div class="capacity-value">
+                      <div>теор.: <strong>{{ fmtAreal(capacitySummary.areal_capacity_theoretical_mAh_cm2) }}</strong></div>
+                      <div>факт.: <strong>{{ fmtAreal(capacitySummary.areal_capacity_actual_mAh_cm2) }}</strong></div>
+                    </div>
+                  </div>
+                  <div
+                    class="capacity-cell capacity-cell--wide"
+                    :title="capacitySummary.actual_fraction_status === 'complete'
+                      ? 'Все массы рецепта и фольги измерены — реальные значения доступны'
+                      : 'Часть масс не введена — поле «факт» недоступно'"
+                  >
+                    <div class="capacity-label">Статус расчёта фактич. значений</div>
+                    <div class="capacity-value">
+                      <strong :class="capacitySummary.actual_fraction_status === 'complete' ? 'status-complete' : 'status-incomplete'">
+                        {{ fmtActualStatus(capacitySummary.actual_fraction_status) }}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <div
+                v-else
+                class="capacity-empty"
+                :class="{
+                  'capacity-empty--auth':    capacitySummaryError === 'auth',
+                  'capacity-empty--server':  capacitySummaryError === 'server' || capacitySummaryError === 'network',
+                  'capacity-empty--missing': capacitySummaryError === 'missing',
+                }"
+              >
+                {{ capacitySummaryMessage() }}
+              </div>
+            </Panel>
+
             <div class="form-actions">
               <Button label="← Назад" severity="secondary" @click="activeStep = 'weighing'" />
               <Button label="Сохранить" icon="pi pi-save" @click="saveBatch" />
@@ -836,6 +1005,69 @@ label { font-weight: 500; font-size: 0.9rem; margin-top: 0.3rem; }
 
 .summary-section { margin-bottom: 1rem; }
 .summary-section p { margin: 0.15rem 0; font-size: 0.9rem; }
+
+/* Capacity summary — Panel body content (Dalia's 026efbf) */
+.capacity-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(0, 50, 116, 0.65);
+  font-size: 12px;
+}
+.capacity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+.capacity-cell {
+  padding: 0.5rem 0.7rem;
+  border: 0.5px solid rgba(0, 50, 116, 0.08);
+  border-radius: 6px;
+  background: rgba(0, 50, 116, 0.02);
+}
+.capacity-cell--primary {
+  background: rgba(82, 201, 166, 0.06);
+  border-color: rgba(82, 201, 166, 0.25);
+}
+.capacity-cell--wide { grid-column: 1 / -1; }
+.capacity-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B7280;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
+}
+.capacity-value {
+  font-size: 13px;
+  color: #003274;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+.capacity-value strong { font-weight: 600; }
+.capacity-sub {
+  display: block;
+  font-size: 11px;
+  color: #6B7280;
+  font-weight: 400;
+}
+.status-complete   { color: #1a8a64; }
+.status-incomplete { color: #9a7030; }
+.capacity-empty {
+  font-size: 12px;
+  color: rgba(0, 50, 116, 0.55);
+  padding: 0.5rem 0;
+  font-style: italic;
+}
+.capacity-empty--auth,
+.capacity-empty--server {
+  color: #c0392b;
+  font-style: normal;
+}
+.capacity-empty--missing {
+  color: #9a7030;
+  font-style: normal;
+}
 
 .auto-hint {
   font-size: 0.8rem;
