@@ -22,3 +22,6 @@ pg_dump workflow.txt
 sql_backups/0330-badb_app_v1_reconcile-before-mergeback.sql
 sql_backups/0330-badb_app_v1-current-before-reconcile-fix.sql.local/
 ql.local/
+CLAUDE.md
+TO_DIMA_CLAUDE_NOTES.md
+TO_DIMA_TAPES_STATE_STATUS.md

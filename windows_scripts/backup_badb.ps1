@@ -1,6 +1,6 @@
 param(
-  [string]$Database = "badb_app_v1",
-  [string]$DbUser = "postgres",
+  [string]$Database = "badb_v1",
+  [string]$DbUser = "Dalia",
   [string]$Host = "localhost",
   [int]$Port = 5432,
   [string]$BackupDir = "",
@@ -11,8 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($BackupDir)) {
-  $BackupDir = Join-Path $PSScriptRoot "..\sql_backups"
-}
+  $BackupDir = Join-Path $PSScriptRoot "..\sql_backups_lab"
 
 $resolvedBackupDir = [System.IO.Path]::GetFullPath($BackupDir)
 New-Item -ItemType Directory -Force -Path $resolvedBackupDir | Out-Null
