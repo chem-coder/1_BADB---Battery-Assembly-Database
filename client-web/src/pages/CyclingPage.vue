@@ -1359,6 +1359,78 @@ const batteryOptions = computed(() =>
         />
       </template>
     </Dialog>
+
+    <!-- Mass editor dialog — opened by clicking the disabled mAh/g
+         button when at least one active session lacks active_mass_mg.
+         The script logic (openMassEditor / saveMasses) was merged in
+         commit 6508738 but the template block was dropped on the way
+         in, so clicking the button was a silent no-op until now. -->
+    <Dialog
+      v-model:visible="showMassEditor"
+      header="Масса активного материала"
+      :modal="true"
+      style="width: 760px"
+    >
+      <div class="mass-editor">
+        <p class="mass-editor-hint">
+          Удельная ёмкость <strong>mAh/g</strong> и энергия нормированы на массу активного
+          материала. Введите значение в миллиграммах для каждой активной сессии. Пустые
+          строки будут пропущены при сохранении.
+        </p>
+        <table class="mass-table">
+          <thead>
+            <tr>
+              <th style="width:70px">Сессия</th>
+              <th>Аккумулятор</th>
+              <th>Файл</th>
+              <th style="width:160px">Масса, мг</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in massEditorRows" :key="row.session_id">
+              <td class="mass-cell-sid">#{{ row.session_id }}</td>
+              <td>{{ row.battery_id ? `Акк. №${row.battery_id}` : '—' }}</td>
+              <td class="mass-cell-file" :title="row.file_name">{{ row.file_name || '' }}</td>
+              <td>
+                <div class="mass-input-cell">
+                  <input
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    v-model.number="row.mass"
+                    placeholder="—"
+                    class="mass-input"
+                  />
+                  <button
+                    v-if="electrodeMassHintMg(sessions.find(s => s.session_id === row.session_id))"
+                    type="button"
+                    class="mass-hint-btn"
+                    :title="`Подставить сумму масс электродов: ${Number(electrodeMassHintMg(sessions.find(s => s.session_id === row.session_id))).toFixed(1)} мг (без учёта массы фольги)`"
+                    @click="row.mass = Number(Number(electrodeMassHintMg(sessions.find(s => s.session_id === row.session_id))).toFixed(3))"
+                  >
+                    <i class="pi pi-bolt"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p
+          v-if="massEditorRows.some(r => electrodeMassHintMg(sessions.find(s => s.session_id === r.session_id)))"
+          class="mass-footer-hint"
+        >
+          <i class="pi pi-info-circle"></i>
+          <span>
+            <strong><i class="pi pi-bolt" style="font-size:10px"></i></strong> — подставить суммарную массу электродов (без вычета фольги).
+            Точная оценка с учётом фольги показана в подсказке колонки «Масса активного материала» основной таблицы.
+          </span>
+        </p>
+      </div>
+      <template #footer>
+        <Button label="Отмена" severity="secondary" text @click="showMassEditor = false" />
+        <Button label="Сохранить" icon="pi pi-check" @click="saveMasses" />
+      </template>
+    </Dialog>
   </div>
 </template>
 
@@ -1393,6 +1465,115 @@ const batteryOptions = computed(() =>
 .electrode-mass-hint--empty {
   color: rgba(0, 50, 116, 0.35);
   cursor: default;
+}
+
+/* ── Mass editor dialog ─────────────────────────────────────────── */
+.mass-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mass-editor-hint {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(0, 50, 116, 0.65);
+  line-height: 1.45;
+}
+.mass-editor-hint strong {
+  color: #003274;
+}
+.mass-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.mass-table thead th {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.12);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: rgba(0, 50, 116, 0.55);
+}
+.mass-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(0, 50, 116, 0.05);
+  vertical-align: middle;
+}
+.mass-cell-sid {
+  color: rgba(0, 50, 116, 0.6);
+  font-family: monospace;
+  font-size: 12px;
+}
+.mass-cell-file {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(0, 50, 116, 0.7);
+}
+.mass-input-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mass-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 50, 116, 0.20);
+  border-radius: 6px;
+  background: white;
+  color: #003274;
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.mass-input:focus {
+  outline: none;
+  border-color: rgba(0, 50, 116, 0.5);
+  background: rgba(0, 50, 116, 0.02);
+}
+.mass-hint-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(212, 164, 65, 0.35);
+  border-radius: 5px;
+  background: rgba(212, 164, 65, 0.10);
+  color: #b58b2c;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.mass-hint-btn:hover {
+  background: rgba(212, 164, 65, 0.22);
+  border-color: rgba(212, 164, 65, 0.55);
+}
+.mass-hint-btn .pi {
+  font-size: 13px;
+}
+.mass-footer-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(0, 50, 116, 0.55);
+  margin: 0;
+  padding-top: 2px;
+  border-top: 1px dashed rgba(0, 50, 116, 0.08);
+}
+.mass-footer-hint > .pi {
+  color: rgba(0, 50, 116, 0.35);
+  font-size: 13px;
+  margin-top: 2px;
+  flex-shrink: 0;
 }
 
 /* ── Active toggle (colored dot in table column) ── */
