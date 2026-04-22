@@ -370,6 +370,48 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
     }
   }
 
+  // ── Save a single actual line (per-row auto-save on blur) ──
+  // XOR clearing: always send BOTH actual_mass_g and actual_volume_ml —
+  // one of them null — so the backend overwrites the inactive column
+  // instead of leaving a stale value. The backend's UPSERT only preserves
+  // existing values when all three (measure_mode, mass, volume) are NULL,
+  // so an explicit `measure_mode` + one-NULL value triggers an overwrite.
+  async function saveActualLine(lineId) {
+    if (!currentTapeId.value) return
+    if (lineId == null) return
+    const actual = slurryActuals[lineId] || { mode: 'mass', value: '' }
+    const mode = actual.mode === 'volume' ? 'volume' : 'mass'
+    const instanceId = selectedInstanceByLineId[lineId]
+    const numeric = Number(actual.value)
+    const hasValue = Number.isFinite(numeric) && numeric > 0
+
+    // Nothing to persist — user tabbed through an untouched row. Skip
+    // the POST to avoid spamming the DB with all-null rows on mount.
+    // NB: when ANY of instance/value is present we still POST, because
+    // even a bare instance assignment (with no mass/volume yet) is a
+    // meaningful state to record.
+    if (!instanceId && !hasValue) return
+
+    const payload = {
+      recipe_line_id: lineId,
+      material_instance_id: instanceId ? Number(instanceId) : null,
+      measure_mode: mode,
+      actual_mass_g: mode === 'mass' && hasValue ? numeric : null,
+      actual_volume_ml: mode === 'volume' && hasValue ? numeric : null,
+    }
+
+    await api.post(`/api/tapes/${currentTapeId.value}/actuals`, payload)
+    setDirty('recipe_materials', false)
+  }
+
+  // ── Drop cached instances for a specific line (e.g. when material_id changes) ──
+  // Exposed for future recipe-editor use; not called by the actuals editor itself
+  // (the actuals editor never mutates material_id).
+  function invalidateInstancesForLine(lineId) {
+    if (lineId == null) return
+    delete instancesByLineId[lineId]
+  }
+
   // ── Save drying-type step ──
   async function saveDryingStep(code) {
     if (!currentTapeId.value) throw new Error('Сначала создайте ленту')
@@ -716,6 +758,8 @@ export function useTapeState({ tapeId = null, refs = {}, authStore = null } = {}
     fetchInstances,
     fetchComponents,
     loadInstancesForLine,
+    saveActualLine,
+    invalidateInstancesForLine,
 
     // Cleanup (call from onUnmounted)
     cleanup() {
