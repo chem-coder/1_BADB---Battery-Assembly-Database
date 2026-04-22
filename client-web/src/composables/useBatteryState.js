@@ -71,7 +71,6 @@ export function useBatteryState({ batteryId }) {
       ocv_v: '',
       esr_mohm: '',
       qc_notes: '',
-      electrochem_notes: '',
     },
   })
 
@@ -312,9 +311,21 @@ export function useBatteryState({ batteryId }) {
           coin_layout: a.separator_layout || null,
         })
       } else if (code === 'qc') {
-        // QC data saved via battery header
-        await api.patch(`/api/batteries/${id}`, {
-          battery_notes: `OCV: ${steps.qc.ocv_v || '—'} В, ESR: ${steps.qc.esr_mohm || '—'} мОм. ${steps.qc.qc_notes || ''} ${steps.qc.electrochem_notes || ''}`.trim(),
+        // QC → dedicated battery_qc table. UPSERT via POST (ON CONFLICT
+        // battery_id) is idempotent and safer than PATCH which 404s when
+        // no row exists yet. Empty string maps to null; zero is preserved
+        // as 0 (a shorted cell can legitimately read 0 V / 0 mΩ). NaN
+        // from a garbage input also maps to null via isFinite check.
+        const toNum = (v) => {
+          if (v === '' || v == null) return null
+          const n = Number(v)
+          return Number.isFinite(n) ? n : null
+        }
+        await api.post('/api/batteries/battery_qc', {
+          battery_id: id,
+          ocv_v: toNum(steps.qc.ocv_v),
+          esr_mohm: toNum(steps.qc.esr_mohm),
+          qc_notes: steps.qc.qc_notes || null,
         })
       }
 
@@ -418,6 +429,17 @@ export function useBatteryState({ batteryId }) {
           steps.electrolyte.electrolyte_id = el.electrolyte_id ?? ''
           steps.electrolyte.electrolyte_total_ul = el.electrolyte_total_ul ?? ''
           steps.electrolyte.electrolyte_notes = el.electrolyte_notes || ''
+        }
+      } catch {}
+
+      // Load QC (dedicated battery_qc table). GET returns null when no
+      // row exists — leave steps.qc defaults in that case.
+      try {
+        const { data: qc } = await api.get(`/api/batteries/battery_qc/${id}`)
+        if (qc) {
+          steps.qc.ocv_v = qc.ocv_v ?? ''
+          steps.qc.esr_mohm = qc.esr_mohm ?? ''
+          steps.qc.qc_notes = qc.qc_notes || ''
         }
       } catch {}
 
