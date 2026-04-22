@@ -18,7 +18,7 @@ import Checkbox from 'primevue/checkbox'
 import { BATTERY_STAGES } from '@/config/batteryStages'
 import { useBatteryState } from '@/composables/useBatteryState'
 import { useBackendCache } from '@/composables/useBackendCache'
-import { errorMessageRu } from '@/utils/errorClassifier'
+import { errorMessageRu, toastApiError } from '@/utils/errorClassifier'
 import { fmtCapacity, capacityIncompleteHint } from '@/utils/formatCapacity'
 
 const router = useRouter()
@@ -102,8 +102,8 @@ async function loadBatteries() {
   try {
     const { data } = await api.get('/api/batteries')
     batteries.value = data
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить аккумуляторы', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось загрузить аккумуляторы')
   } finally {
     loading.value = false
   }
@@ -120,7 +120,7 @@ async function createBattery() {
     constructorIds.value = [data.battery_id]
     toast.add({ severity: 'success', summary: 'Создан', detail: `Аккумулятор #${data.battery_id}`, life: 2000 })
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Не удалось создать', life: 3000 })
+    toastApiError(toast, err, 'Не удалось создать аккумулятор')
   }
 }
 
@@ -272,8 +272,8 @@ async function confirmSave() {
     saveState.value = 'saved'
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось удалить')
   }
 }
 

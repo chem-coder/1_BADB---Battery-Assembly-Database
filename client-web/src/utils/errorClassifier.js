@@ -61,3 +61,35 @@ export function errorMessageRu(code, context) {
   if (code === 'empty') return EMPTY_MESSAGES[context] || EMPTY_MESSAGES.default
   return MESSAGES[code] || 'Произошла ошибка.'
 }
+
+/**
+ * Canonical toast-on-API-error helper. Wraps the common pattern:
+ *
+ *   catch (err) {
+ *     toast.add({ severity: 'error', summary: 'Ошибка',
+ *       detail: err.response?.data?.error || 'fallback', life: 3000 })
+ *   }
+ *
+ * into a single call that:
+ * 1. Shows the backend-provided error message when present (most specific),
+ * 2. Falls back to the classifier's Russian message (auth / network /
+ *    server / missing — actionable),
+ * 3. Uses the caller-supplied summary as the action context so the user
+ *    sees WHAT failed, not just a bare «Ошибка».
+ *
+ * Prefer this over hand-rolled toast.add for any axios error. See
+ * CLAUDE.md "Vue frontend conventions → Error surfacing" for rationale.
+ *
+ * @param {object} toast — the useToast() instance from PrimeVue
+ * @param {any} err — the caught exception (axios error or other)
+ * @param {string} summary — action context shown as toast title,
+ *                           e.g. "Не удалось загрузить ленты"
+ * @param {object} [opts]
+ * @param {number} [opts.life=3500] — auto-dismiss after ms
+ */
+export function toastApiError(toast, err, summary = 'Ошибка', opts = {}) {
+  const life = Number.isFinite(opts.life) ? opts.life : 3500
+  const detail = err?.response?.data?.error
+              || errorMessageRu(classifyAxiosError(err))
+  toast.add({ severity: 'error', summary, detail, life })
+}

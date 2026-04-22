@@ -4,7 +4,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import api from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useBackendCache } from '@/composables/useBackendCache'
-import { errorMessageRu } from '@/utils/errorClassifier'
+import { errorMessageRu, toastApiError } from '@/utils/errorClassifier'
 import {
   fmtCapacity,
   fmtArealCapacity,
@@ -253,7 +253,7 @@ async function updateElectrode(e, field, value) {
     await loadElectrodes(currentBatchId.value)
     await loadCapacitySummary(currentBatchId.value)
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка обновления электрода', true)
+    toastApiError(toast, err, 'Ошибка обновления электрода')
   }
 }
 
@@ -265,7 +265,7 @@ async function deleteElectrode(e, index) {
     await loadElectrodes(currentBatchId.value)
     await loadCapacitySummary(currentBatchId.value)
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка удаления', true)
+    toastApiError(toast, err, 'Ошибка удаления')
   }
 }
 
@@ -281,7 +281,7 @@ async function scrapElectrode(e) {
     await loadElectrodes(currentBatchId.value)
     await loadCapacitySummary(currentBatchId.value)
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка списания', true)
+    toastApiError(toast, err, 'Ошибка списания')
   }
 }
 
@@ -438,7 +438,7 @@ async function saveBatch() {
     await loadElectrodes(currentBatchId.value)
     await loadCapacitySummary(currentBatchId.value)
   } catch (err) {
-    showStatus(err.response?.data?.error || 'Ошибка сохранения', true)
+    toastApiError(toast, err, 'Ошибка сохранения')
   }
 }
 

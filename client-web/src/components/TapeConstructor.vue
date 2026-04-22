@@ -14,6 +14,7 @@
  */
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
+import { toastApiError } from '@/utils/errorClassifier'
 import { useTapeState } from '@/composables/useTapeState'
 import { TAPE_STAGES } from '@/config/tapeStages'
 import StageNavigator from '@/components/StageNavigator.vue'
@@ -119,8 +120,8 @@ async function loadTape(id) {
       : useTapeState({ tapeId: id, refs: props.refs, authStore: props.authStore })
     tapeStates[tid] = ts
     await ts.restore()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: `Не удалось загрузить #${id}`, life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, `Не удалось загрузить #${id}`)
     delete tapeStates[tid]
   } finally {
     _loadingCount.value--

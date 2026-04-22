@@ -7,6 +7,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
+import { toastApiError } from '@/utils/errorClassifier'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
@@ -33,8 +34,8 @@ async function loadProjects() {
   try {
     const { data } = await api.get('/api/projects')
     projects.value = data
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить проекты', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось загрузить проекты')
   } finally {
     loading.value = false
   }
@@ -87,8 +88,8 @@ async function confirmSave() {
     saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
     crudTable.value?.clearSelection()
     await loadProjects()
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось удалить')
   }
 }
 
@@ -185,7 +186,7 @@ async function saveProject() {
     resetForm()
     await loadProjects()
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка сохранения', life: 3000 })
+    toastApiError(toast, err, 'Ошибка сохранения')
   }
 }
 
@@ -335,12 +336,7 @@ async function grantAccess() {
       life: 2500,
     })
   } catch (err) {
-    toast.add({
-      severity: 'error',
-      summary: 'Ошибка',
-      detail: err.response?.data?.error || 'Не удалось выдать доступ',
-      life: 3000,
-    })
+    toastApiError(toast, err, 'Не удалось выдать доступ')
   }
 }
 
@@ -359,8 +355,8 @@ async function revokeAccess(entry) {
     await api.delete(url)
     await loadAccess(currentId.value)
     toast.add({ severity: 'success', summary: 'Доступ отозван', life: 2000 })
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось отозвать доступ')
   }
 }
 
@@ -402,12 +398,7 @@ async function copyAccessFromProject() {
       life: 3000,
     })
   } catch (err) {
-    toast.add({
-      severity: 'error',
-      summary: 'Ошибка',
-      detail: err.response?.data?.error || 'Не удалось скопировать',
-      life: 3000,
-    })
+    toastApiError(toast, err, 'Не удалось скопировать')
   } finally {
     copyBusy.value = false
   }

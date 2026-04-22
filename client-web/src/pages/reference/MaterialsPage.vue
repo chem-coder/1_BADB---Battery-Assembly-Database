@@ -7,6 +7,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
+import { toastApiError } from '@/utils/errorClassifier'
 import PageHeader from '@/components/PageHeader.vue'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
@@ -102,7 +103,7 @@ async function saveNewMaterial() {
     const created = materials.value.find(m => m.name === name)
     if (created) selectMaterial(created)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка создания', life: 3000 })
+    toastApiError(toast, err, 'Не удалось создать материал')
   }
 }
 
@@ -120,7 +121,7 @@ async function saveMaterialEdit() {
     toast.add({ severity: 'success', summary: 'Материал обновлён', life: 3000 })
     await loadMaterials()
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка обновления', life: 3000 })
+    toastApiError(toast, err, 'Не удалось обновить материал')
   }
 }
 
@@ -134,7 +135,7 @@ async function deleteMaterial(m) {
     }
     await loadMaterials()
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка удаления', life: 3000 })
+    toastApiError(toast, err, 'Не удалось удалить материал')
   }
 }
 
@@ -233,7 +234,7 @@ async function loadSourceInfo(instanceId) {
     }
     sourceInfoLoaded.value[instanceId] = true
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Источник', detail: err.response?.data?.error || 'Не удалось загрузить', life: 4000 })
+    toastApiError(toast, err, 'Источник — не удалось загрузить', { life: 4000 })
   }
 }
 
@@ -261,7 +262,7 @@ async function saveSourceInfo(instanceId) {
     // updated_at / updated_by / updated_by_name).
     await loadSourceInfo(instanceId)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Источник', detail: err.response?.data?.error || 'Ошибка сохранения', life: 4000 })
+    toastApiError(toast, err, 'Источник — ошибка сохранения', { life: 4000 })
   } finally {
     sourceInfoSaving.value[instanceId] = false
   }
@@ -282,7 +283,7 @@ async function loadProperties(instanceId) {
     }
     propertiesLoaded.value[instanceId] = true
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Свойства', detail: err.response?.data?.error || 'Не удалось загрузить', life: 4000 })
+    toastApiError(toast, err, 'Свойства — не удалось загрузить', { life: 4000 })
   }
 }
 
@@ -343,7 +344,7 @@ async function loadSourceFiles(instanceId) {
   } catch (err) {
     // For composite instances the backend throws 400 — we guard upstream
     // via is_pure so this branch is only hit on real network failures.
-    toast.add({ severity: 'error', summary: 'Файлы источника', detail: err.response?.data?.error || 'Не удалось загрузить', life: 4000 })
+    toastApiError(toast, err, 'Файлы источника — не удалось загрузить', { life: 4000 })
   }
 }
 
@@ -353,7 +354,7 @@ async function loadPropertyFiles(instanceId) {
     propertyFilesMap.value[instanceId] = Array.isArray(data) ? data : []
     propertyFilesLoaded.value[instanceId] = true
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Файлы свойств', detail: err.response?.data?.error || 'Не удалось загрузить', life: 4000 })
+    toastApiError(toast, err, 'Файлы свойств — не удалось загрузить', { life: 4000 })
   }
 }
 
@@ -379,7 +380,7 @@ async function uploadSourceFiles(instanceId, fileList) {
     toast.add({ severity: 'success', summary: 'Файлы', detail: `Загружено: ${entries.length}`, life: 2500 })
     await loadSourceFiles(instanceId)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Файлы', detail: err.response?.data?.error || 'Ошибка загрузки', life: 4000 })
+    toastApiError(toast, err, 'Файлы — ошибка загрузки', { life: 4000 })
   } finally {
     uploadingSourceFiles.value[instanceId] = false
   }
@@ -405,7 +406,7 @@ async function uploadPropertyFiles(instanceId, fileList) {
     toast.add({ severity: 'success', summary: 'Файлы', detail: `Загружено: ${entries.length}`, life: 2500 })
     await loadPropertyFiles(instanceId)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Файлы', detail: err.response?.data?.error || 'Ошибка загрузки', life: 4000 })
+    toastApiError(toast, err, 'Файлы — ошибка загрузки', { life: 4000 })
   } finally {
     uploadingPropertyFiles.value[instanceId] = false
   }
@@ -432,7 +433,7 @@ async function downloadFile(kind, fileId, suggestedName) {
     // download before we free it (revoking synchronously can race).
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Скачивание', detail: err.response?.data?.error || 'Ошибка', life: 4000 })
+    toastApiError(toast, err, 'Скачивание — ошибка', { life: 4000 })
   }
 }
 
@@ -453,7 +454,7 @@ async function deleteFile(kind, fileId, instanceId) {
     if (kind === 'source') await loadSourceFiles(instanceId)
     else await loadPropertyFiles(instanceId)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Файл', detail: err.response?.data?.error || 'Ошибка удаления', life: 4000 })
+    toastApiError(toast, err, 'Файл — ошибка удаления', { life: 4000 })
   } finally {
     deletingFileIds.value[key] = false
   }
@@ -483,7 +484,7 @@ async function saveProperties(instanceId) {
     toast.add({ severity: 'success', summary: 'Свойства', detail: 'Сохранено', life: 2500 })
     await loadProperties(instanceId)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Свойства', detail: err.response?.data?.error || 'Ошибка сохранения', life: 4000 })
+    toastApiError(toast, err, 'Свойства — ошибка сохранения', { life: 4000 })
   } finally {
     propertiesSaving.value[instanceId] = false
   }
@@ -549,7 +550,7 @@ async function saveEditInstance(inst) {
     editingInstanceId.value = null
     await loadInstances(selectedMaterialId.value)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка обновления', life: 3000 })
+    toastApiError(toast, err, 'Не удалось обновить экземпляр')
   }
 }
 
@@ -560,7 +561,7 @@ async function deleteInstance(inst) {
     toast.add({ severity: 'success', summary: 'Экземпляр удалён', life: 3000 })
     await loadInstances(selectedMaterialId.value)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка удаления', life: 3000 })
+    toastApiError(toast, err, 'Не удалось удалить экземпляр')
   }
 }
 
@@ -587,7 +588,7 @@ async function saveNewInstance() {
     resetInstanceCreate()
     await loadInstances(selectedMaterialId.value)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка создания', life: 3000 })
+    toastApiError(toast, err, 'Не удалось создать экземпляр')
   }
 }
 
@@ -618,7 +619,7 @@ async function saveEditComponent(comp, instanceId) {
     editingComponentId.value = null
     await loadComponents(instanceId)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка обновления', life: 3000 })
+    toastApiError(toast, err, 'Не удалось обновить компонент')
   }
 }
 
@@ -629,7 +630,7 @@ async function deleteComponent(comp, instanceId) {
     toast.add({ severity: 'success', summary: 'Компонент удалён', life: 3000 })
     await loadComponents(instanceId)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка удаления', life: 3000 })
+    toastApiError(toast, err, 'Не удалось удалить компонент')
   }
 }
 
@@ -663,7 +664,7 @@ async function saveNewComponent(instanceId) {
     resetComponentCreate()
     await loadComponents(instanceId)
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Ошибка создания', life: 3000 })
+    toastApiError(toast, err, 'Не удалось добавить компонент')
   }
 }
 

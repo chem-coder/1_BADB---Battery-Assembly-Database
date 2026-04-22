@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
+import { toastApiError } from '@/utils/errorClassifier'
 import PageHeader from '@/components/PageHeader.vue'
 import CrudTable from '@/components/CrudTable.vue'
 import Button from 'primevue/button'
@@ -303,7 +304,7 @@ async function saveMasses() {
     capacityUnit.value = 'mAh_per_g'
     toast.add({ severity: 'success', summary: 'Масса сохранена', detail: `Обновлено: ${savers.length}`, life: 3000 })
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Не удалось сохранить', life: 4000 })
+    toastApiError(toast, err, 'Не удалось сохранить', { life: 4000 })
   }
 }
 const specificAvailable = computed(() => {
@@ -547,10 +548,10 @@ async function toggleSession(row) {
   try {
     const { data } = await api.get(`/api/cycling/sessions/${sid}/summary`)
     summaryBySession.value = { ...summaryBySession.value, [sid]: data }
-  } catch {
+  } catch (err) {
     // Rollback on failure so the user can retry.
     activeSessionIds.value = activeSessionIds.value.filter(x => x !== sid)
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить данные', life: 3000 })
+    toastApiError(toast, err, 'Не удалось загрузить данные')
   }
 }
 
@@ -836,12 +837,7 @@ async function downloadExcel() {
     URL.revokeObjectURL(url)
     toast.add({ severity: 'success', summary: 'Экспорт готов', detail: filename, life: 3000 })
   } catch (err) {
-    toast.add({
-      severity: 'error',
-      summary: 'Ошибка экспорта',
-      detail: err.response?.data?.error || 'Не удалось выгрузить Excel',
-      life: 4000,
-    })
+    toastApiError(toast, err, 'Ошибка экспорта', { life: 4000 })
   } finally {
     excelDownloading.value = false
   }

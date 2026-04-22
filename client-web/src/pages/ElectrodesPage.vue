@@ -9,6 +9,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
 import { fmtCapacity, capacityIncompleteHint } from '@/utils/formatCapacity'
+import { toastApiError } from '@/utils/errorClassifier'
 import { useBackendCache } from '@/composables/useBackendCache'
 import Select from 'primevue/select'
 import PageHeader from '@/components/PageHeader.vue'
@@ -146,8 +147,8 @@ async function loadAllBatches() {
     // refetch below re-populates.
     reports.invalidateAll()
     loadAllCapacities()
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить партии', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось загрузить партии')
   } finally {
     loading.value = false
   }
@@ -266,8 +267,8 @@ async function confirmSave() {
     saveState.value = 'saved'
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось удалить', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось удалить')
   }
 }
 

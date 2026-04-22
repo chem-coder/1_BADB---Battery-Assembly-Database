@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
 import PageHeader from '@/components/PageHeader.vue'
 import { fileToBase64 } from '@/utils/fileToBase64'
+import { toastApiError } from '@/utils/errorClassifier'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
@@ -44,8 +45,8 @@ async function loadFeedback() {
   try {
     const { data } = await api.get('/api/feedback')
     items.value = data
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка загрузки', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось загрузить')
   } finally {
     loading.value = false
   }
@@ -127,7 +128,7 @@ async function submitFeedback() {
     dialogVisible.value = false
     await loadFeedback()
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: err.response?.data?.error || 'Не удалось отправить', life: 3000 })
+    toastApiError(toast, err, 'Не удалось отправить')
   }
 }
 
@@ -137,8 +138,8 @@ async function changeStatus(item, newStatus) {
     await api.patch(`/api/feedback/${item.feedback_id}/status`, { status: newStatus })
     toast.add({ severity: 'success', summary: 'Статус обновлён', life: 2000 })
     await loadFeedback()
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось обновить статус')
   }
 }
 
@@ -147,8 +148,8 @@ async function deleteFeedback(item) {
   try {
     await api.delete(`/api/feedback/${item.feedback_id}`)
     await loadFeedback()
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка удаления', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось удалить')
   }
 }
 

@@ -11,6 +11,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/services/api'
+import { toastApiError } from '@/utils/errorClassifier'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
@@ -37,8 +38,8 @@ async function loadTapes() {
   try {
     const { data } = await api.get('/api/tapes')
     tapes.value = data
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось загрузить ленты', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось загрузить ленты')
   } finally {
     loading.value = false
   }
@@ -75,8 +76,8 @@ async function createNewTape() {
       constructorIds.value.push(created.tape_id)
     }
     toast.add({ severity: 'success', summary: 'Создано', detail: `Лента #${created.tape_id}`, life: 2000 })
-  } catch (e) {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: e.response?.data?.error || 'Не удалось создать ленту', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось создать ленту')
   }
 }
 
@@ -104,8 +105,8 @@ async function confirmSave() {
     saveState.value = 'saved'
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => { saveState.value = 'idle' }, 2000)
-  } catch {
-    toast.add({ severity: 'error', summary: 'Ошибка', detail: 'Не удалось сохранить', life: 3000 })
+  } catch (err) {
+    toastApiError(toast, err, 'Не удалось сохранить')
   }
 }
 
