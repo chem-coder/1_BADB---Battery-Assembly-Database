@@ -324,8 +324,11 @@ Numbered so we can link to them from PR reviews.
 
 7. **`/reference/users` is admin-gated.** Non-admin users landing there
    (e.g. via a legacy `/reference/users.html` bookmark after Phase δ
-   redirect) get silently bounced to `/` by `router.beforeEach`.
-   TODO: toast on role-gate denial.
+   redirect) used to get silently bounced to `/` by `router.beforeEach`.
+   Now flashed via `?denied=<role>` query param that `HomePage` picks
+   up on mount and surfaces as a toast, then strips from the URL. When
+   adding a new role-gated route, confirm it has `meta.role` set so
+   the guard runs — otherwise the same silent-bounce problem recurs.
 
 8. **`actual_fraction_status === 'incomplete' | 'unavailable' | 'complete'`**
    are three different states. `'unavailable'` = no recipe actuals at

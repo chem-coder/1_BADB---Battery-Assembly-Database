@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, defineAsyncComponent, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
 import Select from 'primevue/select'
 import MultiSelect from 'primevue/multiselect'
@@ -14,6 +15,29 @@ const DashboardAnalytics = defineAsyncComponent(() => import('@/components/Dashb
 import { workflowSections, referenceSections } from '@/config/navigation'
 
 const router = useRouter()
+const route = useRoute()
+const toast = useToast()
+
+// Role-gate flash: router.beforeEach redirects role-denied users here
+// with ?denied=<required-role>. Fire a toast explaining WHY they
+// landed on the home page instead of the URL they asked for, then
+// replace the URL to clean the query. Without this hook the redirect
+// is silent — user sees their URL change to / with no explanation.
+onMounted(() => {
+  const denied = route.query.denied
+  if (typeof denied === 'string' && denied.length > 0) {
+    const roleLabels = { admin: 'администратор', lead: 'ведущий', employee: 'сотрудник' }
+    toast.add({
+      severity: 'warn',
+      summary: 'Недостаточно прав',
+      detail: `Нужна роль «${roleLabels[denied] || denied}» для доступа к этой странице.`,
+      life: 4500,
+    })
+    // Strip the flash query param without re-navigating — keeps URL
+    // clean so a browser refresh doesn't re-fire the toast.
+    router.replace({ path: '/', query: {} })
+  }
+})
 
 // ── Tab state ─────────────────────────────────────────────────────────
 const activeTab = ref('overview') // 'overview' | 'pipeline' | 'graph' | 'analytics'

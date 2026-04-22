@@ -148,7 +148,15 @@ router.beforeEach(async (to, from, next) => {
     const userRole = auth.user?.role
     const required = to.meta.role
     const allowed = userRole === 'admin' || userRole === required
-    if (!allowed) return next('/')
+    if (!allowed) {
+      // Flash the reason via a query param — HomePage picks it up on
+      // mount, fires a toast, and cleans the URL. Without this, a user
+      // hitting a role-gated URL (e.g. /reference/users as a non-admin,
+      // common after Phase δ redirects a legacy bookmark) gets
+      // silently bounced with no explanation.
+      // Pitfall #7 in CLAUDE.md "Common pitfalls".
+      return next({ path: '/', query: { denied: required } })
+    }
   }
   next()
 })
