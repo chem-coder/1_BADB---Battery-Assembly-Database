@@ -247,6 +247,60 @@ parallel, commit dances get tangled. Proven strategy:
 4. **Push immediately after commit** — keeps origin authoritative
    so the other chat can rebase on top of your work.
 
+## Feature integration protocol (design-first)
+
+Retrospective of the 2026-04-21 session found: implementation-first
+development on ported Dalia features produced 3–5 audit rounds per
+feature, with one 🔴 per feature caught only after the code had been
+written. Root cause: writing UI before reading external-API invariants
+(Vue 3 watch semantics, axios error shape, PG case folding, Express
+body limits). Lesson: a 5-minute design doc upfront saves 30 minutes
+of debug cycles.
+
+**Flow for every non-trivial Vue integration of a backend feature:**
+
+1. **Design doc** (5–10 min). One page, in-chat or in `docs/designs/`.
+   Fields:
+   - *User story* — who does what, when, and why.
+   - *Backend contract* — exact endpoint path, request shape, response
+     shape, error codes (401/404/500/network).
+   - *Vue placement* — which page, which region, trigger (watcher?
+     button? mount?).
+   - *State design* — cache keyed by what, invalidation trigger,
+     loading flag, error flag enum.
+   - *Edge cases checklist* — empty data, auth expired, network
+     timeout, concurrency fan-out, same-id double toggle, deep-link.
+   - *Known quirks to check* — framework behaviour at the exact point
+     of use. Example: "Vue 3 `watch(ref, cb, {deep:true})` — does
+     oldValue snapshot on in-place mutation?" — check BEFORE coding.
+   - *Formatting consistency* — same precision / label / date format
+     as the rest of the app and Dalia's legacy page.
+
+2. **Agent design review** (3 min). Give the doc to a general-purpose
+   agent with the prompt "what invariants are missing? what edge cases
+   are unhandled? what framework quirks could bite?". Agent answers
+   with concrete refs. Fix the design doc.
+
+3. **Implement** (30–60 min). Work to the design, not on instinct.
+
+4. **Build + node -e syntax check.**
+
+5. **Focused audit** — one agent round, with the design-doc checklist
+   as explicit verification scope.
+
+6. **1 round fix if needed** (rare if steps 1–2 were thorough).
+
+7. **Commit + push.**
+
+Expected: 0–1 audit rounds per feature, not 3–5. If a feature needs
+more than 1 fix round, pause and write a better design doc for the
+next one.
+
+**Scope rule:** 1 feature = 1 commit ≤ ~150 lines. Larger scope =
+split. A+B in one commit (326 lines) was at the edge — caused several
+missed-invariant bugs that wouldn't have slipped if A and B had been
+separate design docs.
+
 ## Security
 
 - **Authentication:** JWT Bearer tokens, 8h expiry, configurable in config/index.js
