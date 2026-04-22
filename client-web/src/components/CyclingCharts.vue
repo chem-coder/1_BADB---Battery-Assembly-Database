@@ -1502,6 +1502,13 @@ function resetZoom(chartRef) {
           @keydown.enter="onEveryNApply"
         />
         <span class="filter-every-suffix">-й</span>
+        <span
+          v-if="everyNStep && countEveryNth(everyNStep) > 0"
+          class="filter-every-preview"
+          :title="`При применении выберется ${countEveryNth(everyNStep)} цикл(ов) из ${allCycleNumbers.length}`"
+        >
+          ({{ countEveryNth(everyNStep) }})
+        </span>
       </span>
       <!-- Custom range popover -->
       <div class="filter-range" :class="{ 'is-open': rangeOpen }">
@@ -1823,6 +1830,13 @@ function resetZoom(chartRef) {
 .filter-every-suffix {
   font-weight: 500;
   color: rgba(0, 50, 116, 0.6);
+}
+.filter-every-preview {
+  font-size: 11px;
+  color: rgba(0, 50, 116, 0.45);
+  font-variant-numeric: tabular-nums;
+  margin-left: 2px;
+  cursor: help;
 }
 .filter-input {
   width: 60px;

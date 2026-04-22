@@ -554,10 +554,6 @@ async function toggleSession(row) {
   }
 }
 
-function removeActiveSession(sid) {
-  activeSessionIds.value = activeSessionIds.value.filter(x => x !== sid)
-}
-
 // Header click on the "График" column — toggle all visible sessions
 // on/off. "Visible" = rows left after any column filters the user applied
 // (we read filteredData off the CrudTable ref). If everything visible is
