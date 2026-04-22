@@ -13,6 +13,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
 import TapeConstructor from '@/components/TapeConstructor.vue'
+import BatteryElectrochemEditor from '@/components/BatteryElectrochemEditor.vue'
 import Checkbox from 'primevue/checkbox'
 import { BATTERY_STAGES } from '@/config/batteryStages'
 import { useBatteryState } from '@/composables/useBatteryState'
@@ -230,6 +231,30 @@ function capacityErrorMessage(id) {
   return errorMessageRu(capacity.errors.value[id], 'capacity')
 }
 
+// ── Electrochem file attachments (G2 — Phase γ) ────────────────────
+// Per-battery list of uploaded electrochem files. Same useBackendCache
+// pattern as `capacity` above, one fetch per battery-in-constructor.
+// No isEmpty — the editor treats "loaded with zero files" as a normal
+// "Файлы не прикреплены" state rather than an error, so 'empty' code
+// isn't needed.
+const electrochemFiles = useBackendCache({
+  fetchFn: async (batteryId) => {
+    const { data } = await api.get(`/api/batteries/battery_electrochem/${batteryId}`)
+    return Array.isArray(data) ? data : []
+  },
+  maxConcurrent: 3,
+})
+
+watch(() => [...constructorIds.value], (ids, oldIds) => {
+  const now = new Set(ids)
+  for (const old of (oldIds || [])) {
+    if (!now.has(old)) electrochemFiles.invalidate(old)
+  }
+  for (const id of ids) {
+    if (!electrochemFiles.isLoaded(id)) electrochemFiles.load(id)
+  }
+})
+
 // ── Delete flow ──
 const pendingDelete = ref([])
 const saveState = ref('idle')
@@ -415,6 +440,20 @@ onUnmounted(() => clearTimeout(saveTimer))
       title="КОНСТРУКТОР АККУМУЛЯТОРОВ"
       emptyHint="Отметьте аккумуляторы в таблице для работы в конструкторе"
     />
+
+    <!-- Electrochem file uploads (G2) — one card per battery in the
+         constructor. Follows the capacity-panels layout pattern above.
+         The editor component manages its own staged upload queue and
+         reads the cached file list from the shared useBackendCache
+         handle passed via `:cache`. -->
+    <div v-if="constructorIds.length > 0" class="electrochem-panels">
+      <BatteryElectrochemEditor
+        v-for="id in constructorIds"
+        :key="`ec-${id}`"
+        :batteryId="id"
+        :cache="electrochemFiles"
+      />
+    </div>
   </div>
 </template>
 
@@ -428,6 +467,14 @@ onUnmounted(() => clearTimeout(saveTimer))
   gap: 1.25rem;
 }
 .assembly-page :deep(.page-header) { margin-bottom: 3px !important; }
+
+/* ── Electrochem panels (G2): one card per battery, stacked
+   vertically — same flex-column pattern as .capacity-panels. ── */
+.electrochem-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
 .battery-id { color: #003274; }
 .ff-badge {
