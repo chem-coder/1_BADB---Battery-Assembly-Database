@@ -652,11 +652,12 @@ router.post('/', auth, async (req, res) => {
         project_id,
         tape_recipe_id,
         created_by,
+        updated_at,
         notes,
         calc_mode,
         target_mass_g
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7)
+      VALUES ($1,$2,$3,$4,now(),$5,$6,$7)
       RETURNING *
       `,
       [
