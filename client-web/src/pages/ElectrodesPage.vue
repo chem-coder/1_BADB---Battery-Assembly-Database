@@ -66,12 +66,15 @@ const columns = [
   // sort by the numeric field correctly (the slot only handles display).
   { field: 'avg_cap_theoretical_mAh', header: 'Ёмкость теор., мАч', minWidth: '110px', width: '130px', sortable: true, filterable: false },
   { field: 'avg_cap_actual_mAh',      header: 'Ёмкость факт., мАч', minWidth: '110px', width: '130px', sortable: true, filterable: false },
-  // 'progress' column — visual 3-segment bar (created / drying_start /
-  // drying_end), aligns with TapesPage's 8-segment progress bar so the
-  // workflow tables share one visual language for "where is it in the
-  // pipeline". Replaces the textual `status_display` ('в работе' /
-  // 'сушится' / 'готово') which duplicated this signal in words.
-  { field: 'progress', header: 'Прогресс', minWidth: '80px', width: '100px', sortable: true, filterable: false },
+  // 'progress' column — visual 2-segment bar matching the actual
+  // electrode-batch lifecycle: «Нарезка» (always done — batch exists)
+  // and «Сушка» (done when drying_end is set). drying_start without
+  // drying_end is "drying in progress" — the segment stays unfilled
+  // until the operator records the end time. The tooltip carries the
+  // finer 3-state label (В работе / Сушится / Готово) for users who
+  // need precision. TapesPage uses 8 segments; the count differs per
+  // entity but the visual idiom is shared.
+  { field: 'progress', header: 'Прогресс', minWidth: '70px', width: '90px', sortable: true, filterable: false },
   { field: 'created_at', header: 'Дата', minWidth: '90px', width: '110px' },
   { field: 'created_by_name', header: 'Оператор', minWidth: '100px' },
 ]
@@ -116,10 +119,11 @@ const tableData = computed(() => {
       ...b,
       role_display: b.tape_role === 'cathode' ? 'Катод' : b.tape_role === 'anode' ? 'Анод' : '—',
       shape_display: formatShapeDisplay(b),
-      // 0..3 — count of completed pipeline stages: created (always 1) +
-      // drying_start (+1) + drying_end (+1). Used by the 3-segment
-      // progress-bar column to mirror TapesPage's visual encoding.
-      progress: 1 + (b.drying_start ? 1 : 0) + (b.drying_end ? 1 : 0),
+      // 0..2 — count of completed pipeline stages: «Нарезка» (always 1
+      // — batch row exists) + «Сушка» (+1 only when drying_end is
+      // set; drying_start without drying_end is in-progress). Sortable
+      // numeric — done batches end up at the top with `desc` sort.
+      progress: 1 + (b.drying_end ? 1 : 0),
       avg_cap_theoretical_mAh: theo,
       avg_cap_actual_mAh: actual,
     }
@@ -444,16 +448,19 @@ onUnmounted(() => clearTimeout(saveTimer))
           <template v-else>{{ fmtCapacity(data.avg_cap_actual_mAh) }}</template>
         </span>
       </template>
-      <!-- Progress bar (3 segments — created / drying_start / drying_end).
-           Same visual idiom as TapesPage 'progress' column (8 segments).
-           Title gives the textual stage on hover for accessibility. -->
+      <!-- Progress bar (2 segments — «Нарезка» / «Сушка»).
+           Same visual idiom as TapesPage 'progress' column (8 segments)
+           — the count differs per entity but the encoding is shared.
+           Title carries the finer textual stage so the user can read
+           «Сушится» (drying in progress: start logged but not end)
+           apart from «В работе» (no drying yet). -->
       <template #col-progress="{ data }">
         <div
           class="progress-segments"
-          :title="data.progress >= 3 ? 'Готово' : data.progress >= 2 ? 'Сушится' : 'В работе'"
+          :title="data.progress >= 2 ? 'Готово' : (data.drying_start ? 'Сушится' : 'В работе')"
         >
           <div
-            v-for="i in 3"
+            v-for="i in 2"
             :key="i"
             class="progress-seg"
             :class="{ 'progress-seg--done': i <= data.progress }"
