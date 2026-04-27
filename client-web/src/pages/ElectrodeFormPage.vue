@@ -14,6 +14,7 @@ import {
   fmtActualFractionStatus,
   capacityIncompleteHint,
 } from '@/utils/formatCapacity'
+import CapacityHint from '@/components/CapacityHint.vue'
 import { useToast } from 'primevue/usetoast'
 import Button from 'primevue/button'
 import Panel from 'primevue/panel'
@@ -226,6 +227,34 @@ const capacitySummaryError   = computed(() => capacity.errors.value[currentBatch
 
 function capacitySummaryMessage() {
   return errorMessageRu(capacitySummaryError.value, 'capacity')
+}
+
+// Capacity-hint click → navigate to /tapes (with the parent tape
+// of this batch pre-selected) or to /electrodes/<id> for a foil-
+// measurement gap. Same dispatch shape as AssemblyPage's
+// handleHintGo, scoped to the contexts ElectrodeFormPage cares
+// about ('electrode' only — no battery contexts here).
+function hintExtra() {
+  const t = Number(selectedTapeId.value)
+  return {
+    tapeId: Number.isInteger(t) && t > 0 ? t : null,
+    cutBatchId: currentBatchId.value || null,
+  }
+}
+function handleHintGo(action) {
+  if (!action) return
+  if (action.kind === 'open-tape-recipe') {
+    const tapeId = action.payload?.tapeId
+    const query = tapeId ? { select: String(tapeId), stage: 'recipe_actual' } : {}
+    router.push({ path: '/tapes', query })
+  } else if (action.kind === 'open-materials') {
+    router.push('/reference/materials')
+  } else if (action.kind === 'open-electrode-batch') {
+    // Already on the batch — just toast. The "foil measurement"
+    // form is in the same page, on the «Замеры фольги» panel.
+    // Future: scroll to that panel. For now the message itself is
+    // enough since we're already here.
+  }
 }
 
 function appendElectrodeRow() {
@@ -847,11 +876,13 @@ onMounted(async () => {
                       <div>теор.: <strong>{{ fmtCapacity(capacitySummary.average_capacity_theoretical_mAh) }}</strong></div>
                       <div class="capacity-actual-row">
                         факт.: <strong>{{ fmtCapacity(capacitySummary.average_capacity_actual_mAh) }}</strong>
-                        <i
-                          v-if="capacitySummary.average_capacity_actual_mAh == null && capacityIncompleteHint(capacitySummary, 'electrode')"
-                          class="pi pi-question-circle capacity-hint-icon"
-                          v-tooltip.top="capacityIncompleteHint(capacitySummary, 'electrode')"
-                        ></i>
+                        <CapacityHint
+                          v-if="capacitySummary.average_capacity_actual_mAh == null"
+                          :summary="capacitySummary"
+                          context="electrode"
+                          :extra="hintExtra()"
+                          @go="handleHintGo"
+                        />
                       </div>
                     </div>
                   </div>
@@ -861,11 +892,13 @@ onMounted(async () => {
                       <div>теор.: <strong>{{ fmtArealCapacity(capacitySummary.areal_capacity_theoretical_mAh_cm2) }}</strong></div>
                       <div class="capacity-actual-row">
                         факт.: <strong>{{ fmtArealCapacity(capacitySummary.areal_capacity_actual_mAh_cm2) }}</strong>
-                        <i
-                          v-if="capacitySummary.areal_capacity_actual_mAh_cm2 == null && capacityIncompleteHint(capacitySummary, 'electrode')"
-                          class="pi pi-question-circle capacity-hint-icon"
-                          v-tooltip.top="capacityIncompleteHint(capacitySummary, 'electrode')"
-                        ></i>
+                        <CapacityHint
+                          v-if="capacitySummary.areal_capacity_actual_mAh_cm2 == null"
+                          :summary="capacitySummary"
+                          context="electrode"
+                          :extra="hintExtra()"
+                          @go="handleHintGo"
+                        />
                       </div>
                     </div>
                   </div>

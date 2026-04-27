@@ -203,8 +203,24 @@ onUnmounted(() => {
   }
 })
 
+// Programmatically switch the active stage + active tab. Used by
+// AssemblyPage's clickable capacity hints to jump straight to the
+// «Электроды» stage when the user follows a "Анод не подключён"
+// hyperlink. Defensive: ignores unknown stage codes / tab ids.
+function setActiveStage(stageCode) {
+  if (!stageCode) return
+  const found = props.stageConfigs.find(s => s.code === stageCode)
+  if (found) activeStage.value = stageCode
+}
+function setActiveTab(id) {
+  const tid = String(id)
+  if (tabOrder.value.includes(tid)) {
+    activeTapeId.value = Number(tid)
+  }
+}
+
 // Expose for parent
-defineExpose({ saveAll, discardAll, tapeStates, anyDirty, undo, redo, canUndo, canRedo })
+defineExpose({ saveAll, discardAll, tapeStates, anyDirty, undo, redo, canUndo, canRedo, setActiveStage, setActiveTab })
 
 // ── Changelog panel ──
 const showChangelog = ref(false)

@@ -4,7 +4,7 @@
  * Shows ALL batteries with CrudTable + inline TapeConstructor (battery mode).
  * Follows TapesPage / ElectrodesPage pattern.
  */
-import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { useAuthStore } from '@/stores/auth'
@@ -14,18 +14,21 @@ import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
 import TapeConstructor from '@/components/TapeConstructor.vue'
 import BatteryElectrochemEditor from '@/components/BatteryElectrochemEditor.vue'
+import CapacityHint from '@/components/CapacityHint.vue'
 import Checkbox from 'primevue/checkbox'
 import { BATTERY_STAGES } from '@/config/batteryStages'
 import { useBatteryState } from '@/composables/useBatteryState'
 import { useBackendCache } from '@/composables/useBackendCache'
 import { errorMessageRu, toastApiError } from '@/utils/errorClassifier'
-import { fmtCapacity, capacityIncompleteHint } from '@/utils/formatCapacity'
+import { fmtCapacity } from '@/utils/formatCapacity'
 
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()
 const authStore = useAuthStore()
 const crudTable = ref(null)
+const tapeConstructorRef = ref(null)
+const constructorAnchor = ref(null)
 
 // ── Data ──
 const batteries = ref([])
@@ -233,6 +236,75 @@ function capacityErrorMessage(id) {
   return errorMessageRu(capacity.errors.value[id], 'capacity')
 }
 
+// Pull cathode/anode tape ids from the constructor's loaded battery
+// state for a given battery — used to enrich the capacity-hint
+// descriptor so "Открыть катодную ленту" can deep-link to the
+// specific tape (`/tapes?select=<id>&stage=recipe_actual`). Returns
+// nulls if the state hasn't been loaded yet (race during initial
+// render) or if the tape isn't connected — useBatteryState stores
+// these as empty strings, NOT null, so a bare `?? null` would leak
+// `''` into the URL. Normalize to a numeric id or null.
+function hintExtra(batteryId) {
+  const ts = tapeConstructorRef.value?.tapeStates?.[String(batteryId)]
+  const c = ts?.steps?.electrodes?.cathode_tape_id
+  const a = ts?.steps?.electrodes?.anode_tape_id
+  const toId = (v) => {
+    const n = Number(v)
+    return Number.isInteger(n) && n > 0 ? n : null
+  }
+  return {
+    batteryId,
+    cathodeTapeId: toId(c),
+    anodeTapeId:   toId(a),
+  }
+}
+
+// Click handler for CapacityHint's "Перейти" button. Routes the
+// click to the right page / constructor stage based on the action
+// kind. For battery-stage actions we stay on this page, force the
+// constructor open (auto-add to constructorIds if not present),
+// switch the constructor's active tab to this battery, and jump to
+// the target stage. For tape-recipe actions we router.push to
+// /tapes with `?select=<id>&stage=recipe_actual` — TapesPage's
+// onMounted picks up those params and opens the matching tape in
+// its own constructor.
+async function handleHintGo(action) {
+  if (!action) return
+  if (action.kind === 'open-battery-stage') {
+    const id = Number(action.payload?.batteryId)
+    if (!Number.isInteger(id)) return
+    if (!constructorIds.value.includes(id)) {
+      // Auto-open the constructor for this battery (per user request:
+      // "так если конструктор не открыт - пусть автоматически
+      // откроется!"). Wait two ticks so TapeConstructor instantiates
+      // its state before we try to switch the active tab.
+      constructorIds.value.push(id)
+    }
+    await nextTick()
+    await nextTick()
+    tapeConstructorRef.value?.setActiveTab?.(id)
+    if (action.payload?.stage) {
+      tapeConstructorRef.value?.setActiveStage?.(action.payload.stage)
+    }
+    // Scroll to the constructor zone so the user actually sees the
+    // stage they were sent to. Smooth so the jump is obvious.
+    constructorAnchor.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+  } else if (action.kind === 'open-tape-recipe') {
+    const tapeId = action.payload?.tapeId
+    const query = tapeId ? { select: String(tapeId), stage: 'recipe_actual' } : {}
+    router.push({ path: '/tapes', query })
+  } else if (action.kind === 'open-electrode-batch') {
+    const cutBatchId = action.payload?.cutBatchId
+    if (cutBatchId) {
+      router.push(`/electrodes/${cutBatchId}`)
+    } else {
+      router.push('/electrodes')
+    }
+  } else if (action.kind === 'open-materials') {
+    router.push('/reference/materials')
+  }
+}
+
 // ── Electrochem file attachments (G2 — Phase γ) ────────────────────
 // Per-battery list of uploaded electrochem files. Same useBackendCache
 // pattern as `capacity` above, one fetch per battery-in-constructor.
@@ -406,11 +478,13 @@ onUnmounted(() => clearTimeout(saveTimer))
                 <div>теор.: <strong>{{ fmtCapacity(capacity.cache.value[id].cathode_capacity_theoretical_mAh) }}</strong></div>
                 <div class="capacity-actual-row">
                   факт.: <strong>{{ fmtCapacity(capacity.cache.value[id].cathode_capacity_actual_mAh) }}</strong>
-                  <i
-                    v-if="capacity.cache.value[id].cathode_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-cathode')"
-                    class="pi pi-question-circle capacity-hint-icon"
-                    v-tooltip.top="capacityIncompleteHint(capacity.cache.value[id], 'battery-cathode')"
-                  ></i>
+                  <CapacityHint
+                    v-if="capacity.cache.value[id].cathode_capacity_actual_mAh == null"
+                    :summary="capacity.cache.value[id]"
+                    context="battery-cathode"
+                    :extra="hintExtra(id)"
+                    @go="handleHintGo"
+                  />
                 </div>
               </div>
             </div>
@@ -420,11 +494,13 @@ onUnmounted(() => clearTimeout(saveTimer))
                 <div>теор.: <strong>{{ fmtCapacity(capacity.cache.value[id].anode_capacity_theoretical_mAh) }}</strong></div>
                 <div class="capacity-actual-row">
                   факт.: <strong>{{ fmtCapacity(capacity.cache.value[id].anode_capacity_actual_mAh) }}</strong>
-                  <i
-                    v-if="capacity.cache.value[id].anode_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-anode')"
-                    class="pi pi-question-circle capacity-hint-icon"
-                    v-tooltip.top="capacityIncompleteHint(capacity.cache.value[id], 'battery-anode')"
-                  ></i>
+                  <CapacityHint
+                    v-if="capacity.cache.value[id].anode_capacity_actual_mAh == null"
+                    :summary="capacity.cache.value[id]"
+                    context="battery-anode"
+                    :extra="hintExtra(id)"
+                    @go="handleHintGo"
+                  />
                 </div>
               </div>
             </div>
@@ -434,11 +510,13 @@ onUnmounted(() => clearTimeout(saveTimer))
                 <div>теор.: <strong>{{ fmtCapacity(capacity.cache.value[id].limiting_capacity_theoretical_mAh) }}</strong></div>
                 <div class="capacity-actual-row">
                   факт.: <strong>{{ fmtCapacity(capacity.cache.value[id].limiting_capacity_actual_mAh) }}</strong>
-                  <i
-                    v-if="capacity.cache.value[id].limiting_capacity_actual_mAh == null && capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
-                    class="pi pi-question-circle capacity-hint-icon"
-                    v-tooltip.top="capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
-                  ></i>
+                  <CapacityHint
+                    v-if="capacity.cache.value[id].limiting_capacity_actual_mAh == null"
+                    :summary="capacity.cache.value[id]"
+                    context="battery-np"
+                    :extra="hintExtra(id)"
+                    @go="handleHintGo"
+                  />
                 </div>
               </div>
             </div>
@@ -448,11 +526,13 @@ onUnmounted(() => clearTimeout(saveTimer))
                 <div>теор.: <strong>{{ fmtRatio(capacity.cache.value[id].np_theoretical) }}</strong></div>
                 <div class="capacity-actual-row">
                   факт.: <strong>{{ fmtRatio(capacity.cache.value[id].np_actual) }}</strong>
-                  <i
-                    v-if="!Number.isFinite(Number(capacity.cache.value[id].np_actual)) && capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
-                    class="pi pi-question-circle capacity-hint-icon"
-                    v-tooltip.top="capacityIncompleteHint(capacity.cache.value[id], 'battery-np')"
-                  ></i>
+                  <CapacityHint
+                    v-if="!Number.isFinite(Number(capacity.cache.value[id].np_actual))"
+                    :summary="capacity.cache.value[id]"
+                    context="battery-np"
+                    :extra="hintExtra(id)"
+                    @go="handleHintGo"
+                  />
                 </div>
               </div>
             </div>
@@ -473,18 +553,23 @@ onUnmounted(() => clearTimeout(saveTimer))
       </div>
     </div>
 
-    <!-- Constructor -->
-    <TapeConstructor
-      :selectedTapeIds="constructorIds"
-      :tapeList="tableData"
-      :stageConfigs="BATTERY_STAGES"
-      :stateFactory="batteryStateFactory"
-      :refs="refData"
-      idField="battery_id"
-      entityType="battery"
-      title="КОНСТРУКТОР АККУМУЛЯТОРОВ"
-      emptyHint="Отметьте аккумуляторы в таблице для работы в конструкторе"
-    />
+    <!-- Constructor — `tapeConstructorRef` exposes setActiveStage /
+         setActiveTab so capacity-hint clicks can jump straight to
+         «Электроды». `constructorAnchor` is the smooth-scroll target. -->
+    <div ref="constructorAnchor">
+      <TapeConstructor
+        ref="tapeConstructorRef"
+        :selectedTapeIds="constructorIds"
+        :tapeList="tableData"
+        :stageConfigs="BATTERY_STAGES"
+        :stateFactory="batteryStateFactory"
+        :refs="refData"
+        idField="battery_id"
+        entityType="battery"
+        title="КОНСТРУКТОР АККУМУЛЯТОРОВ"
+        emptyHint="Отметьте аккумуляторы в таблице для работы в конструкторе"
+      />
+    </div>
 
     <!-- Electrochem file uploads (G2) — one card per battery in the
          constructor. Follows the capacity-panels layout pattern above.

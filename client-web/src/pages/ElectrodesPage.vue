@@ -8,7 +8,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
-import { fmtCapacity, capacityIncompleteHint } from '@/utils/formatCapacity'
+import { fmtCapacity } from '@/utils/formatCapacity'
 import { toastApiError } from '@/utils/errorClassifier'
 import { useBackendCache } from '@/composables/useBackendCache'
 import Select from 'primevue/select'
@@ -16,6 +16,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
 import TapeConstructor from '@/components/TapeConstructor.vue'
+import CapacityHint from '@/components/CapacityHint.vue'
 import Checkbox from 'primevue/checkbox'
 import { ELECTRODE_STAGES } from '@/config/electrodeStages'
 import { useElectrodeState } from '@/composables/useElectrodeState'
@@ -264,6 +265,24 @@ function openBatchPrint(cutBatchId) {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
+// Click handler for CapacityHint actions in the «Емкость (факт)»
+// column. The summary the helper sees lacks tape_id by default, so
+// we enrich it from the row (`tape_id`, `cut_batch_id`) before the
+// hint resolves.
+function handleHintGo(action) {
+  if (!action) return
+  if (action.kind === 'open-tape-recipe') {
+    const tapeId = action.payload?.tapeId
+    const query = tapeId ? { select: String(tapeId), stage: 'recipe_actual' } : {}
+    router.push({ path: '/tapes', query })
+  } else if (action.kind === 'open-electrode-batch') {
+    const cutBatchId = action.payload?.cutBatchId
+    if (cutBatchId) router.push(`/electrodes/${cutBatchId}`)
+  } else if (action.kind === 'open-materials') {
+    router.push('/reference/materials')
+  }
+}
+
 function electrodeStateFactory(id) {
   return useElectrodeState({ batchId: id })
 }
@@ -436,13 +455,15 @@ onUnmounted(() => clearTimeout(saveTimer))
       <template #col-avg_cap_actual_mAh="{ data }">
         <span class="cap-cell">
           <template v-if="reports.loading.value[data.cut_batch_id]">…</template>
-          <template v-else-if="data.avg_cap_actual_mAh == null && capacityIncompleteHint(reports.cache.value[data.cut_batch_id], 'electrode')">
-            <span
-              class="cap-cell-missing"
-              v-tooltip.top="capacityIncompleteHint(reports.cache.value[data.cut_batch_id], 'electrode')"
-            >
+          <template v-else-if="data.avg_cap_actual_mAh == null">
+            <span class="cap-cell-missing">
               —
-              <i class="pi pi-question-circle cap-cell-hint-icon"></i>
+              <CapacityHint
+                :summary="reports.cache.value[data.cut_batch_id]"
+                context="electrode"
+                :extra="{ tapeId: data.tape_id, cutBatchId: data.cut_batch_id }"
+                @go="handleHintGo"
+              />
             </span>
           </template>
           <template v-else>{{ fmtCapacity(data.avg_cap_actual_mAh) }}</template>
