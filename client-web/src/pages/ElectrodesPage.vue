@@ -434,13 +434,15 @@ onUnmounted(() => clearTimeout(saveTimer))
         </div>
       </template>
       <template #col-_print="{ data }">
-        <button
-          class="print-btn"
-          title="Печать отчёта по партии (открыть в новой вкладке)"
-          @click.stop="openBatchPrint(data.cut_batch_id)"
-        >
-          <i class="pi pi-print"></i>
-        </button>
+        <div class="ct-print-cell">
+          <button
+            class="print-btn"
+            title="Печать отчёта по партии"
+            @click.stop="openBatchPrint(data.cut_batch_id)"
+          >
+            <i class="pi pi-print"></i>
+          </button>
+        </div>
       </template>
       <template #col-cut_batch_id="{ data }">
         <span class="batch-id">#{{ data.cut_batch_id }}</span>

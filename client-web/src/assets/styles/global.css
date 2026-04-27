@@ -708,6 +708,16 @@ h4 { font-size: 16px; font-weight: 700; line-height: 1.4; }
   justify-content: center;
 }
 
+/* Same pattern for the per-row 🖨️ print button column. The narrow
+   42-px column has a centered emoji header — the body cell needs a
+   matching flex-center wrapper so the icon button sits in the middle
+   of the column instead of hugging the left edge. */
+.ct-print-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Header button is `inline-flex` from above; force the parent header
    cell to center it too so the «Конструктор» word sits over the
    centered checkbox column instead of being left-aligned. PrimeVue

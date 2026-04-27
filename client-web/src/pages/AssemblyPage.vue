@@ -431,13 +431,15 @@ onUnmounted(() => clearTimeout(saveTimer))
         </div>
       </template>
       <template #col-_print="{ data }">
-        <button
-          class="print-btn"
-          title="Печать отчёта по аккумулятору (откроется в новой вкладке)"
-          @click.stop="openBatteryPrint(data.battery_id)"
-        >
-          <i class="pi pi-print"></i>
-        </button>
+        <div class="ct-print-cell">
+          <button
+            class="print-btn"
+            title="Печать отчёта по аккумулятору"
+            @click.stop="openBatteryPrint(data.battery_id)"
+          >
+            <i class="pi pi-print"></i>
+          </button>
+        </div>
       </template>
       <template #col-battery_id="{ data }">
         <strong class="battery-id">#{{ data.battery_id }}</strong>
