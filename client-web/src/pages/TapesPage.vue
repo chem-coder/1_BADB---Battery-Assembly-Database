@@ -251,28 +251,27 @@ function formatDate(dt) {
       @row-click="(data) => toggleConstructor(data.tape_id)"
     >
       <!-- Constructor column — clickable header text + per-row
-           checkbox. Header reads like sibling headers («№», «Тип»),
-           just with a hover-underline affordance and an inline count
-           when items are selected. Tooltip spells out the bulk
-           select-all-on-page interaction. -->
+           checkbox. Header click toggles select-all-on-page. Both
+           header and body cells are centered via `.ct-cons-cell`. -->
       <template #header-_constructor>
         <button
           type="button"
           class="ct-cons-header"
           :class="{ 'is-active': constructorIds.length > 0 }"
-          v-tooltip.top="'Кликните чтобы выбрать или снять все ленты на странице'"
           @click.stop="toggleAllConstructor"
         >
           Конструктор<span v-if="constructorIds.length > 0" class="ct-cons-count">({{ constructorIds.length }})</span>
         </button>
       </template>
       <template #col-_constructor="{ data }">
-        <Checkbox
-          :modelValue="isInConstructor(data.tape_id)"
-          @update:modelValue="toggleConstructor(data.tape_id)"
-          :binary="true"
-          v-tooltip.right="'Добавить/убрать из конструктора'"
-        />
+        <div class="ct-cons-cell">
+          <Checkbox
+            :modelValue="isInConstructor(data.tape_id)"
+            @update:modelValue="toggleConstructor(data.tape_id)"
+            :binary="true"
+            v-tooltip.right="'Добавить/убрать из конструктора'"
+          />
+        </div>
       </template>
 
       <!-- Custom cell: Название (semibold per DS "Метка поля" 13px 600) -->

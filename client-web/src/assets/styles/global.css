@@ -697,6 +697,30 @@ h4 { font-size: 16px; font-weight: 700; line-height: 1.4; }
   font-weight: 700;
 }
 
+/* Body cell wrapper — centers the per-row Checkbox in its column.
+   PrimeVue DataTable cells default to `text-align: left` and the
+   bare <Checkbox> sits left-aligned, looking detached from the
+   centered «Конструктор» header. The wrapper makes column content
+   uniformly center-aligned in both axes. */
+.ct-cons-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Header button is `inline-flex` from above; force the parent header
+   cell to center it too so the «Конструктор» word sits over the
+   centered checkbox column instead of being left-aligned. PrimeVue
+   wraps the header content in `.p-column-header-content` — target
+   the slot rendered inside that container via `:has()`. Falls back
+   to a generic td/th selector for older browsers without :has. */
+.p-datatable th:has(> div > .ct-cons-header) > div {
+  justify-content: center;
+}
+.p-datatable th .ct-cons-header {
+  margin: 0 auto;
+}
+
 /* ══════════════════════════════════════════════════════════════
    RESPONSIVE — Mobile (<768px)
    ══════════════════════════════════════════════════════════════ */
