@@ -79,7 +79,11 @@ const columns = [
   // (/workflow/battery-print.html?battery_id=X) in a new tab. Matches the
   // same pattern used in ElectrodesPage for the electrode-batch print.
   { field: '_print', header: '🖨️', minWidth: '42px', width: '42px', sortable: false, filterable: false },
-  { field: 'battery_id', header: '№', minWidth: '55px', width: '65px' },
+  // 'Аккум.' not '№' — CrudTable already shows a frozen row-number
+  // column with header '№' on the left, two columns named the same
+  // would read as duplicate. Cell renders as '#42' so the header
+  // word + '#' prefix together carry the meaning ("Аккум. #42").
+  { field: 'battery_id', header: 'Аккум.', minWidth: '70px', width: '85px' },
   { field: 'project_name', header: 'Проект', minWidth: '120px' },
   { field: 'form_factor', header: 'Форм-фактор', minWidth: '90px', width: '110px' },
   { field: 'status_display', header: 'Статус', minWidth: '80px', width: '100px' },

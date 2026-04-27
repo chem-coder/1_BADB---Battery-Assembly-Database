@@ -36,6 +36,11 @@ const selectedProjectId = ref(null)
 const selectedTapeId = ref(null)
 
 // ── Columns ──
+// Header naming convention: avoid duplicating CrudTable's frozen row-
+// number column (also "№"). Entity PK columns are renamed to "Партия"
+// (with "#42" cell content) so the row-number "№" and the entity PK
+// don't read as the same column. Same fix lives on AssemblyPage for
+// battery_id.
 const columns = [
   { field: '_constructor', header: '🔧', minWidth: '45px', width: '45px', sortable: false, filterable: false },
   // Synthetic column: "🖨️ Print" opens Dalia's print-friendly HTML
@@ -43,10 +48,10 @@ const columns = [
   // vanilla-JS flow she added in d1382cb but triggered from the Vue
   // electrodes table so users don't have to leave the SPA.
   { field: '_print', header: '🖨️', minWidth: '42px', width: '42px', sortable: false, filterable: false },
-  { field: 'cut_batch_id', header: '№', minWidth: '55px', width: '65px' },
+  { field: 'cut_batch_id', header: 'Партия', minWidth: '70px', width: '85px' },
   { field: 'tape_name', header: 'Лента', minWidth: '120px' },
   { field: 'project_name', header: 'Проект', minWidth: '100px' },
-  { field: 'role_display', header: 'Роль', minWidth: '60px', width: '75px' },
+  { field: 'role_display', header: 'Роль', minWidth: '70px', width: '95px' },
   { field: 'shape_display', header: 'Форма', minWidth: '80px', width: '120px' },
   { field: 'electrode_count', header: 'Эл-дов', minWidth: '65px', width: '75px' },
   // Capacity columns — values sourced from /api/electrodes/electrode-cut-batches/:id/report
@@ -55,7 +60,12 @@ const columns = [
   // sort by the numeric field correctly (the slot only handles display).
   { field: 'avg_cap_theoretical_mAh', header: 'Ёмкость теор., мАч', minWidth: '110px', width: '130px', sortable: true, filterable: false },
   { field: 'avg_cap_actual_mAh',      header: 'Ёмкость факт., мАч', minWidth: '110px', width: '130px', sortable: true, filterable: false },
-  { field: 'status_display', header: 'Статус', minWidth: '80px', width: '100px' },
+  // 'progress' column — visual 3-segment bar (created / drying_start /
+  // drying_end), aligns with TapesPage's 8-segment progress bar so the
+  // workflow tables share one visual language for "where is it in the
+  // pipeline". Replaces the textual `status_display` ('в работе' /
+  // 'сушится' / 'готово') which duplicated this signal in words.
+  { field: 'progress', header: 'Прогресс', minWidth: '80px', width: '100px', sortable: true, filterable: false },
   { field: 'created_at', header: 'Дата', minWidth: '90px', width: '110px' },
   { field: 'created_by_name', header: 'Оператор', minWidth: '100px' },
 ]
@@ -98,9 +108,12 @@ const tableData = computed(() => {
       ? Number(summary.average_capacity_actual_mAh) : null
     return {
       ...b,
-      role_display: b.tape_role === 'cathode' ? 'К' : b.tape_role === 'anode' ? 'А' : '—',
+      role_display: b.tape_role === 'cathode' ? 'Катод' : b.tape_role === 'anode' ? 'Анод' : '—',
       shape_display: formatShapeDisplay(b),
-      status_display: batchStatus(b),
+      // 0..3 — count of completed pipeline stages: created (always 1) +
+      // drying_start (+1) + drying_end (+1). Used by the 3-segment
+      // progress-bar column to mirror TapesPage's visual encoding.
+      progress: 1 + (b.drying_start ? 1 : 0) + (b.drying_end ? 1 : 0),
       avg_cap_theoretical_mAh: theo,
       avg_cap_actual_mAh: actual,
     }
@@ -182,11 +195,10 @@ async function loadProjects() {
   } catch {}
 }
 
-function batchStatus(batch) {
-  if (batch.drying_end) return 'готово'
-  if (batch.drying_start) return 'сушится'
-  return 'в работе'
-}
+// `batchStatus` removed — replaced by the `progress` numeric column
+// + the 3-segment progress-bar slot in the template. The textual
+// status was redundant with this visual encoding (see TapesPage's
+// 8-segment progress for the same pattern at workflow scale).
 
 function formatDate(dateStr) {
   if (!dateStr) return '—'
@@ -411,10 +423,21 @@ onUnmounted(() => clearTimeout(saveTimer))
           <template v-else>{{ fmtCapacity(data.avg_cap_actual_mAh) }}</template>
         </span>
       </template>
-      <template #col-status_display="{ data }">
-        <span :class="['status-badge', `status-badge--${data.status_display === 'готово' ? 'done' : data.status_display === 'сушится' ? 'drying' : 'work'}`]">
-          {{ data.status_display }}
-        </span>
+      <!-- Progress bar (3 segments — created / drying_start / drying_end).
+           Same visual idiom as TapesPage 'progress' column (8 segments).
+           Title gives the textual stage on hover for accessibility. -->
+      <template #col-progress="{ data }">
+        <div
+          class="progress-segments"
+          :title="data.progress >= 3 ? 'Готово' : data.progress >= 2 ? 'Сушится' : 'В работе'"
+        >
+          <div
+            v-for="i in 3"
+            :key="i"
+            class="progress-seg"
+            :class="{ 'progress-seg--done': i <= data.progress }"
+          ></div>
+        </div>
       </template>
     </CrudTable>
 
@@ -520,16 +543,25 @@ onUnmounted(() => clearTimeout(saveTimer))
 .role-badge--cathode { background: rgba(82, 201, 166, 0.15); color: #1d7a5f; }
 .role-badge--anode { background: rgba(0, 50, 116, 0.08); color: #003274; }
 
-.status-badge {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
+/* ── Progress segments (3 stages — created / drying_start / drying_end) ──
+   Mirrors TapesPage 'progress' column for visual consistency across
+   the workflow tables. Tooltip on the parent surfaces the textual
+   stage for users who don't read the bar by itself. */
+.progress-segments {
+  display: flex;
+  gap: 2px;
+  cursor: help;
 }
-.status-badge--done { background: rgba(82, 201, 166, 0.15); color: #1a8a64; }
-.status-badge--drying { background: rgba(211, 167, 84, 0.15); color: #9a7030; }
-.status-badge--work { background: rgba(0, 50, 116, 0.08); color: #003274; }
+.progress-seg {
+  flex: 1;
+  height: 6px;
+  border-radius: 2px;
+  background: rgba(0, 50, 116, 0.08);
+  transition: background 0.3s;
+}
+.progress-seg--done {
+  background: #52C9A6;
+}
 
 @media (max-width: 768px) {
   .filter-bar { flex-direction: column; align-items: stretch; }
