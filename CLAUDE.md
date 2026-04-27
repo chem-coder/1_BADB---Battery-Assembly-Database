@@ -335,6 +335,47 @@ Numbered so we can link to them from PR reviews.
    all; `'incomplete'` = some but not all; `'complete'` = all present.
    `capacityIncompleteHint` picks the right message per case.
 
+9. **Don't duplicate the «№» column.** `CrudTable` always renders a
+   frozen row-number column with header «№» on the left. Pages that
+   need to expose the entity's PK (e.g. `cut_batch_id`, `battery_id`)
+   should pick a distinct header — «Партия» / «Аккум.» — and let the
+   cell renderer keep the `#42` prefix. Reading «Партия #42» / «Аккум.
+   #42» makes the column's purpose explicit and disambiguates from
+   the position-in-current-view row number. Fixed in commit `3eda29d`
+   (ElectrodesPage, AssemblyPage).
+
+10. **«Тип» vs «Роль» for cathode/anode.** Cathode/anode is electrode
+    polarity / type, NOT a functional role. Header label MUST be «Тип»
+    everywhere this data shows up (TapesPage was right; ElectrodesPage
+    was the anomaly until commit `bd5063e`). «Роль» stays for: user
+    role (admin/lead/employee in ProfilePage / UsersPage), recipe-line
+    `recipe_role` (active / binder / conductive / solvent in
+    RecipesPage). The DB column `tape_role` keeps its name (Dalia's
+    schema) — only Vue display labels change.
+
+11. **Pipeline progress = segment bar, not text status.** TapesPage
+    has 8 segments (one per workflow step), ElectrodesPage 3 (created
+    / drying_start / drying_end). Both use `.progress-segments` +
+    `.progress-seg` + `.progress-seg--done`, with a `:title=` on the
+    parent `<div>` for the textual stage. AssemblyPage's
+    `status_display` STAYS textual because battery status is a
+    business state machine (draft / assembled / testing / completed
+    / failed), not a linear pipeline — segment bar wouldn't fit.
+
+12. **Operator info auto-fills from login, never from a Select.**
+    `created_by` MUST come from `req.user.userId` on the backend
+    (`routes/projects.js:157` template), and the frontend MUST NOT
+    expose a "Кто добавил" picker. The visible audit trail lives in
+    `EntityMeta` (Создано: ФИО, дата · Изменено: ФИО, дата) at the
+    bottom of edit dialogs and as a "Оператор" column on list views.
+    Pattern verified via the compliance sweep `71c095e` + `10570a5`
+    on the 4 reference CRUD pages. When adding a NEW reference page,
+    follow the same shape: backend forces `req.user.userId` (no body
+    `created_by` accepted), frontend has zero `created_by` form
+    state, list has `{ field: 'created_by_name', header: 'Оператор',
+    minWidth: '90px', width: '130px' }`, dialog has `<EntityMeta>`
+    block between form and footer fed from a `currentItem` ref.
+
 ## Remotes
 
 - **origin: `git@github.com:chem-coder/1_BADB---Battery-Assembly-Database.git` (Dalia) — main repo**
