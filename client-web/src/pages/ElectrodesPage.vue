@@ -51,7 +51,11 @@ const columns = [
   { field: 'cut_batch_id', header: 'Партия', minWidth: '70px', width: '85px' },
   { field: 'tape_name', header: 'Лента', minWidth: '120px' },
   { field: 'project_name', header: 'Проект', minWidth: '100px' },
-  { field: 'role_display', header: 'Роль', minWidth: '70px', width: '95px' },
+  // Header «Тип» (not «Роль») — cathode/anode is the electrode polarity
+  // type, not a functional role. Same naming on TapesPage column 'role'
+  // (header 'Тип'). The Vue field key still reads `role_display` because
+  // the underlying DB column is `tape_role` (Dalia's schema, untouched).
+  { field: 'role_display', header: 'Тип', minWidth: '70px', width: '95px' },
   { field: 'shape_display', header: 'Форма', minWidth: '80px', width: '120px' },
   { field: 'electrode_count', header: 'Эл-дов', minWidth: '65px', width: '75px' },
   // Capacity columns — values sourced from /api/electrodes/electrode-cut-batches/:id/report
