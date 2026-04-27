@@ -133,15 +133,28 @@ const PREVIEW_CSS = `
     color: rgba(0, 50, 116, 0.80) !important;
   }
 
-  /* Tables: tighter borders, navy header tint. */
-  .report_table th {
-    background: rgba(0, 50, 116, 0.06) !important;
-    color: #003274 !important;
-    font-weight: 600 !important;
+  /* Tables: stretch to full card width, auto-balance columns by
+     content, and wrap long text so a single greedy cell doesn't
+     blow the table sideways. The card around them clips overflow
+     so even pathological cases don't break the page layout. */
+  .report_section {
+    overflow: hidden;
+  }
+  .report_table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: auto !important;
   }
   .report_table th,
   .report_table td {
     border-color: rgba(0, 50, 116, 0.12) !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+  }
+  .report_table th {
+    background: rgba(0, 50, 116, 0.06) !important;
+    color: #003274 !important;
+    font-weight: 600 !important;
   }
 
   /* Dual-metric tiles: subtle navy accent on the "factual" column. */
