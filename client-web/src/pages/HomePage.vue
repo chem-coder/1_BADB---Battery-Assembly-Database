@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, defineAsyncComponent, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import { useToast } from 'primevue/usetoast'
 import api from '@/services/api'
 import Select from 'primevue/select'
 import MultiSelect from 'primevue/multiselect'
@@ -14,6 +15,29 @@ const DashboardAnalytics = defineAsyncComponent(() => import('@/components/Dashb
 import { workflowSections, referenceSections } from '@/config/navigation'
 
 const router = useRouter()
+const route = useRoute()
+const toast = useToast()
+
+// Role-gate flash: router.beforeEach redirects role-denied users here
+// with ?denied=<required-role>. Fire a toast explaining WHY they
+// landed on the home page instead of the URL they asked for, then
+// replace the URL to clean the query. Without this hook the redirect
+// is silent — user sees their URL change to / with no explanation.
+onMounted(() => {
+  const denied = route.query.denied
+  if (typeof denied === 'string' && denied.length > 0) {
+    const roleLabels = { admin: 'администратор', lead: 'ведущий', employee: 'сотрудник' }
+    toast.add({
+      severity: 'warn',
+      summary: 'Недостаточно прав',
+      detail: `Нужна роль «${roleLabels[denied] || denied}» для доступа к этой странице.`,
+      life: 4500,
+    })
+    // Strip the flash query param without re-navigating — keeps URL
+    // clean so a browser refresh doesn't re-fire the toast.
+    router.replace({ path: '/', query: {} })
+  }
+})
 
 // ── Tab state ─────────────────────────────────────────────────────────
 const activeTab = ref('overview') // 'overview' | 'pipeline' | 'graph' | 'analytics'
@@ -544,21 +568,78 @@ const filteredProduction = computed(() => {
 }
 .timeline-list { padding: 0.5rem 0; overflow-y: auto; max-height: 500px; }
 .timeline-item {
-  display: flex; align-items: flex-start; gap: 0.75rem;
+  display: flex; align-items: center; gap: 0.7rem;
   padding: 0.5rem 1.25rem;
   transition: background 0.12s;
 }
 .timeline-item:hover { background: rgba(0, 50, 116, 0.03); }
 .timeline-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px;
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
 }
+/* Was `flex-wrap: wrap` which made every span jump to its own line as
+   soon as a long Russian full name landed in the row. Switched to a
+   single-row grid: action pill | entity ref | user name (truncates) |
+   time. `min-width: 0` on the wrapper + the name lets the name shrink
+   gracefully with ellipsis instead of pushing the time off the row. */
 .timeline-content {
-  display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; color: #333; line-height: 1.4;
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(60px, auto) minmax(70px, auto) 1fr auto;
+  gap: 0.6rem;
+  align-items: baseline;
+  font-size: 12px;
+  color: #4b5563;
+  line-height: 1.4;
 }
-.timeline-action { font-weight: 600; color: #003274; }
-.timeline-entity { color: #6B7280; }
-.timeline-user { color: #6B7280; font-style: italic; }
-.timeline-time { color: #9CA3AF; margin-left: auto; font-size: 11px; white-space: nowrap; }
+.timeline-action {
+  font-weight: 600;
+  color: #003274;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  background: rgba(0, 50, 116, 0.06);
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-align: center;
+  white-space: nowrap;
+}
+.timeline-entity {
+  color: #6B7280;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.timeline-user {
+  color: #4b5563;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.timeline-time {
+  color: #9CA3AF;
+  font-size: 11px;
+  white-space: nowrap;
+  justify-self: end;
+}
+
+/* Narrow viewports: stack the user name on a second line so neither
+   the entity nor the time get squashed. Action + entity + time stay
+   on the top row; the long name gets the full width below. */
+@media (max-width: 540px) {
+  .timeline-content {
+    grid-template-columns: auto auto 1fr;
+    grid-template-areas:
+      "action entity time"
+      "user   user   user";
+    row-gap: 4px;
+  }
+  .timeline-action { grid-area: action; }
+  .timeline-entity { grid-area: entity; }
+  .timeline-time   { grid-area: time; }
+  .timeline-user   { grid-area: user; }
+}
 
 /* ── Mobile ── */
 @media (max-width: 768px) {

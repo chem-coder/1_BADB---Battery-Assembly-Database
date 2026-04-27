@@ -20,17 +20,20 @@ router.post('/', auth, async (req, res) => {
     name,
     variant_label,
     notes,
-    created_by,
     lines
   } = req.body;
 
-  const createdBy = Number(created_by);
+  // SECURITY: created_by is always the current authenticated user.
+  // Ignore any created_by in req.body to prevent impersonation.
+  // Same template as routes/projects.js:157 + the April-audit fix on
+  // tapes (commit e6b6232). Aligns with the authenticated-identity
+  // invariant across all reference create endpoints.
+  const createdBy = req.user.userId;
 
   if (
-    !Number.isInteger(createdBy) ||
     !name ||
     !role ||
-    !Array.isArray(lines) || 
+    !Array.isArray(lines) ||
     lines.length === 0
   ) {
     return res.status(400).json({ error: 'Некорректные данные запроса' });
@@ -126,10 +129,11 @@ router.post('/', auth, async (req, res) => {
 // COPY: duplicate recipe + lines
 router.post('/:id/duplicate', auth, async (req, res) => {
   const sourceRecipeId = Number(req.params.id);
-  const { created_by } = req.body;
-  const createdBy = Number(created_by);
+  // SECURITY: created_by forced to the authenticated user (same as the
+  // primary POST handler above) — ignore req.body.created_by.
+  const createdBy = req.user.userId;
 
-  if (!Number.isInteger(sourceRecipeId) || !Number.isInteger(createdBy)) {
+  if (!Number.isInteger(sourceRecipeId)) {
     return res.status(400).json({ error: 'Некорректные данные запроса' });
   }
 

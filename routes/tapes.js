@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireRole } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
 
 const WORKFLOW_STATUS_ORDER = [
@@ -624,7 +624,6 @@ router.post('/', auth, async (req, res) => {
     name,
     project_id,
     tape_recipe_id,
-    created_by,
     notes,
     calc_mode,
     target_mass_g
@@ -632,11 +631,11 @@ router.post('/', auth, async (req, res) => {
 
   const projectId = project_id ? Number(project_id) : null;
   const recipeId  = tape_recipe_id ? Number(tape_recipe_id) : null;
-  const createdBy = Number(created_by);
+  // `created_by` is forced to the authenticated user — never trust
+  // req.body.created_by. Previously a client could POST
+  // {created_by: <other_user_id>, ...} and forge the tape's provenance.
+  const createdBy = req.user.userId;
 
-  if (!Number.isInteger(createdBy)) {
-    return res.status(400).json({ error: 'Некорректные данные: created_by обязателен' });
-  }
   if (project_id && !Number.isInteger(projectId)) {
     return res.status(400).json({ error: 'Некорректный project_id' });
   }
@@ -767,7 +766,6 @@ router.put('/:id', auth, async (req, res) => {
     name,
     project_id,
     tape_recipe_id,
-    created_by,
     notes,
     calc_mode,
     target_mass_g
@@ -775,15 +773,14 @@ router.put('/:id', auth, async (req, res) => {
 
   const projectId = project_id ? Number(project_id) : null;
   const recipeId  = tape_recipe_id ? Number(tape_recipe_id) : null;
-  const createdBy = Number(created_by);
-
-  if (!Number.isInteger(createdBy)) {
-    return res.status(400).json({ error: 'Некорректные данные: created_by обязателен' });
-  }
+  // `created_by` is immutable creation metadata — an UPDATE must not
+  // re-attribute who created the tape. Previously this route accepted
+  // created_by from the body and wrote it into the UPDATE, allowing
+  // anyone with update rights to rewrite provenance. Removed.
 
   try {
     const current = await pool.query(
-      'SELECT name, project_id, tape_recipe_id, created_by, notes, calc_mode, target_mass_g FROM tapes WHERE tape_id = $1',
+      'SELECT name, project_id, tape_recipe_id, notes, calc_mode, target_mass_g FROM tapes WHERE tape_id = $1',
       [id]
     );
     if (current.rowCount === 0) {
@@ -797,20 +794,18 @@ router.put('/:id', auth, async (req, res) => {
         name = $1,
         project_id = $2,
         tape_recipe_id = $3,
-        created_by = $4,
-        notes = $5,
-        calc_mode = $6,
-        target_mass_g = $7,
-        updated_by = $8,
+        notes = $4,
+        calc_mode = $5,
+        target_mass_g = $6,
+        updated_by = $7,
         updated_at = now()
-      WHERE tape_id = $9
+      WHERE tape_id = $8
       RETURNING *
       `,
       [
         name,
         projectId,
         recipeId,
-        createdBy,
         notes ?? null,
         calc_mode ?? null,
         target_mass_g ?? null,
@@ -825,7 +820,7 @@ router.put('/:id', auth, async (req, res) => {
 
     await trackChanges(pool, 'tape', 'tapes', 'tape_id', id,
       current.rows[0],
-      { name, project_id: projectId, tape_recipe_id: recipeId, created_by: createdBy, notes: notes ?? null, calc_mode: calc_mode ?? null, target_mass_g: target_mass_g ?? null },
+      { name, project_id: projectId, tape_recipe_id: recipeId, notes: notes ?? null, calc_mode: calc_mode ?? null, target_mass_g: target_mass_g ?? null },
       req.user.userId
     );
 
@@ -837,14 +832,24 @@ router.put('/:id', auth, async (req, res) => {
 });
 
 // DELETE
-router.delete('/:id', auth, async (req, res) => {
+// Restricted to admin/lead: employees should not be able to destroy arbitrary
+// tapes owned by other users. Before this guard, any authenticated user could
+// DELETE /api/tapes/:id and receive {success:true} regardless of ownership.
+router.delete('/:id', auth, requireRole('admin', 'lead'), async (req, res) => {
   const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный tape_id' });
+  }
 
   try {
-    await pool.query(
+    const result = await pool.query(
       `DELETE FROM tapes WHERE tape_id = $1`,
       [id]
     );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Лента не найдена' });
+    }
 
     res.json({ success: true });
   } catch (err) {

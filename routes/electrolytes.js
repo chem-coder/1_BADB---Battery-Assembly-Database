@@ -23,10 +23,14 @@ router.post('/', auth, async (req, res) => {
     additives,
     notes,
     status = 'active',
-    created_by
   } = req.body;
 
-  if (!name || !electrolyte_type || !created_by) {
+  // SECURITY: created_by is always the current authenticated user.
+  // Ignore any req.body.created_by to prevent impersonation.
+  // Same template as routes/projects.js:157.
+  const created_by = req.user.userId;
+
+  if (!name || !electrolyte_type) {
     return res.status(400).json({ error: 'Обязательные поля отсутствуют' });
   }
 

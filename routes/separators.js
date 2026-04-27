@@ -30,7 +30,10 @@ router.post('/', auth, async (req, res) => {
   } = req.body;
 
   const structure_id = Number(req.body.structure_id);
-  const created_by  = Number(req.body.created_by);
+  // SECURITY: created_by is always the current authenticated user.
+  // Ignore any req.body.created_by to prevent impersonation.
+  // Same template as routes/projects.js:157.
+  const created_by  = req.user.userId;
 
   // 1. validate required strings
   if (!name) {
@@ -38,7 +41,7 @@ router.post('/', auth, async (req, res) => {
   }
 
   // 2. validate required foreign keys
-  if (!Number.isInteger(structure_id) || !Number.isInteger(created_by)) {
+  if (!Number.isInteger(structure_id)) {
     return res.status(400).json({ error: 'Некорректные идентификаторы' });
   }
 

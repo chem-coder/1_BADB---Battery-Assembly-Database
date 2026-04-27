@@ -194,13 +194,20 @@ router.post('/', auth, async (req, res) => {
   const finalDeptId = confLevel === 'department' ? deptId : null;
 
   try {
+    // NOTE: start_date is NOT NULL in the schema with DEFAULT CURRENT_DATE.
+    // If we pass $4=NULL explicitly, PG treats it as "user chose NULL" and
+    // rejects with a not-null violation instead of falling back to the
+    // default. COALESCE to CURRENT_DATE handles the common "form submitted
+    // with empty start date" case.  Same defense for `status` (NOT NULL,
+    // default 'active') in case the frontend ever sends null explicitly.
     const result = await pool.query(
       `
       INSERT INTO projects
         (name, created_by, lead_id, start_date, due_date, status, description,
          confidentiality_level, department_id)
       VALUES
-        ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5,
+         COALESCE($6::project_status, 'active'::project_status), $7, $8, $9)
       RETURNING project_id
       `,
       [
@@ -209,7 +216,7 @@ router.post('/', auth, async (req, res) => {
         leadId,
         start_date || null,
         due_date || null,
-        status,
+        status || null,
         description || null,
         confLevel,
         finalDeptId

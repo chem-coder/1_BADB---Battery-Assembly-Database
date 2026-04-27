@@ -101,7 +101,15 @@ Axios `baseURL` MUST be empty string `''` in dev. Direct cross-origin requests
 2. auth_log is append-only — never UPDATE or DELETE
 3. Contracts are versioned — new version = new file, never edit v1
 4. Migrations are forward-only — no DROP TABLE, no destructive ALTERs
-5. Do NOT modify public/ — Dalia's HTML files
+5. Do NOT modify public/ — Dalia's HTML files.
+   **Narrow exception:** a minimal, additive patch is acceptable in a
+   Dima-branch if it repairs a bug inside a file she authored AND the
+   Vue SPA depends on the fixed behaviour AND the commit message
+   spells out the override rationale for PR review. Examples: adding
+   an Authorization header to a fetch so her print page works in prod,
+   wiring in a field already in the schema. NOT acceptable: redesigning
+   her UI, refactoring structure, deleting features. When in doubt,
+   open a GitHub issue for Dalia instead of editing.
 6. LAN-only system — no external API calls
 7. Optimistic locking — WHERE version = $expected, 409 on mismatch
 
@@ -152,6 +160,222 @@ Goes into PageHeader `#actions` slot. Two states: unsaved (ochre) / saved (green
 3. Use `<CrudTable>` + `<SaveIndicator>` — zero table CSS needed
 4. Add custom `#col-{field}` slots only for non-standard cells (badges, dates, etc.)
 
+## Vue frontend conventions
+
+Foundational principles + a pattern catalog for Vue work. Accumulated
+from the Item 1–5 / A–E / Phase β/γ/δ integration sprints. Read this
+BEFORE designing any new Vue feature — it saves the "how does Vue do
+X?" grep cycle every time.
+
+### Port functionality, not UX
+
+Dalia's HTML shows what a feature DOES (upload file, edit actual
+mass, grant access). It does NOT dictate how the Vue SPA renders it.
+When porting, grep Vue for the nearest existing pattern — don't
+invent new UX because "that's how her page looked". The integration
+work is a translation, not a transplant.
+
+Concrete: if her legacy page uses a green "Delete" button per row,
+do not copy that. Vue tables use right-click context menu for delete
+(`CrudTable` pattern); Vue file-attachment lists use an inline
+`pi-trash` button (`MaterialsPage` pattern). Pick the Vue-idiom that
+matches the shape of your data.
+
+### UX pattern catalog (canonical homes)
+
+| UI kind | Use this | Located |
+|---|---|---|
+| CRUD table | `CrudTable` + `#col-{field}` slots; right-click → context menu | `components/CrudTable.vue` |
+| File attachment list | Card with inline `pi-trash` button per row + `confirm('...')` + in-flight guard | `pages/reference/MaterialsPage.vue` — `deleteFile` pattern |
+| File upload queue | Staged queue with per-file notes, sequential POSTs, client-side size cap | `components/BatteryElectrochemEditor.vue` |
+| Modal dialog | PrimeVue `<Dialog v-model:visible="…">` + `#footer` slot with Cancel + Action | scoped per page |
+| Popover | PrimeVue `<Popover>` via parent ref `.toggle(event)` anchoring | `components/CyclingStylePopover.vue` |
+| Toolbar save indicator | `SaveIndicator` in `PageHeader #actions` slot | `components/SaveIndicator.vue` |
+| Multi-entity constructor | `TapeConstructor` (generic) with `:stageConfigs`/`:stateFactory`/`:entityType` props | `components/TapeConstructor.vue` |
+| Stage navigator + field editor | `StageNavigator` + `StageCompareEditor` | `components/` |
+| Auto-save per stage | 800 ms debounce via `_scheduleAutoSave` in `use*State.js` | composable |
+| Async fetch-by-id cache | `useBackendCache` with concurrency cap + invalidation-race guard + `isEmpty` verdict | `composables/useBackendCache.js` |
+| Error surfacing | `classifyAxiosError(err)` → `errorMessageRu(code, context)` → toast | `utils/errorClassifier.js` |
+| Contextual "why is this cell missing" hint | `capacityIncompleteHint(summary, context)` + ochre `pi-question-circle` icon | `utils/formatCapacity.js` |
+| File → base64 upload | `fileToBase64(file)` util | `utils/fileToBase64.js` |
+| Tooltip | `v-tooltip.top="'text'"` directive (PrimeVue, globally registered in `main.js`) | `main.js` registers |
+| Glass-card panel | White bg, `border: 1px solid rgba(0,50,116,0.12)`, `border-radius: 10px`, padding 10–14 px | project-wide convention |
+| Section header (uppercase) | `font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: rgba(0,50,116,0.50)` | project-wide convention |
+| Accent colors | Primary `#003274` navy · accent `#52C9A6` green · warning/hint `#d4a441` ochre · danger `rgba(200,80,70,…)` | project-wide palette |
+
+### Shared singletons (single source of truth)
+
+Before writing a helper, check if one exists here. Factor a new one
+out only when the second copy appears — two usage sites is the
+threshold, not one.
+
+- **`config/navigation.js`** — sidebar + router + pages, derived from
+  one `workflowSections` / `testSections` / `referenceSections` /
+  `adminSections` array. Update here, everything else follows.
+- **`utils/formatCapacity.js`** — every capacity / mass / voltage /
+  fraction-status display string. `capacityIncompleteHint` for
+  contextual tooltips when a cell shows "—".
+- **`utils/errorClassifier.js`** — axios error → `'auth' | 'missing'
+  | 'server' | 'network'` → Russian message. `'empty'` is a separate
+  verdict produced by `useBackendCache.isEmpty`.
+- **`utils/fileToBase64.js`** — browser `File` → base64 payload
+  (strips the `data:<mime>;base64,` prefix).
+- **`composables/useBackendCache.js`** — fetch-by-id with cache,
+  dedup, throttle, invalidation-race guard via gen counter. The
+  pattern for any per-id side-channel (capacity summaries, electrochem
+  file lists, electrode-batch reports).
+- **`composables/useCyclingStyles.js`** — per-chart style presets
+  keyed by user, palette library + preset save/rename/delete.
+
+### Composable return conventions
+
+`use*State.js` composables return a MIX of refs and reactive objects.
+Consumers MUST handle them correctly:
+
+```js
+const s = useTapeState({ tapeId })
+
+// refs — USE .value
+s.currentTapeId.value
+s.currentRecipeLines.value
+s.loading.value
+s.anyDirty.value          // (computed ref — also .value)
+
+// reactive objects — DIRECT access, no .value
+s.general.tapeRecipeId
+s.steps.coating.operator
+s.slurryActuals[lineId].mode
+s.instancesByLineId[lineId]
+```
+
+Passing a composable instance through a prop — refs inside the prop
+object are NOT auto-unwrapped:
+
+```js
+<MyEditor :tapeState="state" />
+
+// Inside MyEditor — still need .value
+const lines = computed(() => props.tapeState?.currentRecipeLines?.value || [])
+```
+
+### Preference order when a feature touches Dalia's side
+
+Prefer lower-impact changes to higher-impact ones. From most to least
+preferable:
+
+1. **Our-side utility** in `client-web/src/utils/` or
+   `client-web/src/composables/` — e.g. `fileToBase64`,
+   `capacityIncompleteHint`.
+2. **Our-side middleware** in `app.js` — e.g. Phase δ legacy
+   redirect (commit `0798001`). Intercepts user-facing behaviour
+   without touching her files.
+3. **New route** in `routes/*.js` — purely additive endpoints we
+   own (Dima-added functionality she hasn't built), e.g. a future
+   `DELETE /api/batteries/battery_electrochem/:id`.
+4. **Narrow patch to `public/*.js` or `public/*.html`** — ONLY for
+   bugfixes where her file has a real defect AND the Vue SPA depends
+   on the fixed behaviour. Commit body MUST spell out the override
+   rationale for her PR review. Precedent: auth-header patches on
+   her print JS (commits `2cca4b4` + `93d9471`). NOT acceptable:
+   UX redesign, structural refactor, feature deletion. When in
+   doubt → open a GitHub issue on her repo instead.
+
+Phase δ (`0798001`) is the template for option 2 when a change spans
+multiple of her files.
+
+### Common pitfalls (from this project's history)
+
+Numbered so we can link to them from PR reviews.
+
+1. **`|| null` silently drops `0`.** For numeric fields that legitimately
+   accept zero (OCV, ESR, masses), use `x === '' ? null : Number(x)`
+   with a `Number.isFinite` guard. See commit `e6b6232`; G1's
+   `toNum()` helper in `useBatteryState.saveStep('qc')` is the canonical
+   shape.
+
+2. **Vue 3 `watch(ref, cb, { deep: true })` on in-place mutations**
+   delivers `oldValue === newValue` — the deep-watcher doesn't snapshot
+   before the mutation. Use the getter form:
+   ```js
+   watch(() => [...constructorIds.value], (ids, oldIds) => { ... })
+   ```
+   Diagnosed during Phase 0 `useBackendCache` migration.
+
+3. **Refs inside prop objects are NOT auto-unwrapped.** See the
+   "Composable return conventions" table above. Always `.value` when
+   reaching through a prop to a ref property.
+
+4. **"Script exists, template missing" regression class.** State and
+   handlers wired in `<script setup>`, but the `<Dialog>` / component
+   that consumes them was never committed. Silent no-op on user
+   click, build passes clean. Example: mass editor regression in
+   commit `6508738` → fixed `ddef3b1`. Sweep periodically for `show*`
+   / `*Visible` refs referenced only in script.
+
+5. **Static `/uploads/*` has no auth** (pre-existing Dalia behaviour).
+   File-attachment links work without a Bearer token — insecure on a
+   LAN. Tracked in Dalia PR backlog. Don't build Vue features that
+   assume auth-gated downloads until this is fixed.
+
+6. **`express.json({ limit: '10mb' })` + base64 inflation `×1.34`**
+   → practical per-file upload cap is ~7 MB raw. We enforce 6 MB
+   client-side (`BatteryElectrochemEditor.vue` `MAX_FILE_BYTES`) for
+   margin. Sequential per-file POST avoids batch compounding.
+
+7. **`/reference/users` is admin-gated.** Non-admin users landing there
+   (e.g. via a legacy `/reference/users.html` bookmark after Phase δ
+   redirect) used to get silently bounced to `/` by `router.beforeEach`.
+   Now flashed via `?denied=<role>` query param that `HomePage` picks
+   up on mount and surfaces as a toast, then strips from the URL. When
+   adding a new role-gated route, confirm it has `meta.role` set so
+   the guard runs — otherwise the same silent-bounce problem recurs.
+
+8. **`actual_fraction_status === 'incomplete' | 'unavailable' | 'complete'`**
+   are three different states. `'unavailable'` = no recipe actuals at
+   all; `'incomplete'` = some but not all; `'complete'` = all present.
+   `capacityIncompleteHint` picks the right message per case.
+
+9. **Don't duplicate the «№» column.** `CrudTable` always renders a
+   frozen row-number column with header «№» on the left. Pages that
+   need to expose the entity's PK (e.g. `cut_batch_id`, `battery_id`)
+   should pick a distinct header — «Партия» / «Аккум.» — and let the
+   cell renderer keep the `#42` prefix. Reading «Партия #42» / «Аккум.
+   #42» makes the column's purpose explicit and disambiguates from
+   the position-in-current-view row number. Fixed in commit `3eda29d`
+   (ElectrodesPage, AssemblyPage).
+
+10. **«Тип» vs «Роль» for cathode/anode.** Cathode/anode is electrode
+    polarity / type, NOT a functional role. Header label MUST be «Тип»
+    everywhere this data shows up (TapesPage was right; ElectrodesPage
+    was the anomaly until commit `bd5063e`). «Роль» stays for: user
+    role (admin/lead/employee in ProfilePage / UsersPage), recipe-line
+    `recipe_role` (active / binder / conductive / solvent in
+    RecipesPage). The DB column `tape_role` keeps its name (Dalia's
+    schema) — only Vue display labels change.
+
+11. **Pipeline progress = segment bar, not text status.** TapesPage
+    has 8 segments (one per workflow step), ElectrodesPage 3 (created
+    / drying_start / drying_end). Both use `.progress-segments` +
+    `.progress-seg` + `.progress-seg--done`, with a `:title=` on the
+    parent `<div>` for the textual stage. AssemblyPage's
+    `status_display` STAYS textual because battery status is a
+    business state machine (draft / assembled / testing / completed
+    / failed), not a linear pipeline — segment bar wouldn't fit.
+
+12. **Operator info auto-fills from login, never from a Select.**
+    `created_by` MUST come from `req.user.userId` on the backend
+    (`routes/projects.js:157` template), and the frontend MUST NOT
+    expose a "Кто добавил" picker. The visible audit trail lives in
+    `EntityMeta` (Создано: ФИО, дата · Изменено: ФИО, дата) at the
+    bottom of edit dialogs and as a "Оператор" column on list views.
+    Pattern verified via the compliance sweep `71c095e` + `10570a5`
+    on the 4 reference CRUD pages. When adding a NEW reference page,
+    follow the same shape: backend forces `req.user.userId` (no body
+    `created_by` accepted), frontend has zero `created_by` form
+    state, list has `{ field: 'created_by_name', header: 'Оператор',
+    minWidth: '90px', width: '130px' }`, dialog has `<EntityMeta>`
+    block between form and footer fed from a `currentItem` ref.
+
 ## Remotes
 
 - **origin: `git@github.com:chem-coder/1_BADB---Battery-Assembly-Database.git` (Dalia) — main repo**
@@ -164,6 +388,134 @@ Goes into PageHeader `#actions` slot. Two states: unsaved (ochre) / saved (green
 - Branch naming: `dima/<feature-name>` (e.g. `dima/integrate-auth-frontend`)
 - NEVER force push to main
 - NEVER commit directly to main — always use a branch + PR
+
+## Sync with Dalia's main (MANDATORY — run at session start)
+
+Dalia pushes to `origin/main` between our sessions. Without periodic
+sync, our feature branch silently drifts — we work against an old
+snapshot, miss her new features, and accumulate a merge surprise.
+
+**Session-start checklist** (run before any code work on a long-running
+feature branch):
+
+```bash
+# 1. Refresh remote refs (silent no-op if nothing changed)
+git fetch origin
+
+# 2. Show what's in main that we don't have
+git log --oneline origin/main ^$(git merge-base origin/main HEAD)
+
+# 3. Show our unpushed commits
+git log --oneline origin/$(git branch --show-current)..HEAD
+
+# 4. Dry-run merge to detect conflicts early
+git merge-tree $(git merge-base origin/main HEAD) HEAD origin/main \
+  | grep -cE "^<<<<<<<|^=======|^>>>>>>>"
+#   → 0 means clean merge
+```
+
+If step 2 shows new commits from Dalia, **merge before starting new
+work**:
+
+```bash
+git merge origin/main --no-edit
+# Run any new migrations she added:
+for f in migrations/d*.sql; do
+  # Only run ones newer than you've applied — check migrations_log.txt
+  psql -U Dalia -d badb_app_v1 -f "$f"
+done
+# Update migrations_log.txt to reflect your now-applied range
+```
+
+**Namespace rule** (already documented in migrations/README.md):
+- Dima: `NNN_*.sql` (numeric prefix — 001…020…)
+- Dalia: `dNNN_*.sql` (d-prefix — d001…d027…)
+- Roma: future namespace TBD
+
+Namespaces never collide → merges stay clean even when both sides
+add migrations in parallel.
+
+**migrations_log.txt** — Dalia's shared tracker. Each developer
+records their last-applied migration so the others know what's
+current on each machine. Update it after applying a batch.
+
+## Avoiding drift during a session
+
+When Chat 1 and Chat 2 (or two humans) edit the same worktree in
+parallel, commit dances get tangled. Proven strategy:
+
+1. **One owner per file per task** — if Chat 1 does retention toggle
+   (CyclingPage.vue state + toolbar), Chat 2 should not edit the
+   same toolbar block the same hour.
+2. **`git add <path>` is explicit, `git add -A` is destructive** —
+   when another chat has uncommitted WIP in the worktree,
+   `-A` picks it up and credits it to your commit.
+3. **Backup → revert → reapply dance** — if you must commit your
+   isolated change while another chat's WIP sits in the worktree:
+   ```bash
+   cp client-web/src/components/X.vue /tmp/bak.vue
+   git checkout HEAD -- client-web/src/components/X.vue
+   # re-apply only your edits (Edit tool with exact strings)
+   git add client-web/src/components/X.vue
+   git commit
+   cp /tmp/bak.vue client-web/src/components/X.vue  # restore WIP
+   ```
+4. **Push immediately after commit** — keeps origin authoritative
+   so the other chat can rebase on top of your work.
+
+## Feature integration protocol (design-first)
+
+Retrospective of the 2026-04-21 session found: implementation-first
+development on ported Dalia features produced 3–5 audit rounds per
+feature, with one 🔴 per feature caught only after the code had been
+written. Root cause: writing UI before reading external-API invariants
+(Vue 3 watch semantics, axios error shape, PG case folding, Express
+body limits). Lesson: a 5-minute design doc upfront saves 30 minutes
+of debug cycles.
+
+**Flow for every non-trivial Vue integration of a backend feature:**
+
+1. **Design doc** (5–10 min). One page, in-chat or in `docs/designs/`.
+   Fields:
+   - *User story* — who does what, when, and why.
+   - *Backend contract* — exact endpoint path, request shape, response
+     shape, error codes (401/404/500/network).
+   - *Vue placement* — which page, which region, trigger (watcher?
+     button? mount?).
+   - *State design* — cache keyed by what, invalidation trigger,
+     loading flag, error flag enum.
+   - *Edge cases checklist* — empty data, auth expired, network
+     timeout, concurrency fan-out, same-id double toggle, deep-link.
+   - *Known quirks to check* — framework behaviour at the exact point
+     of use. Example: "Vue 3 `watch(ref, cb, {deep:true})` — does
+     oldValue snapshot on in-place mutation?" — check BEFORE coding.
+   - *Formatting consistency* — same precision / label / date format
+     as the rest of the app and Dalia's legacy page.
+
+2. **Agent design review** (3 min). Give the doc to a general-purpose
+   agent with the prompt "what invariants are missing? what edge cases
+   are unhandled? what framework quirks could bite?". Agent answers
+   with concrete refs. Fix the design doc.
+
+3. **Implement** (30–60 min). Work to the design, not on instinct.
+
+4. **Build + node -e syntax check.**
+
+5. **Focused audit** — one agent round, with the design-doc checklist
+   as explicit verification scope.
+
+6. **1 round fix if needed** (rare if steps 1–2 were thorough).
+
+7. **Commit + push.**
+
+Expected: 0–1 audit rounds per feature, not 3–5. If a feature needs
+more than 1 fix round, pause and write a better design doc for the
+next one.
+
+**Scope rule:** 1 feature = 1 commit ≤ ~150 lines. Larger scope =
+split. A+B in one commit (326 lines) was at the edge — caused several
+missed-invariant bugs that wouldn't have slipped if A and B had been
+separate design docs.
 
 ## Security
 
