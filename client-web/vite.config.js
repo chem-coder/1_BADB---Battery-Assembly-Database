@@ -34,6 +34,17 @@ export default defineConfig({
         target: 'http://localhost:3003',
         changeOrigin: true,
       },
+      // /uploads — backend serves uploaded files (electrochem PDFs,
+      // material attachments, etc.) via `app.use('/uploads',
+      // express.static(...))`. Without this proxy, the dev server
+      // falls back to the SPA's `index.html` for /uploads/* requests
+      // and the user "downloads" the HTML shell instead of the
+      // actual file. (Diagnosed when a downloaded PDF turned out to
+      // be the Vue index.html on disk.)
+      '/uploads': {
+        target: 'http://localhost:3003',
+        changeOrigin: true,
+      },
     },
   },
   build: {

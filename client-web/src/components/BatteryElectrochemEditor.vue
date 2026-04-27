@@ -211,6 +211,35 @@ function formatSize(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
 }
 
+// File-type metadata. Drives:
+//   - the leading file-type icon in each row (PrimeIcons `pi-file-*`).
+//   - whether the «preview» button is meaningful for this format —
+//     PDFs/images/text render inline in a new browser tab without a
+//     download prompt; binary office formats trigger a download even
+//     with `target="_blank"` so the preview button is hidden for them
+//     (download stays available).
+const FILE_TYPE_META = {
+  pdf:  { icon: 'pi pi-file-pdf',   tone: 'pdf',   previewable: true },
+  png:  { icon: 'pi pi-image',      tone: 'image', previewable: true },
+  jpg:  { icon: 'pi pi-image',      tone: 'image', previewable: true },
+  jpeg: { icon: 'pi pi-image',      tone: 'image', previewable: true },
+  gif:  { icon: 'pi pi-image',      tone: 'image', previewable: true },
+  svg:  { icon: 'pi pi-image',      tone: 'image', previewable: true },
+  webp: { icon: 'pi pi-image',      tone: 'image', previewable: true },
+  txt:  { icon: 'pi pi-file',       tone: 'text',  previewable: true },
+  csv:  { icon: 'pi pi-file',       tone: 'text',  previewable: true },
+  xlsx: { icon: 'pi pi-file-excel', tone: 'sheet', previewable: false },
+  xls:  { icon: 'pi pi-file-excel', tone: 'sheet', previewable: false },
+  docx: { icon: 'pi pi-file-word',  tone: 'doc',   previewable: false },
+  doc:  { icon: 'pi pi-file-word',  tone: 'doc',   previewable: false },
+}
+const FILE_TYPE_DEFAULT = { icon: 'pi pi-file', tone: 'other', previewable: false }
+
+function fileTypeMeta(fileName) {
+  const ext = String(fileName || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]
+  return FILE_TYPE_META[ext] || FILE_TYPE_DEFAULT
+}
+
 // Warn (don't block) when the card unmounts with unsent files — the
 // user most likely didn't mean to discard them. Vue can't block
 // unmount from a confirm() cleanly, so a toast is the honest UX.
@@ -235,34 +264,67 @@ onBeforeUnmount(() => {
       </span>
     </div>
 
-    <!-- Existing uploaded files -->
+    <!-- Existing uploaded files. Each row:
+           [file-type icon] [filename — previewable click-target]
+                            [size·date] [👁 preview] [⬇ download] [🗑]
+         The filename is a click-target that opens preview-able files
+         (PDF / image / text) inline in a new tab. The dedicated 👁
+         button is hidden for non-previewable formats (xlsx/docx) so
+         the user doesn't get a confusing instant-download. ⬇ always
+         forces save via the `download` attr. -->
     <div v-if="!loading && files.length > 0" class="ec-list">
       <div
         v-for="f in files"
         :key="f.battery_electrochem_id"
         class="ec-row"
+        :class="[`ec-row--${fileTypeMeta(f.file_name).tone}`]"
       >
+        <i :class="['ec-file-icon', fileTypeMeta(f.file_name).icon]"></i>
+
+        <!-- Filename — clickable for preview if format supports it,
+             plain text otherwise (download via the ⬇ button). -->
         <a
+          v-if="fileTypeMeta(f.file_name).previewable"
           :href="f.file_link"
-          :download="f.file_name"
           target="_blank"
           rel="noopener noreferrer"
-          class="ec-file-link"
-          :title="`Скачать ${f.file_name}`"
-        >
-          <i class="pi pi-download"></i>
-          <span class="ec-file-name">{{ f.file_name }}</span>
-        </a>
+          class="ec-file-name-link"
+          :title="`Открыть «${f.file_name}» для просмотра`"
+        >{{ f.file_name }}</a>
+        <span v-else class="ec-file-name-link ec-file-name-link--plain">{{ f.file_name }}</span>
+
         <span class="ec-uploaded-at">{{ formatDate(f.uploaded_at) }}</span>
-        <button
-          type="button"
-          class="ec-delete-btn"
-          :disabled="!!deletingIds[f.battery_electrochem_id]"
-          :title="`Удалить файл «${f.file_name}»`"
-          @click="deleteFile(f)"
-        >
-          <i :class="deletingIds[f.battery_electrochem_id] ? 'pi pi-spin pi-spinner' : 'pi pi-trash'"></i>
-        </button>
+
+        <div class="ec-row-actions">
+          <a
+            v-if="fileTypeMeta(f.file_name).previewable"
+            :href="f.file_link"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="ec-action-btn ec-action-btn--preview"
+            :title="`Просмотр «${f.file_name}»`"
+          >
+            <i class="pi pi-eye"></i>
+          </a>
+          <a
+            :href="f.file_link"
+            :download="f.file_name"
+            class="ec-action-btn ec-action-btn--download"
+            :title="`Скачать «${f.file_name}»`"
+          >
+            <i class="pi pi-download"></i>
+          </a>
+          <button
+            type="button"
+            class="ec-action-btn ec-action-btn--delete"
+            :disabled="!!deletingIds[f.battery_electrochem_id]"
+            :title="`Удалить «${f.file_name}»`"
+            @click="deleteFile(f)"
+          >
+            <i :class="deletingIds[f.battery_electrochem_id] ? 'pi pi-spin pi-spinner' : 'pi pi-trash'"></i>
+          </button>
+        </div>
+
         <div v-if="f.electrochem_notes" class="ec-notes">{{ f.electrochem_notes }}</div>
       </div>
     </div>
@@ -381,82 +443,133 @@ onBeforeUnmount(() => {
 
 .ec-row {
   display: grid;
-  /* 3 cols: file-link (flex-takes-rest) | uploaded-at | 🗑 delete button.
-     Notes span all three via `grid-column: 1 / -1`. */
-  grid-template-columns: 1fr auto 28px;
-  gap: 4px 12px;
+  /* 4 cols on desktop:
+     [type-icon · 18px] [filename · flex-rest] [date · auto] [actions · auto]
+     Notes (when present) span all 4 via `grid-column: 1 / -1`. */
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 10px;
   padding: 6px 8px;
-  background: rgba(0, 50, 116, 0.02);
+  background: rgba(0, 50, 116, 0.025);
+  border: 1px solid transparent;
   border-radius: 6px;
   font-size: 13px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.ec-row:hover {
+  background: rgba(0, 50, 116, 0.05);
+  border-color: rgba(0, 50, 116, 0.10);
 }
 
-.ec-file-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+/* File-type icon (left of filename). Tone classes pick a hue family
+   that hints what kind of file the row is — PDFs red-orange,
+   images green, sheets emerald, docs navy, fallback grey. */
+.ec-file-icon {
+  font-size: 16px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+  color: rgba(0, 50, 116, 0.55);
+}
+.ec-row--pdf   .ec-file-icon { color: #c0392b; }   /* red */
+.ec-row--image .ec-file-icon { color: #16a085; }   /* teal-green */
+.ec-row--sheet .ec-file-icon { color: #1d7a5f; }   /* dark green */
+.ec-row--doc   .ec-file-icon { color: #2c5282; }   /* navy variant */
+.ec-row--text  .ec-file-icon { color: rgba(0, 50, 116, 0.65); }
+
+/* Filename — link variant for previewable formats, plain text
+   variant for non-previewable. Both ellipsis-truncate on overflow. */
+.ec-file-name-link {
   color: #003274;
   text-decoration: none;
   font-weight: 500;
-  min-width: 0;
-}
-
-.ec-file-link:hover {
-  text-decoration: underline;
-}
-
-.ec-file-link .pi {
-  font-size: 12px;
-  opacity: 0.65;
-  flex-shrink: 0;
-}
-
-.ec-file-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+.ec-file-name-link:not(.ec-file-name-link--plain):hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  color: #025EA1;
+}
+.ec-file-name-link--plain {
+  cursor: default;
+  /* No hover affordance — preview unavailable for this file type;
+     use the ⬇ button to save instead. */
 }
 
 .ec-uploaded-at {
   font-size: 11px;
   color: rgba(0, 50, 116, 0.5);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
-/* Trash button per uploaded file — mirrors MaterialsPage.file-del-btn
-   style. Muted red, subtle until hovered; spinner icon while the
-   DELETE is in flight (deletingIds[id] === true). */
-.ec-delete-btn {
-  width: 26px;
-  height: 26px;
+/* Per-row action group — tight cluster of small icon buttons at the
+   right end of the row. */
+.ec-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.ec-action-btn {
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
-  border-radius: 50%;
+  border-radius: 6px;
   background: transparent;
-  color: rgba(200, 80, 70, 0.55);
+  color: rgba(0, 50, 116, 0.55);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 13px;
-  transition: background 0.15s, color 0.15s;
+  text-decoration: none;
+  transition: background 0.12s, color 0.12s;
 }
-.ec-delete-btn:hover:not(:disabled) {
+.ec-action-btn:hover:not(:disabled) {
+  background: rgba(0, 50, 116, 0.10);
+  color: #003274;
+}
+.ec-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.ec-action-btn--delete {
+  color: rgba(200, 80, 70, 0.55);
+}
+.ec-action-btn--delete:hover:not(:disabled) {
   background: rgba(200, 80, 70, 0.10);
   color: rgba(200, 80, 70, 0.9);
-}
-.ec-delete-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .ec-notes {
   grid-column: 1 / -1;
   font-size: 12px;
   color: rgba(0, 50, 116, 0.65);
-  padding: 2px 0 0 18px;
+  padding: 2px 0 0 28px;        /* align under filename, past the icon */
   font-style: italic;
+}
+
+/* Mobile — single-row layout would crush at 375 px wide. Stack the
+   row into two visual lines: [icon | filename] | [date | actions]
+   wrap to 2nd line if needed. */
+@media (max-width: 540px) {
+  .ec-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'icon name      actions'
+      '.    timestamp actions'
+      'notes notes    notes';
+    row-gap: 2px;
+  }
+  .ec-file-icon { grid-area: icon; align-self: start; padding-top: 3px; }
+  .ec-file-name-link { grid-area: name; }
+  .ec-uploaded-at { grid-area: timestamp; }
+  .ec-row-actions { grid-area: actions; align-self: center; }
+  .ec-notes { grid-area: notes; padding-left: 28px; }
 }
 
 .ec-staged {
