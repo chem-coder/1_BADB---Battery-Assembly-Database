@@ -57,7 +57,7 @@ onMounted(() => {
 // tools that read column metadata. `tooltip` is unused for this column
 // since the slot supplies its own tooltip.
 const columns = [
-  { field: '_constructor',  header: 'Конструктор', minWidth: '110px', width: '120px', sortable: false, filterable: false },
+  { field: '_constructor',  header: 'Конструктор', minWidth: '95px',  width: '110px', sortable: false, filterable: false },
   { field: 'name',          header: 'Название',   minWidth: '100px' },
   { field: 'project_name',  header: 'Проект',     minWidth: '80px',  width: '115px' },
   { field: 'role',          header: 'Тип',        minWidth: '80px',  width: '115px' },
@@ -250,19 +250,20 @@ function formatDate(dt) {
       @header-click="(field) => field === '_constructor' && toggleAllConstructor()"
       @row-click="(data) => toggleConstructor(data.tape_id)"
     >
-      <!-- Constructor column — custom header (master toggle pill
-           with live count) + per-row checkbox to add/remove that row. -->
+      <!-- Constructor column — clickable header text + per-row
+           checkbox. Header reads like sibling headers («№», «Тип»),
+           just with a hover-underline affordance and an inline count
+           when items are selected. Tooltip spells out the bulk
+           select-all-on-page interaction. -->
       <template #header-_constructor>
         <button
           type="button"
           class="ct-cons-header"
           :class="{ 'is-active': constructorIds.length > 0 }"
-          v-tooltip.top="'Конструктор: кликните по заголовку чтобы выбрать или снять все ленты на странице'"
+          v-tooltip.top="'Кликните чтобы выбрать или снять все ленты на странице'"
           @click.stop="toggleAllConstructor"
         >
-          <i class="pi pi-th-large"></i>
-          <span class="ct-cons-label">Конструктор</span>
-          <span v-if="constructorIds.length > 0" class="ct-cons-count">{{ constructorIds.length }}</span>
+          Конструктор<span v-if="constructorIds.length > 0" class="ct-cons-count">({{ constructorIds.length }})</span>
         </button>
       </template>
       <template #col-_constructor="{ data }">

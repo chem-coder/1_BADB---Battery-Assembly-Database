@@ -76,7 +76,7 @@ const statusLabels = { draft: 'Черновик', assembled: 'Собран', tes
 const columns = [
   // Header rendered via `#header-_constructor` slot (master pill with
   // live count). The string here is the accessibility fallback only.
-  { field: '_constructor', header: 'Конструктор', minWidth: '110px', width: '120px', sortable: false, filterable: false },
+  { field: '_constructor', header: 'Конструктор', minWidth: '95px',  width: '110px', sortable: false, filterable: false },
   // Synthetic column: "🖨️ Print" opens Dalia's print-friendly report page
   // (/workflow/battery-print.html?battery_id=X) in a new tab. Matches the
   // same pattern used in ElectrodesPage for the electrode-batch print.
@@ -327,20 +327,18 @@ onUnmounted(() => clearTimeout(saveTimer))
       @row-click="(data) => toggleConstructor(data.battery_id)"
       @header-click="(field) => field === '_constructor' && toggleAllConstructor()"
     >
-      <!-- Constructor column — custom header (master toggle pill
-           with live count) + per-row checkbox to add/remove the
-           battery from the constructor zone below. -->
+      <!-- Constructor column — clickable header text + per-row
+           checkbox. Header reads like sibling headers; tooltip
+           explains the bulk select-all-on-page interaction. -->
       <template #header-_constructor>
         <button
           type="button"
           class="ct-cons-header"
           :class="{ 'is-active': constructorIds.length > 0 }"
-          v-tooltip.top="'Конструктор: кликните по заголовку чтобы выбрать или снять все аккумуляторы на странице'"
+          v-tooltip.top="'Кликните чтобы выбрать или снять все аккумуляторы на странице'"
           @click.stop="toggleAllConstructor"
         >
-          <i class="pi pi-th-large"></i>
-          <span class="ct-cons-label">Конструктор</span>
-          <span v-if="constructorIds.length > 0" class="ct-cons-count">{{ constructorIds.length }}</span>
+          Конструктор<span v-if="constructorIds.length > 0" class="ct-cons-count">({{ constructorIds.length }})</span>
         </button>
       </template>
       <template #col-_constructor="{ data }">

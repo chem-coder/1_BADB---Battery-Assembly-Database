@@ -647,85 +647,54 @@ h4 { font-size: 16px; font-weight: 700; line-height: 1.4; }
 }
 
 /* ══════════════════════════════════════════════════════════════
-   Constructor-column header pill — master toggle + live count
+   Constructor-column header — clickable text matching other headers
    ══════════════════════════════════════════════════════════════
    Used on TapesPage / ElectrodesPage / AssemblyPage via the
    `#header-_constructor` slot in CrudTable. Replaces the previous
-   bare 🔧 emoji column header which gave no hint that:
+   bare 🔧 emoji header which gave no hint that:
      1. This column toggles "add to constructor", and
      2. Clicking the header itself selects/deselects ALL on the page.
-   The pill has an explicit «Конструктор» label, a tooltip
-   spelling out the bulk-toggle action, and a green badge that
-   surfaces the running count whenever items are selected.
+   First iteration was a bordered pill with icon + count badge —
+   visually too heavy next to plain «№ / Тип / Прогресс» headers.
+   Now: plain inline text that LOOKS like sibling headers, with
+   hover affordance (subtle underline) and an inline count when
+   items are selected. Tooltip explains the bulk-toggle action.
 
-   Lives in global.css (not scoped to a page) because Vue scoped
-   styles do NOT cover slot content rendered in a child component
-   — even though we WRITE the slot template in the parent page,
-   the DOM is mounted inside CrudTable's scope. Global is the
-   simplest single owner; specificity is plenty thanks to the
-   `.ct-cons-` namespace. */
+   Lives in global.css (not scoped) because Vue scoped CSS doesn't
+   cover slot content mounted inside CrudTable's scope. */
 .ct-cons-header {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border: 1px solid rgba(0, 50, 116, 0.20);
-  border-radius: 6px;
-  background: rgba(0, 50, 116, 0.04);
-  color: rgba(0, 50, 116, 0.70);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
   cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease,
-    box-shadow 0.15s ease;
+  user-select: none;
+  font: inherit;            /* match the column-header font set by DataTable */
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  /* `text-decoration` reset so the inline <span> doesn't pick up any
+     ambient link styling — we manage underline ourselves on hover. */
+  text-decoration: none;
 }
 .ct-cons-header:hover {
-  background: rgba(0, 50, 116, 0.10);
-  border-color: rgba(0, 50, 116, 0.38);
-  color: #003274;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(0, 50, 116, 0.45);
 }
 .ct-cons-header:focus-visible {
   outline: 2px solid rgba(0, 50, 116, 0.45);
   outline-offset: 2px;
+  border-radius: 3px;
 }
 .ct-cons-header.is-active {
-  background: rgba(82, 201, 166, 0.18);
-  border-color: rgba(82, 201, 166, 0.50);
+  /* Subtle green tint when items are selected — same hue family as
+     the «.role-badge--anode / status-complete» elsewhere. */
   color: #1a7a5f;
 }
-.ct-cons-header.is-active:hover {
-  background: rgba(82, 201, 166, 0.28);
-  border-color: rgba(82, 201, 166, 0.70);
-}
-.ct-cons-header .pi {
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.ct-cons-label {
-  /* Hide on very narrow columns — icon + count alone communicates
-     "tap me to toggle all". 78px keeps the label on phones in
-     landscape but drops it on iPhone SE portrait. */
-  letter-spacing: 0.01em;
-}
 .ct-cons-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  padding: 0 5px;
-  height: 16px;
-  border-radius: 8px;
-  background: #1a7a5f;
-  color: #fff;
-  font-size: 10px;
+  /* Inline count, weight-bumped for scannability. NO badge pill —
+     reads as part of the header text. */
+  margin-left: 3px;
   font-weight: 700;
-  line-height: 1;
 }
 
 /* ══════════════════════════════════════════════════════════════
