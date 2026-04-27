@@ -17,6 +17,7 @@ import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
 import TapeConstructor from '@/components/TapeConstructor.vue'
 import CapacityHint from '@/components/CapacityHint.vue'
+import PrintPreviewDialog from '@/components/PrintPreviewDialog.vue'
 import Checkbox from 'primevue/checkbox'
 import { ELECTRODE_STAGES } from '@/config/electrodeStages'
 import { useElectrodeState } from '@/composables/useElectrodeState'
@@ -254,15 +255,20 @@ function toggleAllConstructor() {
   }
 }
 
-// Print report — opens Dalia's print-friendly HTML in a new tab.
-// The page itself lives at /workflow/electrode-batch-print.html and
-// fetches GET /api/electrodes/electrode-cut-batches/:id/report. We just
-// trigger it — no need to re-render the report inside the Vue SPA,
-// and the separate window works well for Ctrl+P / Сохранить как PDF.
+// Print report — loads Dalia's print-friendly HTML inside an in-app
+// modal Dialog (PrintPreviewDialog). Per user feedback the new-tab
+// flow felt «как изолированная система» — losing context of which row
+// they came from. The dialog keeps the table behind the dimmed mask
+// and the «Печать» button inside it triggers the iframe's own
+// window.print() so Dalia's @media print CSS still applies.
+const printDialog = ref({ visible: false, url: '', title: '' })
 function openBatchPrint(cutBatchId) {
   if (!cutBatchId) return
-  const url = `/workflow/electrode-batch-print.html?cut_batch_id=${encodeURIComponent(cutBatchId)}`
-  window.open(url, '_blank', 'noopener,noreferrer')
+  printDialog.value = {
+    visible: true,
+    url: `/workflow/electrode-batch-print.html?cut_batch_id=${encodeURIComponent(cutBatchId)}`,
+    title: `Печать · Партия #${cutBatchId}`,
+  }
 }
 
 // Click handler for CapacityHint actions in the «Емкость (факт)»
@@ -500,6 +506,14 @@ onUnmounted(() => clearTimeout(saveTimer))
       entityType="electrode_cut_batch"
       title="КОНСТРУКТОР ЭЛЕКТРОДОВ"
       emptyHint="Отметьте партии в таблице для работы в конструкторе"
+    />
+
+    <!-- In-app print preview — replaces window.open(_blank); see
+         openBatchPrint() in <script>. -->
+    <PrintPreviewDialog
+      v-model:visible="printDialog.visible"
+      :url="printDialog.url"
+      :title="printDialog.title"
     />
   </div>
 </template>

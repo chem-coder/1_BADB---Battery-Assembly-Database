@@ -15,6 +15,7 @@ import CrudTable from '@/components/CrudTable.vue'
 import TapeConstructor from '@/components/TapeConstructor.vue'
 import BatteryElectrochemEditor from '@/components/BatteryElectrochemEditor.vue'
 import CapacityHint from '@/components/CapacityHint.vue'
+import PrintPreviewDialog from '@/components/PrintPreviewDialog.vue'
 import Checkbox from 'primevue/checkbox'
 import { BATTERY_STAGES } from '@/config/batteryStages'
 import { useBatteryState } from '@/composables/useBatteryState'
@@ -164,16 +165,23 @@ function batteryStateFactory(id) {
   return useBatteryState({ batteryId: id })
 }
 
-// Battery print — opens Dalia's /workflow/battery-print.html in a new
-// tab. Same pattern as ElectrodesPage (commit bdf51ed). The print page
-// fetches /api/batteries/:id/report which the auth-header patch on her
-// print JS (commit 2cca4b4) doesn't yet cover — her battery-print.js
-// still lacks the Bearer token. Works in dev via config.authBypass;
-// production needs the same two-line patch (pending separate commit).
+// Battery print — opens Dalia's /workflow/battery-print.html inside
+// a modal Dialog overlay (PrintPreviewDialog) instead of in a new
+// tab. Per user feedback: «открытие страницы печати не в отдельной
+// странице а в виде доп окна поверх — чтобы не было ощущения
+// изолированной системы и потери что за данные я открыл». Same
+// pattern as the in-app electrochem PDF preview (commit 352dc03).
+// Auth note: her battery-print.js still lacks the Bearer token (works
+// in dev via config.authBypass). Production needs the same two-line
+// patch precedented by commit 2cca4b4 — pending separate commit.
+const printDialog = ref({ visible: false, url: '', title: '' })
 function openBatteryPrint(batteryId) {
   if (!batteryId) return
-  const url = `/workflow/battery-print.html?battery_id=${encodeURIComponent(batteryId)}`
-  window.open(url, '_blank', 'noopener,noreferrer')
+  printDialog.value = {
+    visible: true,
+    url: `/workflow/battery-print.html?battery_id=${encodeURIComponent(batteryId)}`,
+    title: `Печать · Аккумулятор #${batteryId}`,
+  }
 }
 
 // ── Capacity summary (Dalia's commit 026efbf) ─────────────────────
@@ -584,6 +592,16 @@ onUnmounted(() => clearTimeout(saveTimer))
         :cache="electrochemFiles"
       />
     </div>
+
+    <!-- Print overlay — modal Dialog with the legacy /workflow/battery-print.html
+         loaded inside an iframe. Stays mounted but hidden when no print
+         is active; iframe `v-if` inside the component unloads the URL
+         on close. -->
+    <PrintPreviewDialog
+      v-model:visible="printDialog.visible"
+      :url="printDialog.url"
+      :title="printDialog.title"
+    />
   </div>
 </template>
 
