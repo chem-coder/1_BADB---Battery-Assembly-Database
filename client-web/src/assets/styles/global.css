@@ -709,12 +709,34 @@ h4 { font-size: 16px; font-weight: 700; line-height: 1.4; }
 }
 
 /* Same pattern for the per-row 🖨️ print button column. The narrow
-   42-px column has a centered emoji header — the body cell needs a
+   42-px column has a centered icon header — the body cell needs a
    matching flex-center wrapper so the icon button sits in the middle
    of the column instead of hugging the left edge. */
 .ct-print-cell {
   display: flex;
   align-items: center;
+  justify-content: center;
+}
+
+/* Header icon for the print column, rendered via `#header-_print`
+   slot. Inline-flex so it sits visually centered on the baseline,
+   subtle navy tint to match the other column headers. */
+.ct-print-header {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(0, 50, 116, 0.55);
+}
+.ct-print-header i {
+  font-size: 13px;
+}
+
+/* PrimeVue wraps each header cell's content in `.p-column-header-content`.
+   Default justification is start (left); for the print column we force
+   center so the lone icon sits over the centered body button instead
+   of hugging the column's left edge. Same trick already used for
+   `.ct-cons-header` above. */
+.p-datatable th:has(> div > .ct-print-header) > div {
   justify-content: center;
 }
 

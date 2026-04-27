@@ -51,7 +51,8 @@ const columns = [
   // (/workflow/electrode-batch-print.html) in a new tab. Matches the
   // vanilla-JS flow she added in d1382cb but triggered from the Vue
   // electrodes table so users don't have to leave the SPA.
-  { field: '_print', header: '🖨️', minWidth: '42px', width: '42px', sortable: false, filterable: false },
+  // Header rendered via `#header-_print` slot (PrimeIcon, centered).
+  { field: '_print', header: 'Печать', minWidth: '42px', width: '42px', sortable: false, filterable: false },
   { field: 'cut_batch_id', header: 'Партия', minWidth: '70px', width: '85px' },
   { field: 'tape_name', header: 'Лента', minWidth: '120px' },
   { field: 'project_name', header: 'Проект', minWidth: '100px' },
@@ -432,6 +433,11 @@ onUnmounted(() => clearTimeout(saveTimer))
             v-tooltip.right="'Добавить/убрать из конструктора'"
           />
         </div>
+      </template>
+      <template #header-_print>
+        <span class="ct-print-header" title="Печать отчёта">
+          <i class="pi pi-print"></i>
+        </span>
       </template>
       <template #col-_print="{ data }">
         <div class="ct-print-cell">

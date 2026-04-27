@@ -82,9 +82,10 @@ const columns = [
   // live count). The string here is the accessibility fallback only.
   { field: '_constructor', header: 'Конструктор', minWidth: '95px',  width: '110px', sortable: false, filterable: false },
   // Synthetic column: "🖨️ Print" opens Dalia's print-friendly report page
-  // (/workflow/battery-print.html?battery_id=X) in a new tab. Matches the
+  // (/workflow/battery-print.html?battery_id=X) in a modal Dialog. Header
+  // rendered via `#header-_print` slot (PrimeIcon, centered) — matches the
   // same pattern used in ElectrodesPage for the electrode-batch print.
-  { field: '_print', header: '🖨️', minWidth: '42px', width: '42px', sortable: false, filterable: false },
+  { field: '_print', header: 'Печать', minWidth: '42px', width: '42px', sortable: false, filterable: false },
   // 'Аккум.' not '№' — CrudTable already shows a frozen row-number
   // column with header '№' on the left, two columns named the same
   // would read as duplicate. Cell renders as '#42' so the header
@@ -429,6 +430,11 @@ onUnmounted(() => clearTimeout(saveTimer))
             v-tooltip.right="'Добавить/убрать из конструктора'"
           />
         </div>
+      </template>
+      <template #header-_print>
+        <span class="ct-print-header" title="Печать отчёта">
+          <i class="pi pi-print"></i>
+        </span>
       </template>
       <template #col-_print="{ data }">
         <div class="ct-print-cell">
