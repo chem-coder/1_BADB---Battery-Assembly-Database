@@ -11,6 +11,7 @@ import { toastApiError } from '@/utils/errorClassifier'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
+import EntityMeta from '@/components/EntityMeta.vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
@@ -46,6 +47,7 @@ const columns = [
   { field: 'salts',            header: 'Соли',         minWidth: '80px',  width: '110px' },
   { field: 'concentration',    header: 'Концентрация', minWidth: '80px',  width: '120px' },
   { field: 'status',           header: 'Статус',       minWidth: '80px',  width: '115px' },
+  { field: 'created_by_name',  header: 'Оператор',     minWidth: '90px',  width: '130px' },
 ]
 
 // ── Save indicator (delete flow) ──────────────────────────────────────
@@ -86,6 +88,10 @@ onUnmounted(() => clearTimeout(saveTimer))
 const formVisible = ref(false)
 const mode = ref(null) // 'create' | 'edit'
 const currentId = ref(null)
+// Full row of the entity being edited — kept so EntityMeta can show
+// `Создано: ФИО, дата` + `Изменено: ФИО, дата` from the backend's
+// JOIN-populated created_by_name / updated_by_name fields.
+const currentItem = ref(null)
 
 // `created_by` is NOT part of the form — backend forces it from the
 // authenticated user (req.user.userId). Storing it on the form would
@@ -121,6 +127,7 @@ function resetForm() {
   }
   mode.value = null
   currentId.value = null
+  currentItem.value = null
   formVisible.value = false
 }
 
@@ -133,6 +140,7 @@ function openCreate() {
 function openEdit(el) {
   mode.value = 'edit'
   currentId.value = el.electrolyte_id
+  currentItem.value = el
   form.value = {
     name: el.name || '',
     electrolyte_type: el.electrolyte_type || '',
@@ -265,6 +273,15 @@ function statusLabel(status) {
         <label>Примечания</label>
         <Textarea v-model="form.notes" rows="3" placeholder="Дополнительная информация" class="w-full" />
       </form>
+
+      <!-- Read-only audit trail (only on edit — `currentItem` is null in create) -->
+      <EntityMeta
+        v-if="mode === 'edit' && currentItem"
+        :createdByName="currentItem.created_by_name"
+        :createdAt="currentItem.created_at"
+        :updatedByName="currentItem.updated_by_name"
+        :updatedAt="currentItem.updated_at"
+      />
 
       <template #footer>
         <Button label="Отмена" severity="secondary" outlined @click="resetForm" />

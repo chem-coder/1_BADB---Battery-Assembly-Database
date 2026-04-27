@@ -11,6 +11,7 @@ import { toastApiError } from '@/utils/errorClassifier'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
+import EntityMeta from '@/components/EntityMeta.vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
@@ -48,12 +49,13 @@ onMounted(() => { loadSeparators(); loadStructures() })
 
 // ── Column config ──────────────────────────────────────────────────────
 const columns = [
-  { field: 'name',         header: 'Название',     minWidth: '120px' },
-  { field: 'supplier',     header: 'Поставщик',    minWidth: '90px',  width: '130px' },
-  { field: 'brand',        header: 'Марка',         minWidth: '70px',  width: '110px' },
-  { field: 'thickness_um', header: 'Толщина, мкм',  minWidth: '80px',  width: '120px' },
-  { field: 'porosity',     header: 'Пористость, %', minWidth: '80px',  width: '120px' },
-  { field: 'status',       header: 'Статус',        minWidth: '80px',  width: '115px' },
+  { field: 'name',            header: 'Название',     minWidth: '120px' },
+  { field: 'supplier',        header: 'Поставщик',    minWidth: '90px',  width: '130px' },
+  { field: 'brand',           header: 'Марка',         minWidth: '70px',  width: '110px' },
+  { field: 'thickness_um',    header: 'Толщина, мкм',  minWidth: '80px',  width: '120px' },
+  { field: 'porosity',        header: 'Пористость, %', minWidth: '80px',  width: '120px' },
+  { field: 'status',          header: 'Статус',        minWidth: '80px',  width: '115px' },
+  { field: 'created_by_name', header: 'Оператор',      minWidth: '90px',  width: '130px' },
 ]
 
 // ── Save indicator (delete flow) ──────────────────────────────────────
@@ -94,6 +96,9 @@ onUnmounted(() => clearTimeout(saveTimer))
 const formVisible = ref(false)
 const mode = ref(null)
 const currentId = ref(null)
+// Full row of the entity being edited — fed to EntityMeta for the
+// "Создано: ФИО, дата" + "Изменено: ФИО, дата" read-only audit trail.
+const currentItem = ref(null)
 
 // `created_by` is NOT part of the form — backend forces it from the
 // authenticated user (req.user.userId, see routes/separators.js). The
@@ -121,6 +126,7 @@ function resetForm() {
   }
   mode.value = null
   currentId.value = null
+  currentItem.value = null
   formVisible.value = false
 }
 
@@ -133,6 +139,7 @@ function openCreate() {
 function openEdit(sep) {
   mode.value = 'edit'
   currentId.value = sep.sep_id
+  currentItem.value = sep
   form.value = {
     name: sep.name || '',
     supplier: sep.supplier || '',
@@ -289,6 +296,14 @@ function statusLabel(status) {
         <label>Комментарии</label>
         <Textarea v-model="form.comments" rows="3" placeholder="Замечания, методики" class="w-full" />
       </form>
+
+      <EntityMeta
+        v-if="mode === 'edit' && currentItem"
+        :createdByName="currentItem.created_by_name"
+        :createdAt="currentItem.created_at"
+        :updatedByName="currentItem.updated_by_name"
+        :updatedAt="currentItem.updated_at"
+      />
 
       <template #footer>
         <Button label="Отмена" severity="secondary" outlined @click="resetForm" />

@@ -11,6 +11,7 @@ import { toastApiError } from '@/utils/errorClassifier'
 import PageHeader from '@/components/PageHeader.vue'
 import SaveIndicator from '@/components/SaveIndicator.vue'
 import CrudTable from '@/components/CrudTable.vue'
+import EntityMeta from '@/components/EntityMeta.vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
@@ -59,12 +60,13 @@ onMounted(() => { loadProjects(); loadUsers(); loadDepartments() })
 
 // ── Column config ──────────────────────────────────────────────────────
 const columns = [
-  { field: 'name',                header: 'Название',     minWidth: '120px' },
-  { field: 'description',         header: 'Описание',     minWidth: '150px', sortable: false },
-  { field: 'confidentiality_level', header: 'Доступ',     minWidth: '80px',  width: '150px', filterable: true },
-  { field: 'start_date',          header: 'Начало',       minWidth: '80px',  width: '120px' },
-  { field: 'due_date',            header: 'Окончание',    minWidth: '80px',  width: '120px' },
-  { field: 'status',              header: 'Статус',       minWidth: '80px',  width: '130px' },
+  { field: 'name',                  header: 'Название',     minWidth: '120px' },
+  { field: 'description',           header: 'Описание',     minWidth: '150px', sortable: false },
+  { field: 'confidentiality_level', header: 'Доступ',       minWidth: '80px',  width: '150px', filterable: true },
+  { field: 'start_date',            header: 'Начало',       minWidth: '80px',  width: '120px' },
+  { field: 'due_date',              header: 'Окончание',    minWidth: '80px',  width: '120px' },
+  { field: 'status',                header: 'Статус',       minWidth: '80px',  width: '130px' },
+  { field: 'created_by_name',       header: 'Оператор',     minWidth: '90px',  width: '130px' },
 ]
 
 // ── Save indicator (delete flow) ──────────────────────────────────────
@@ -105,6 +107,9 @@ onUnmounted(() => clearTimeout(saveTimer))
 const formVisible = ref(false)
 const mode = ref(null)
 const currentId = ref(null)
+// Full row of the entity being edited — fed to EntityMeta for the
+// "Создано: ФИО, дата" + "Изменено: ФИО, дата" read-only audit trail.
+const currentItem = ref(null)
 
 // `created_by` is NOT part of the form — backend forces it from the
 // authenticated user (routes/projects.js:159, "SECURITY: created_by
@@ -130,6 +135,7 @@ function resetForm() {
   }
   mode.value = null
   currentId.value = null
+  currentItem.value = null
   formVisible.value = false
   // Clear grant form state so next open starts clean
   resetGrantForm()
@@ -147,6 +153,7 @@ function openCreate() {
 function openEdit(proj) {
   mode.value = 'edit'
   currentId.value = proj.project_id
+  currentItem.value = proj
   form.value = {
     name: proj.name || '',
     lead_id: proj.lead_id || '',
@@ -733,6 +740,14 @@ async function copyAccessFromProject() {
           <div v-if="!accessList.length && !accessLoading" class="access-empty">Нет явных допусков</div>
         </div>
       </div>
+
+      <EntityMeta
+        v-if="mode === 'edit' && currentItem"
+        :createdByName="currentItem.created_by_name"
+        :createdAt="currentItem.created_at"
+        :updatedByName="currentItem.updated_by_name"
+        :updatedAt="currentItem.updated_at"
+      />
 
       <template #footer>
         <Button label="Отмена" severity="secondary" outlined @click="resetForm" />
