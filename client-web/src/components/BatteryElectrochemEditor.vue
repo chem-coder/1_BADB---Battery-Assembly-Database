@@ -30,6 +30,8 @@
  */
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { useToast } from 'primevue/usetoast'
+import Dialog from 'primevue/dialog'
+import Button from 'primevue/button'
 import { fileToBase64 } from '@/utils/fileToBase64'
 import { errorMessageRu, toastApiError } from '@/utils/errorClassifier'
 import api from '@/services/api'
@@ -240,6 +242,31 @@ function fileTypeMeta(fileName) {
   return FILE_TYPE_META[ext] || FILE_TYPE_DEFAULT
 }
 
+// In-app preview kind. Determines which renderer the preview Dialog
+// uses for the selected file. `null` = no preview (Dialog won't open).
+function previewKind(fileName) {
+  const ext = String(fileName || '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1]
+  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'].includes(ext)) return 'image'
+  if (ext === 'pdf') return 'pdf'
+  if (['txt', 'csv'].includes(ext)) return 'text'
+  return null
+}
+
+// ── Preview Dialog state ──────────────────────────────────────────
+// `previewFile` holds the currently-previewed file object (or null
+// for "closed"). The Dialog's v-model:visible derives from this via
+// a computed proxy so opening/closing is just a single ref write.
+const previewFile = ref(null)
+const previewVisible = computed({
+  get: () => previewFile.value !== null,
+  set: (v) => { if (!v) previewFile.value = null },
+})
+
+function openPreview(f) {
+  if (!previewKind(f.file_name)) return
+  previewFile.value = f
+}
+
 // Warn (don't block) when the card unmounts with unsent files — the
 // user most likely didn't mean to discard them. Vue can't block
 // unmount from a confirm() cleanly, so a toast is the honest UX.
@@ -282,30 +309,30 @@ onBeforeUnmount(() => {
         <i :class="['ec-file-icon', fileTypeMeta(f.file_name).icon]"></i>
 
         <!-- Filename — clickable for preview if format supports it,
-             plain text otherwise (download via the ⬇ button). -->
-        <a
-          v-if="fileTypeMeta(f.file_name).previewable"
-          :href="f.file_link"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="ec-file-name-link"
-          :title="`Открыть «${f.file_name}» для просмотра`"
-        >{{ f.file_name }}</a>
+             plain text otherwise (use ⬇ button to save). Click opens
+             an in-app Dialog (no new tab) — see the Dialog block at
+             the bottom of this template. -->
+        <button
+          v-if="previewKind(f.file_name)"
+          type="button"
+          class="ec-file-name-link ec-file-name-link--button"
+          :title="`Открыть «${f.file_name}»`"
+          @click="openPreview(f)"
+        >{{ f.file_name }}</button>
         <span v-else class="ec-file-name-link ec-file-name-link--plain">{{ f.file_name }}</span>
 
         <span class="ec-uploaded-at">{{ formatDate(f.uploaded_at) }}</span>
 
         <div class="ec-row-actions">
-          <a
-            v-if="fileTypeMeta(f.file_name).previewable"
-            :href="f.file_link"
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            v-if="previewKind(f.file_name)"
+            type="button"
             class="ec-action-btn ec-action-btn--preview"
             :title="`Просмотр «${f.file_name}»`"
+            @click="openPreview(f)"
           >
             <i class="pi pi-eye"></i>
-          </a>
+          </button>
           <a
             :href="f.file_link"
             :download="f.file_name"
@@ -387,6 +414,65 @@ onBeforeUnmount(() => {
       <span>Добавить файлы (до 7 МБ каждый)</span>
     </label>
   </section>
+
+  <!-- ── In-app preview Dialog ─────────────────────────────────────
+       Opens when user clicks a previewable filename or the 👁 button.
+       PDF → <iframe> (browser's built-in PDF viewer renders inline).
+       Image → <img>. Text/csv → <iframe> (browser renders as text).
+       The Dialog is `maximizable` so users can expand to fullscreen
+       on small screens. `:dismissableMask` makes click-outside close
+       it (Esc also works via the modal default). -->
+  <Dialog
+    v-model:visible="previewVisible"
+    :header="previewFile?.file_name || 'Просмотр'"
+    :style="{ width: '92vw', maxWidth: '1200px', height: '88vh' }"
+    :contentStyle="{ padding: '0', display: 'flex', flexDirection: 'column' }"
+    modal
+    maximizable
+    dismissableMask
+  >
+    <div class="ec-preview-shell">
+      <iframe
+        v-if="previewFile && previewKind(previewFile.file_name) === 'pdf'"
+        :src="previewFile.file_link"
+        class="ec-preview-frame"
+        :title="previewFile.file_name"
+      ></iframe>
+      <iframe
+        v-else-if="previewFile && previewKind(previewFile.file_name) === 'text'"
+        :src="previewFile.file_link"
+        class="ec-preview-frame ec-preview-frame--text"
+        :title="previewFile.file_name"
+      ></iframe>
+      <div
+        v-else-if="previewFile && previewKind(previewFile.file_name) === 'image'"
+        class="ec-preview-image-wrap"
+      >
+        <img
+          :src="previewFile.file_link"
+          :alt="previewFile.file_name"
+          class="ec-preview-image"
+        />
+      </div>
+    </div>
+    <template #footer>
+      <a
+        v-if="previewFile"
+        :href="previewFile.file_link"
+        :download="previewFile.file_name"
+        class="ec-preview-download"
+      >
+        <i class="pi pi-download"></i>
+        Скачать
+      </a>
+      <Button
+        label="Закрыть"
+        severity="secondary"
+        text
+        @click="previewFile = null"
+      />
+    </template>
+  </Dialog>
 </template>
 
 <style scoped>
@@ -551,6 +637,79 @@ onBeforeUnmount(() => {
   color: rgba(0, 50, 116, 0.65);
   padding: 2px 0 0 28px;        /* align under filename, past the icon */
   font-style: italic;
+}
+
+/* The filename "link" is now a <button> that opens the in-app preview
+   Dialog — strip native button chrome so it visually reads as a link. */
+.ec-file-name-link--button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  /* Inherit color/weight from .ec-file-name-link base rule above. */
+}
+
+/* Preview Dialog content — fills the Dialog body completely so the
+   PDF/image extends to the footer divider. PrimeVue's `contentStyle`
+   prop already sets padding:0 + flex column; we just fill the
+   remaining space here. */
+.ec-preview-shell {
+  flex: 1;
+  min-height: 0;          /* let flex children shrink past intrinsic size */
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: rgba(0, 50, 116, 0.04);
+  overflow: hidden;
+}
+.ec-preview-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #fff;
+}
+.ec-preview-frame--text {
+  background: #fafbfc;
+}
+.ec-preview-image-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  overflow: auto;
+}
+.ec-preview-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  /* Subtle shadow so the image edge reads off the muted background. */
+  box-shadow: 0 1px 4px rgba(0, 50, 116, 0.12);
+}
+
+.ec-preview-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  margin-right: auto;     /* push «Закрыть» to the opposite edge */
+  border-radius: 6px;
+  background: #003274;
+  color: #fff;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+.ec-preview-download:hover {
+  background: rgba(0, 50, 116, 0.85);
+}
+.ec-preview-download .pi {
+  font-size: 13px;
 }
 
 /* Mobile — single-row layout would crush at 375 px wide. Stack the
