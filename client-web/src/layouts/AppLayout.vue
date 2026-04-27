@@ -202,27 +202,66 @@ onUnmounted(() => {
     0 0 0 0.5px rgba(180, 210, 255, 0.35);
 }
 
-/* ── Hamburger button (hidden on desktop) ── */
+/* ── Hamburger button (hidden on desktop) ──
+   Glass-card styling — matches the rest of the design system
+   (translucent white over the page-content background, soft border,
+   subtle shadow). Closed state: cream-on-navy primary look that
+   reads on top of the patterned content. Open state: inverts to
+   solid navy so it pairs visually with the dark sidebar drawer
+   that's now on screen. */
 .hamburger-btn {
   display: none;
   position: fixed;
-  top: 0.75rem;
-  left: 0.75rem;
+  top: 0.625rem;
+  left: 0.625rem;
   z-index: 1100;
-  width: 44px;
-  height: 44px;
-  border: none;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(0, 50, 116, 0.18);
   border-radius: 10px;
-  background: #003274;
-  color: #fff;
-  font-size: 1.2rem;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #003274;
+  font-size: 1rem;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 50, 116, 0.3);
-  transition: background 0.15s;
-  /* Touch-target: 44×44 already meets the iOS / Material guideline. */
+  box-shadow: 0 1px 3px rgba(0, 50, 116, 0.08), 0 1px 2px rgba(0, 50, 116, 0.06);
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.12s ease;
 }
-.hamburger-btn:hover { background: #025EA1; }
-.hamburger-btn.open { background: rgba(0, 50, 116, 0.8); }
+.hamburger-btn:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 50, 116, 0.32);
+  box-shadow: 0 2px 6px rgba(0, 50, 116, 0.12), 0 1px 2px rgba(0, 50, 116, 0.08);
+}
+.hamburger-btn:active {
+  transform: scale(0.96);
+}
+.hamburger-btn:focus-visible {
+  outline: 2px solid rgba(0, 50, 116, 0.45);
+  outline-offset: 2px;
+}
+.hamburger-btn.open {
+  background: rgba(0, 50, 116, 0.92);
+  color: #fff;
+  border-color: rgba(0, 50, 116, 0.92);
+  box-shadow: 0 2px 8px rgba(0, 50, 116, 0.25);
+}
+.hamburger-btn .pi {
+  /* Icon weight: PrimeIcons render slightly thick at default size;
+     16 px keeps the bars visually balanced inside a 40 px button. */
+  font-size: 16px;
+  transition: transform 0.18s ease;
+}
+.hamburger-btn.open .pi {
+  /* Subtle quarter-turn entrance for the close (×) icon — feels
+     more deliberate than a hard swap. */
+  transform: rotate(90deg);
+}
 
 /* ── Sidebar overlay (hidden on desktop) ── */
 .sidebar-overlay {
