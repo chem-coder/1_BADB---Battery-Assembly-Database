@@ -133,28 +133,27 @@ const PREVIEW_CSS = `
     color: rgba(0, 50, 116, 0.80) !important;
   }
 
-  /* Tables: stretch to full card width, auto-balance columns by
-     content, and wrap long text so a single greedy cell doesn't
-     blow the table sideways. The card around them clips overflow
-     so even pathological cases don't break the page layout. */
-  .report_section {
-    overflow: hidden;
-  }
-  .report_table {
-    width: 100% !important;
-    max-width: 100% !important;
-    table-layout: auto !important;
-  }
-  .report_table th,
-  .report_table td {
-    border-color: rgba(0, 50, 116, 0.12) !important;
-    word-break: break-word !important;
-    overflow-wrap: anywhere !important;
-  }
+  /* Tables: keep Dalia's own layout (the print stylesheet sets
+     width:100% and border-collapse:collapse) and only re-tint
+     borders + the header row to match the SPA palette. Earlier we
+     forced table-layout:auto + word-break:break-word +
+     overflow-wrap:anywhere, which broke dates/IDs mid-string and
+     squished some columns — user reported «автоширина работает
+     криво». Reverted to Dalia's natural sizing.
+
+     .report_section no longer has overflow:hidden: the rounded
+     corners look slightly less crisp on pathological-width tables,
+     but the trade-off was clipping legitimate wide tables. Wide
+     tables can extend past the card; long-form rendering wins
+     over visual perfection. */
   .report_table th {
     background: rgba(0, 50, 116, 0.06) !important;
     color: #003274 !important;
     font-weight: 600 !important;
+  }
+  .report_table th,
+  .report_table td {
+    border-color: rgba(0, 50, 116, 0.12) !important;
   }
 
   /* Dual-metric tiles: subtle navy accent on the "factual" column. */
