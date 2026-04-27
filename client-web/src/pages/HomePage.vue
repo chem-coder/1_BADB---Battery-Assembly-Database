@@ -89,7 +89,7 @@ async function loadDashboard() {
     const [kpi, filters, act, prod, graph, funnel, matUsage, tapesRes, batchesRes, batteriesRes] = await Promise.allSettled([
       api.get(`/api/dashboard/kpi?period=${period}${projectParam}${operatorParam}`),
       api.get('/api/dashboard/filter-options'),
-      api.get('/api/dashboard/activity?limit=15'),
+      api.get('/api/dashboard/activity?limit=80'),
       api.get(`/api/dashboard/production?weeks=12`),
       api.get(`/api/dashboard/graph?limit=200${projectParam}${operatorParam}`),
       api.get(`/api/dashboard/funnel?period=${period}`),
@@ -192,14 +192,94 @@ function goTo(path) { router.push(path) }
 function activityIcon(action) {
   if (action === 'create') return 'pi pi-plus-circle'
   if (action === 'update') return 'pi pi-pencil'
+  if (action === 'edit') return 'pi pi-pencil'
   if (action === 'delete') return 'pi pi-trash'
+  if (action === 'login_success') return 'pi pi-sign-in'
+  if (action === 'logout') return 'pi pi-sign-out'
+  if (action === 'register') return 'pi pi-user-plus'
   return 'pi pi-circle'
 }
 
 function activityColor(action) {
-  if (action === 'create') return '#52C9A6'
+  if (action === 'create' || action === 'register') return '#52C9A6'
   if (action === 'delete') return '#E74C3C'
+  if (action === 'login_success') return '#52C9A6'
+  if (action === 'logout') return '#9CA3AF'
   return '#003274'
+}
+
+// Russian label for the small navy pill in each timeline row. The
+// merged endpoint mixes verbs from three sources (auth_log,
+// field_changelog, activity_log) — normalize them to readable
+// Russian here instead of leaking «login_success» / «edit» into
+// the UI verbatim.
+const ACTION_LABELS = {
+  create:        'создал',
+  update:        'изменил',
+  edit:          'правка',
+  delete:        'удалил',
+  login_success: 'вход',
+  logout:        'выход',
+  register:      'регистр.',
+}
+function actionLabel(action) {
+  return ACTION_LABELS[action] || action || ''
+}
+
+// Russian label for the entity column. Same idea — the backend
+// stores raw table-ish names ('tape', 'electrode_cut_batch', 'auth')
+// which are fine for queries but ugly in the timeline.
+const ENTITY_LABELS = {
+  tape:                 'лента',
+  electrode_cut_batch:  'партия',
+  battery:              'аккум.',
+  recipe:               'рецепт',
+  material:             'материал',
+  project:              'проект',
+  user:                 'юзер',
+  separator:            'сепаратор',
+  electrolyte:          'электролит',
+  auth:                 'авторизация',
+}
+function entityLabel(e) {
+  return ENTITY_LABELS[e] || e || ''
+}
+
+// Group filteredActivity by day for the timeline. Russian relative
+// labels for today / yesterday, full date otherwise — matches the
+// pattern the user sees in messengers / mail clients. Each group is
+// sorted by created_at DESC (already true since the backend orders
+// the union by created_at DESC; we just slice it into day buckets).
+const RU_MONTHS = [
+  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+]
+function dayKey(d) {
+  // Local-day key (yyyy-mm-dd) — group by calendar day in user's
+  // timezone, not UTC, so events near midnight don't drift across
+  // headers.
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+}
+function dayLabel(d) {
+  const today = new Date()
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (dayKey(d) === dayKey(today))     return 'Сегодня'
+  if (dayKey(d) === dayKey(yesterday)) return 'Вчера'
+  // «7 апреля 2026» if not current year, «7 апреля» otherwise
+  const sameYear = d.getFullYear() === today.getFullYear()
+  const ymd = `${d.getDate()} ${RU_MONTHS[d.getMonth()]}`
+  return sameYear ? ymd : `${ymd} ${d.getFullYear()}`
+}
+
+// Time-of-day for the right-aligned column. Was previously
+// `formatTime` doing «5 мин назад» / «3 ч назад» / «7 апр.» — but
+// once we split by day-headers, repeating «7 апр.» on every row
+// inside the «7 апреля» group is noise. Show plain HH:MM instead.
+function formatTimeOfDay(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
 }
 
 function formatTime(ts) {
@@ -257,6 +337,27 @@ const filteredActivity = computed(() => {
     items = items.filter(i => oset.has(String(i.user_id)))
   }
   return items
+})
+
+// Date-grouped view of filteredActivity for the day-headered timeline
+// rendering. Returns an array of { key, label, items } — `items` is
+// already in created_at DESC order (the backend ordered the union by
+// created_at DESC so we just walk it sequentially and bucket by
+// local-calendar day). The list keeps the day headers in the same
+// DESC order as the events.
+const groupedActivity = computed(() => {
+  const groups = []
+  let cur = null
+  for (const evt of filteredActivity.value) {
+    const d = new Date(evt.created_at)
+    const key = dayKey(d)
+    if (!cur || cur.key !== key) {
+      cur = { key, label: dayLabel(d), items: [] }
+      groups.push(cur)
+    }
+    cur.items.push(evt)
+  }
+  return groups
 })
 const filteredProduction = computed(() => {
   const { from, to } = getDateRange()
@@ -372,15 +473,20 @@ const filteredProduction = computed(() => {
         <div class="timeline-title">Активность</div>
         <div v-if="filteredActivity.length === 0" class="empty-state">Нет событий</div>
         <div v-else class="timeline-list">
-          <div v-for="evt in filteredActivity" :key="evt.id" class="timeline-item">
-            <div class="timeline-dot" :style="{ background: activityColor(evt.action) }"></div>
-            <div class="timeline-content">
-              <span class="timeline-action">{{ evt.action }}</span>
-              <span class="timeline-entity">{{ evt.entity }} #{{ evt.entity_id }}</span>
-              <span class="timeline-user">{{ evt.user_name }}</span>
-              <span class="timeline-time">{{ formatTime(evt.created_at) }}</span>
+          <template v-for="group in groupedActivity" :key="group.key">
+            <div class="timeline-day">{{ group.label }}</div>
+            <div v-for="evt in group.items" :key="evt.id" class="timeline-item">
+              <div class="timeline-dot" :style="{ background: activityColor(evt.action) }"></div>
+              <div class="timeline-content">
+                <span class="timeline-action">{{ actionLabel(evt.action) }}</span>
+                <span class="timeline-entity">
+                  {{ entityLabel(evt.entity) }}<template v-if="evt.entity_id"> #{{ evt.entity_id }}</template>
+                </span>
+                <span class="timeline-user">{{ evt.user_name || '—' }}</span>
+                <span class="timeline-time">{{ formatTimeOfDay(evt.created_at) }}</span>
+              </div>
             </div>
-          </div>
+          </template>
         </div>
       </div>
 
@@ -567,6 +673,27 @@ const filteredProduction = computed(() => {
   border-bottom: 1px solid rgba(180, 210, 255, 0.25);
 }
 .timeline-list { padding: 0.5rem 0; overflow-y: auto; max-height: 500px; }
+/* Sticky day-headers — they stay visible at the top of the
+   scrolling list as the user scrolls through events for that day,
+   matching the messenger / mail-client pattern. Subtle navy tint
+   on a tinted bar so it doesn't compete with the row content. */
+.timeline-day {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 1.25rem;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(0, 50, 116, 0.55);
+  background: rgba(241, 244, 250, 0.92);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid rgba(0, 50, 116, 0.06);
+}
+.timeline-day:first-child {
+  margin-top: -0.5rem; /* align with timeline-list's top padding */
+}
 .timeline-item {
   display: flex; align-items: center; gap: 0.7rem;
   padding: 0.5rem 1.25rem;
