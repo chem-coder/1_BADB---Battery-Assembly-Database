@@ -42,7 +42,9 @@ const selectedTapeId = ref(null)
 // don't read as the same column. Same fix lives on AssemblyPage for
 // battery_id.
 const columns = [
-  { field: '_constructor', header: '🔧', minWidth: '45px', width: '45px', sortable: false, filterable: false },
+  // Header rendered via `#header-_constructor` slot (master pill with
+  // live count). The string here is the accessibility fallback only.
+  { field: '_constructor', header: 'Конструктор', minWidth: '110px', width: '120px', sortable: false, filterable: false },
   // Synthetic column: "🖨️ Print" opens Dalia's print-friendly HTML
   // (/workflow/electrode-batch-print.html) in a new tab. Matches the
   // vanilla-JS flow she added in d1382cb but triggered from the Vue
@@ -379,12 +381,28 @@ onUnmounted(() => clearTimeout(saveTimer))
       @row-click="(data) => toggleConstructor(data.cut_batch_id)"
       @header-click="(field) => field === '_constructor' && toggleAllConstructor()"
     >
+      <!-- Constructor column — custom header (master toggle pill
+           with live count) + per-row checkbox to add/remove the
+           cut batch from the constructor zone below. -->
+      <template #header-_constructor>
+        <button
+          type="button"
+          class="ct-cons-header"
+          :class="{ 'is-active': constructorIds.length > 0 }"
+          v-tooltip.top="'Конструктор: кликните по заголовку чтобы выбрать или снять все партии на странице'"
+          @click.stop="toggleAllConstructor"
+        >
+          <i class="pi pi-th-large"></i>
+          <span class="ct-cons-label">Конструктор</span>
+          <span v-if="constructorIds.length > 0" class="ct-cons-count">{{ constructorIds.length }}</span>
+        </button>
+      </template>
       <template #col-_constructor="{ data }">
         <Checkbox
           :modelValue="isInConstructor(data.cut_batch_id)"
           @update:modelValue="toggleConstructor(data.cut_batch_id)"
           :binary="true"
-          v-tooltip.right="'В конструктор'"
+          v-tooltip.right="'Добавить/убрать из конструктора'"
         />
       </template>
       <template #col-_print="{ data }">

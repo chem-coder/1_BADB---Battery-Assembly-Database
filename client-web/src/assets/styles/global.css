@@ -647,6 +647,88 @@ h4 { font-size: 16px; font-weight: 700; line-height: 1.4; }
 }
 
 /* ══════════════════════════════════════════════════════════════
+   Constructor-column header pill — master toggle + live count
+   ══════════════════════════════════════════════════════════════
+   Used on TapesPage / ElectrodesPage / AssemblyPage via the
+   `#header-_constructor` slot in CrudTable. Replaces the previous
+   bare 🔧 emoji column header which gave no hint that:
+     1. This column toggles "add to constructor", and
+     2. Clicking the header itself selects/deselects ALL on the page.
+   The pill has an explicit «Конструктор» label, a tooltip
+   spelling out the bulk-toggle action, and a green badge that
+   surfaces the running count whenever items are selected.
+
+   Lives in global.css (not scoped to a page) because Vue scoped
+   styles do NOT cover slot content rendered in a child component
+   — even though we WRITE the slot template in the parent page,
+   the DOM is mounted inside CrudTable's scope. Global is the
+   simplest single owner; specificity is plenty thanks to the
+   `.ct-cons-` namespace. */
+.ct-cons-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid rgba(0, 50, 116, 0.20);
+  border-radius: 6px;
+  background: rgba(0, 50, 116, 0.04);
+  color: rgba(0, 50, 116, 0.70);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.ct-cons-header:hover {
+  background: rgba(0, 50, 116, 0.10);
+  border-color: rgba(0, 50, 116, 0.38);
+  color: #003274;
+}
+.ct-cons-header:focus-visible {
+  outline: 2px solid rgba(0, 50, 116, 0.45);
+  outline-offset: 2px;
+}
+.ct-cons-header.is-active {
+  background: rgba(82, 201, 166, 0.18);
+  border-color: rgba(82, 201, 166, 0.50);
+  color: #1a7a5f;
+}
+.ct-cons-header.is-active:hover {
+  background: rgba(82, 201, 166, 0.28);
+  border-color: rgba(82, 201, 166, 0.70);
+}
+.ct-cons-header .pi {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.ct-cons-label {
+  /* Hide on very narrow columns — icon + count alone communicates
+     "tap me to toggle all". 78px keeps the label on phones in
+     landscape but drops it on iPhone SE portrait. */
+  letter-spacing: 0.01em;
+}
+.ct-cons-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  padding: 0 5px;
+  height: 16px;
+  border-radius: 8px;
+  background: #1a7a5f;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* ══════════════════════════════════════════════════════════════
    RESPONSIVE — Mobile (<768px)
    ══════════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {

@@ -51,8 +51,13 @@ onMounted(() => {
 })
 
 // ── Column config ──────────────────────────────────────────────────────
+// `_constructor` column header is rendered via the
+// `#header-_constructor` slot (master toggle button with reactive
+// count) — the `header` text here is just a fallback for accessibility
+// tools that read column metadata. `tooltip` is unused for this column
+// since the slot supplies its own tooltip.
 const columns = [
-  { field: '_constructor',  header: '🔧',         minWidth: '45px', width: '45px', sortable: false, filterable: false },
+  { field: '_constructor',  header: 'Конструктор', minWidth: '110px', width: '120px', sortable: false, filterable: false },
   { field: 'name',          header: 'Название',   minWidth: '100px' },
   { field: 'project_name',  header: 'Проект',     minWidth: '80px',  width: '115px' },
   { field: 'role',          header: 'Тип',        minWidth: '80px',  width: '115px' },
@@ -245,13 +250,27 @@ function formatDate(dt) {
       @header-click="(field) => field === '_constructor' && toggleAllConstructor()"
       @row-click="(data) => toggleConstructor(data.tape_id)"
     >
-      <!-- Constructor checkbox column -->
+      <!-- Constructor column — custom header (master toggle pill
+           with live count) + per-row checkbox to add/remove that row. -->
+      <template #header-_constructor>
+        <button
+          type="button"
+          class="ct-cons-header"
+          :class="{ 'is-active': constructorIds.length > 0 }"
+          v-tooltip.top="'Конструктор: кликните по заголовку чтобы выбрать или снять все ленты на странице'"
+          @click.stop="toggleAllConstructor"
+        >
+          <i class="pi pi-th-large"></i>
+          <span class="ct-cons-label">Конструктор</span>
+          <span v-if="constructorIds.length > 0" class="ct-cons-count">{{ constructorIds.length }}</span>
+        </button>
+      </template>
       <template #col-_constructor="{ data }">
         <Checkbox
           :modelValue="isInConstructor(data.tape_id)"
           @update:modelValue="toggleConstructor(data.tape_id)"
           :binary="true"
-          v-tooltip.right="'В конструктор'"
+          v-tooltip.right="'Добавить/убрать из конструктора'"
         />
       </template>
 
