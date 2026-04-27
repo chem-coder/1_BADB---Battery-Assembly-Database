@@ -101,17 +101,28 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app-layout">
+  <!-- `is-mobile-open` is the single source of truth for "drawer is
+       on screen" — both the sidebar transform AND the overlay key off
+       this one class on the root, so there's no chance of the two
+       getting out of sync via component-class fallthrough. -->
+  <div class="app-layout" :class="{ 'is-mobile-open': sidebarOpen }">
 
     <!-- Mobile hamburger button -->
-    <button class="hamburger-btn" :class="{ open: sidebarOpen }" @click="toggleSidebar">
+    <button
+      class="hamburger-btn"
+      :class="{ open: sidebarOpen }"
+      :aria-label="sidebarOpen ? 'Закрыть меню' : 'Открыть меню'"
+      :aria-expanded="sidebarOpen"
+      @click="toggleSidebar"
+    >
       <i :class="sidebarOpen ? 'pi pi-times' : 'pi pi-bars'" />
     </button>
 
-    <!-- Sidebar overlay (mobile) -->
+    <!-- Sidebar overlay — visible only when sidebar is open AND the
+         media query is mobile-active. Tap closes the drawer. -->
     <div v-if="sidebarOpen" class="sidebar-overlay" @click="closeSidebar" />
 
-    <AppSidebar :class="{ 'sidebar--open': sidebarOpen }" @navigate="closeSidebar" />
+    <AppSidebar @navigate="closeSidebar" />
     <div class="app-main">
       <Toast position="top-right" />
       <main ref="contentEl" class="app-content" :class="{ scrolled: isScrolled }">
@@ -208,6 +219,7 @@ onUnmounted(() => {
   cursor: pointer;
   box-shadow: 0 2px 8px rgba(0, 50, 116, 0.3);
   transition: background 0.15s;
+  /* Touch-target: 44×44 already meets the iOS / Material guideline. */
 }
 .hamburger-btn:hover { background: #025EA1; }
 .hamburger-btn.open { background: rgba(0, 50, 116, 0.8); }
@@ -218,9 +230,13 @@ onUnmounted(() => {
 }
 
 /* ══════════════════════════════════════════════════════════════
-   MOBILE — < 768px
+   MOBILE — ≤ 1024px (covers phones AND tablets in both
+   orientations; modern laptops start ≥ 1280px so they keep the
+   desktop layout). Single owner of the mobile sidebar drawer
+   logic — AppSidebar.vue's old @media block was removed to avoid
+   specificity wars between the two scoped CSS contexts.
    ══════════════════════════════════════════════════════════════ */
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .app-layout {
     --frame: 0;
     --inset: 1rem;
@@ -228,7 +244,10 @@ onUnmounted(() => {
 
   .hamburger-btn { display: flex; align-items: center; justify-content: center; }
 
-  /* Sidebar: hidden by default, slides in as overlay */
+  /* Sidebar: hidden off-screen by default, slides in when the root
+     `.app-layout` carries `.is-mobile-open`. `:deep()` reaches into
+     AppSidebar's scoped CSS so we don't need a chained class on the
+     child component. */
   .app-layout :deep(.sidebar) {
     position: fixed;
     top: 0;
@@ -237,14 +256,10 @@ onUnmounted(() => {
     height: 100vh;
     transform: translateX(-100%);
     transition: transform 0.25s ease;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
   }
-  .app-layout :deep(.sidebar--open.sidebar),
-  .app-layout .sidebar--open :deep(.sidebar) {
+  .app-layout.is-mobile-open :deep(.sidebar) {
     transform: translateX(0);
-  }
-  /* Direct class on AppSidebar root */
-  .sidebar--open {
-    transform: translateX(0) !important;
   }
 
   .sidebar-overlay {
@@ -256,7 +271,7 @@ onUnmounted(() => {
     backdrop-filter: blur(2px);
   }
 
-  /* Main takes full width */
+  /* Main content card: full bleed, no margin/border. */
   .app-main {
     margin: 0;
     border-radius: 0;
@@ -264,42 +279,89 @@ onUnmounted(() => {
     border: none;
   }
 
+  /* Reserve space for hamburger overlay so page content doesn't
+     hide behind it. */
   .app-content {
-    padding-top: 3.5rem; /* space for hamburger */
+    padding: 3.5rem 0.75rem 1rem;
   }
 
-  /* Dialogs: max-width instead of fixed width */
+  /* Dialogs: fit to screen with margin. */
   :deep(.p-dialog) {
-    max-width: calc(100vw - 2rem) !important;
+    max-width: calc(100vw - 1rem) !important;
     width: auto !important;
-    margin: 1rem !important;
+    margin: 0.5rem !important;
+  }
+  :deep(.p-dialog .p-dialog-content) {
+    padding: 0.75rem 1rem;
+  }
+  :deep(.p-dialog .p-dialog-header),
+  :deep(.p-dialog .p-dialog-footer) {
+    padding: 0.75rem 1rem;
   }
 
-  /* CrudTable toolbar: wrap on mobile */
+  /* Glass-card padding tighten — desktop's 1rem+ is wasted space on phones. */
+  :deep(.glass-card) {
+    padding: 0.75rem;
+  }
+
+  /* CrudTable toolbar wraps; let column controls stack. */
   :deep(.ct-toolbar) {
     flex-wrap: wrap;
     gap: 0.5rem;
+    padding: 0.5rem;
+  }
+  /* PrimeVue DataTable — horizontal scroll instead of cropping/wrapping
+     cells. PrimeVue already makes the inner table scroll inside its
+     wrapper; we just make sure the wrapper's overflow is honored. */
+  :deep(.p-datatable-wrapper) {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
-  /* HomePage grid: single column */
+  /* HomePage grid: 2-up KPIs, single-column for the rest. */
   :deep(.kpi-grid) {
     grid-template-columns: repeat(2, 1fr) !important;
   }
   :deep(.recent-grid) {
     grid-template-columns: 1fr !important;
   }
+
+  /* Touch-target floor: 38 px on common controls (the strict 44 px
+     iOS guideline produces oversized buttons next to compact rows
+     in the lab UI; 38 px is still tap-friendly without dwarfing the
+     rest of the layout). */
+  :deep(.p-button) {
+    min-height: 38px;
+  }
+  :deep(.p-inputtext),
+  :deep(.p-select),
+  :deep(.p-inputnumber-input),
+  :deep(.p-textarea) {
+    min-height: 38px;
+  }
+
+  /* PageHeader keeps its height but the inset content reflows
+     naturally (already a flex container). */
+  :deep(.page-header) {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* Body background: while the drawer is open, lock the scroll on
+     the underlying main content so swipes inside the menu don't
+     bleed into the page. */
+}
+.app-layout.is-mobile-open :deep(.app-content) {
+  overflow: hidden;
 }
 
 /* ══════════════════════════════════════════════════════════════
-   TABLET — 769px to 1024px
+   TABLET — narrow desktops 1025px-1279px keep the full sidebar
+   but tighten the inset slightly so dense pages fit.
    ══════════════════════════════════════════════════════════════ */
-@media (min-width: 769px) and (max-width: 1024px) {
+@media (min-width: 1025px) and (max-width: 1279px) {
   .app-layout {
     --inset: 1.25rem;
-  }
-
-  :deep(.p-dialog) {
-    max-width: calc(100vw - 4rem) !important;
   }
 }
 </style>
