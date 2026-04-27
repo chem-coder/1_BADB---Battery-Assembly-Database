@@ -22,7 +22,6 @@ const crudTable = ref(null)
 
 // ── Data ───────────────────────────────────────────────────────────────
 const electrolytes = ref([])
-const activeUsers = ref([])
 const loading = ref(false)
 
 async function loadElectrolytes() {
@@ -37,14 +36,7 @@ async function loadElectrolytes() {
   }
 }
 
-async function loadUsers() {
-  try {
-    const { data } = await api.get('/api/users')
-    activeUsers.value = data.filter(u => u.active)
-  } catch {}
-}
-
-onMounted(() => { loadElectrolytes(); loadUsers() })
+onMounted(() => { loadElectrolytes() })
 
 // ── Column config ──────────────────────────────────────────────────────
 const columns = [
@@ -95,9 +87,12 @@ const formVisible = ref(false)
 const mode = ref(null) // 'create' | 'edit'
 const currentId = ref(null)
 
+// `created_by` is NOT part of the form — backend forces it from the
+// authenticated user (req.user.userId). Storing it on the form would
+// invite an "edit creator" UI that the backend ignores anyway. The
+// existing creator is shown read-only via EntityMeta when available.
 const form = ref({
   name: '',
-  created_by: '',
   electrolyte_type: '',
   solvent_system: '',
   salts: '',
@@ -121,7 +116,7 @@ const statusOptions = [
 
 function resetForm() {
   form.value = {
-    name: '', created_by: '', electrolyte_type: '', solvent_system: '',
+    name: '', electrolyte_type: '', solvent_system: '',
     salts: '', concentration: '', additives: '', notes: '', status: 'active',
   }
   mode.value = null
@@ -140,7 +135,6 @@ function openEdit(el) {
   currentId.value = el.electrolyte_id
   form.value = {
     name: el.name || '',
-    created_by: el.created_by || '',
     electrolyte_type: el.electrolyte_type || '',
     solvent_system: el.solvent_system || '',
     salts: el.salts || '',
@@ -159,8 +153,9 @@ async function saveElectrolyte() {
     return
   }
 
+  // created_by intentionally NOT in the payload — backend forces it
+  // from the authenticated user (routes/electrolytes.js:31).
   const payload = { ...form.value }
-  if (payload.created_by) payload.created_by = Number(payload.created_by)
 
   try {
     if (mode.value === 'create') {
@@ -248,9 +243,6 @@ function statusLabel(status) {
       <form class="form-grid" @submit.prevent="saveElectrolyte">
         <label>Название</label>
         <InputText v-model="form.name" placeholder="Название электролита" class="w-full" />
-
-        <label>Кто добавил</label>
-        <Select v-model="form.created_by" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— выбрать —" class="w-full" />
 
         <label>Тип электролита</label>
         <Select v-model="form.electrolyte_type" :options="typeOptions" optionLabel="label" optionValue="value" placeholder="— выбрать —" class="w-full" />

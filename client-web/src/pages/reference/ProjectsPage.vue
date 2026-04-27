@@ -106,9 +106,13 @@ const formVisible = ref(false)
 const mode = ref(null)
 const currentId = ref(null)
 
+// `created_by` is NOT part of the form — backend forces it from the
+// authenticated user (routes/projects.js:159, "SECURITY: created_by
+// is always the current authenticated user"). The existing creator is
+// shown read-only via EntityMeta when available. `lead_id` (project
+// lead — different concept) IS user-pickable via its own Select below.
 const form = ref({
   name: '',
-  created_by: '',
   lead_id: '',
   description: '',
   start_date: '',
@@ -120,7 +124,7 @@ const form = ref({
 
 function resetForm() {
   form.value = {
-    name: '', created_by: '', lead_id: '', description: '',
+    name: '', lead_id: '', description: '',
     start_date: '', due_date: '', status: 'active',
     confidentiality_level: 'public', department_id: null,
   }
@@ -145,7 +149,6 @@ function openEdit(proj) {
   currentId.value = proj.project_id
   form.value = {
     name: proj.name || '',
-    created_by: proj.created_by || '',
     lead_id: proj.lead_id || '',
     description: proj.description || '',
     start_date: proj.start_date ? proj.start_date.slice(0, 10) : '',
@@ -480,9 +483,6 @@ async function copyAccessFromProject() {
       <form class="form-grid" @submit.prevent="saveProject">
         <label>Название</label>
         <InputText v-model="form.name" placeholder="Название проекта" class="w-full" />
-
-        <label>Кто добавил</label>
-        <Select v-model="form.created_by" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— выбрать —" class="w-full" />
 
         <label>Руководитель</label>
         <Select v-model="form.lead_id" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— выбрать —" class="w-full" />

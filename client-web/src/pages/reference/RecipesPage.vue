@@ -22,7 +22,6 @@ const crudTable = ref(null)
 
 // ── Data ───────────────────────────────────────────────────────────────
 const recipes = ref([])
-const activeUsers = ref([])
 const loading = ref(false)
 let cachedMaterials = null
 
@@ -38,13 +37,6 @@ async function loadRecipes() {
   }
 }
 
-async function loadUsers() {
-  try {
-    const { data } = await api.get('/api/users')
-    activeUsers.value = data.filter(u => u.active)
-  } catch {}
-}
-
 async function fetchMaterials() {
   if (cachedMaterials) return cachedMaterials
   const { data } = await api.get('/api/materials')
@@ -57,7 +49,7 @@ async function fetchRecipeLines(recipeId) {
   return data
 }
 
-onMounted(() => { loadRecipes(); loadUsers() })
+onMounted(() => { loadRecipes() })
 
 // Invalidate material cache on window refocus
 function onWindowFocus() { cachedMaterials = null }
@@ -168,16 +160,18 @@ const formVisible = ref(false)
 const mode = ref(null)
 const currentId = ref(null)
 
+// `created_by` is NOT part of the form — backend forces it from the
+// authenticated user (req.user.userId, see routes/recipes.js). The
+// existing creator is shown read-only via EntityMeta when available.
 const form = ref({
   name: '',
-  created_by: '',
   variant_label: '',
   role: '',
   notes: '',
 })
 
 function resetForm() {
-  form.value = { name: '', created_by: '', variant_label: '', role: '', notes: '' }
+  form.value = { name: '', variant_label: '', role: '', notes: '' }
   mode.value = null
   currentId.value = null
   recipeLines.value = []
@@ -197,14 +191,12 @@ async function openEdit(recipe) {
   currentId.value = recipe.tape_recipe_id
   form.value = {
     name: recipe.name || '',
-    created_by: recipe.created_by || '',
     variant_label: recipe.variant_label || '',
     role: recipe.role || '',
     notes: recipe.notes || '',
   }
   formVisible.value = true
   cachedMaterials = null
-  loadUsers()
 
   const lines = await fetchRecipeLines(recipe.tape_recipe_id)
   await loadLinesIntoForm(lines)
@@ -215,14 +207,12 @@ async function openDuplicate(recipe) {
   currentId.value = null
   form.value = {
     name: recipe.name + ' (копия)',
-    created_by: '',
     variant_label: recipe.variant_label || '',
     role: recipe.role || '',
     notes: recipe.notes || '',
   }
   formVisible.value = true
   cachedMaterials = null
-  loadUsers()
 
   const lines = await fetchRecipeLines(recipe.tape_recipe_id)
   await loadLinesIntoForm(lines)
@@ -232,10 +222,6 @@ async function openDuplicate(recipe) {
 function validate() {
   if (!form.value.name?.trim()) {
     toast.add({ severity: 'warn', summary: 'Заполните название рецепта', life: 3000 })
-    return false
-  }
-  if (!form.value.created_by) {
-    toast.add({ severity: 'warn', summary: 'Укажите кто добавил', life: 3000 })
     return false
   }
   if (!form.value.role) {
@@ -282,12 +268,13 @@ async function saveRecipe() {
     line_notes: l.line_notes || null,
   }))
 
+  // created_by intentionally NOT in the payload — backend forces it
+  // from the authenticated user (routes/recipes.js POST).
   const payload = {
     name: form.value.name.trim(),
     role: form.value.role,
     variant_label: form.value.variant_label || null,
     notes: form.value.notes || null,
-    created_by: Number(form.value.created_by),
     lines,
   }
 
@@ -381,9 +368,6 @@ function roleLabel(role) {
             placeholder="-- выбрать --"
             class="w-full"
           />
-
-          <label>Кто добавил</label>
-          <Select v-model="form.created_by" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="-- выбрать --" class="w-full" @focus="loadUsers" />
 
           <label>Комментарии</label>
           <Textarea v-model="form.notes" rows="2" placeholder="Кратко: что это за рецепт" class="w-full" />

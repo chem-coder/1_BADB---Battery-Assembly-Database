@@ -22,7 +22,6 @@ const crudTable = ref(null)
 
 // ── Data ───────────────────────────────────────────────────────────────
 const separators = ref([])
-const activeUsers = ref([])
 const structures = ref([])
 const loading = ref(false)
 
@@ -38,13 +37,6 @@ async function loadSeparators() {
   }
 }
 
-async function loadUsers() {
-  try {
-    const { data } = await api.get('/api/users')
-    activeUsers.value = data.filter(u => u.active)
-  } catch {}
-}
-
 async function loadStructures() {
   try {
     const { data } = await api.get('/api/structures')
@@ -52,7 +44,7 @@ async function loadStructures() {
   } catch {}
 }
 
-onMounted(() => { loadSeparators(); loadUsers(); loadStructures() })
+onMounted(() => { loadSeparators(); loadStructures() })
 
 // ── Column config ──────────────────────────────────────────────────────
 const columns = [
@@ -103,9 +95,11 @@ const formVisible = ref(false)
 const mode = ref(null)
 const currentId = ref(null)
 
+// `created_by` is NOT part of the form — backend forces it from the
+// authenticated user (req.user.userId, see routes/separators.js). The
+// existing creator is shown read-only via EntityMeta when available.
 const form = ref({
   name: '',
-  created_by: '',
   supplier: '',
   brand: '',
   batch: '',
@@ -121,7 +115,7 @@ const form = ref({
 
 function resetForm() {
   form.value = {
-    name: '', created_by: '', supplier: '', brand: '', batch: '', structure_id: '',
+    name: '', supplier: '', brand: '', batch: '', structure_id: '',
     air_perm: '', air_perm_units: '', thickness_um: '', porosity: '',
     comments: '', status: 'available', depleted_at: '',
   }
@@ -141,7 +135,6 @@ function openEdit(sep) {
   currentId.value = sep.sep_id
   form.value = {
     name: sep.name || '',
-    created_by: sep.created_by || '',
     supplier: sep.supplier || '',
     brand: sep.brand || '',
     batch: sep.batch || '',
@@ -254,9 +247,6 @@ function statusLabel(status) {
       <form class="form-grid" @submit.prevent="saveSeparator">
         <label>Название</label>
         <InputText v-model="form.name" placeholder="Название сепаратора" class="w-full" />
-
-        <label>Кто добавил</label>
-        <Select v-model="form.created_by" :options="activeUsers" optionLabel="name" optionValue="user_id" placeholder="— выбрать —" class="w-full" />
 
         <label>Поставщик</label>
         <InputText v-model="form.supplier" placeholder="Celgard" class="w-full" />
