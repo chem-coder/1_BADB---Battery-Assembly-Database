@@ -1,0 +1,321 @@
+// Shared vanilla auth layer: keeps login/current-user behavior consistent across legacy pages.
+(function () {
+  const TOKEN_KEY = 'badb_auth_token';
+  const PUBLIC_AUTH_PATHS = new Set([
+    '/api/auth/login',
+    '/api/auth/change-password-public'
+  ]);
+
+  const rawFetch = window.fetch.bind(window);
+  let currentUser = null;
+  let bypassMode = false;
+  let authReady = null;
+  let resolveAuthReady = null;
+  let authUi = null;
+
+  function resetAuthGate() {
+    authReady = new Promise((resolve) => {
+      resolveAuthReady = resolve;
+    });
+  }
+
+  function getToken() {
+    return localStorage.getItem(TOKEN_KEY) || '';
+  }
+
+  function setToken(token) {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  }
+
+  function normalizeUser(user) {
+    if (!user) return null;
+    return {
+      userId: user.userId ?? user.user_id,
+      name: user.name || user.login || '',
+      login: user.login || '',
+      role: user.role || ''
+    };
+  }
+
+  function requestPath(resource) {
+    const value = resource instanceof Request ? resource.url : String(resource);
+    try {
+      return new URL(value, window.location.origin).pathname;
+    } catch {
+      return '';
+    }
+  }
+
+  function isProtectedApiRequest(resource) {
+    const value = resource instanceof Request ? resource.url : String(resource);
+    let url;
+    try {
+      url = new URL(value, window.location.origin);
+    } catch {
+      return false;
+    }
+
+    return url.origin === window.location.origin
+      && url.pathname.startsWith('/api/')
+      && !PUBLIC_AUTH_PATHS.has(url.pathname);
+  }
+
+  function withAuthHeader(resource, options) {
+    const token = getToken();
+    const baseHeaders = options?.headers || (resource instanceof Request ? resource.headers : undefined);
+    const headers = new Headers(baseHeaders || {});
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+
+    if (resource instanceof Request) {
+      return [new Request(resource, { ...(options || {}), headers }), undefined];
+    }
+
+    return [resource, { ...(options || {}), headers }];
+  }
+
+  function ensureAuthUi() {
+    if (authUi) return authUi;
+
+    const badge = document.createElement('div');
+    badge.id = 'badb-auth-badge';
+    badge.setAttribute('aria-live', 'polite');
+    badge.innerHTML = `
+      <span id="badb-auth-user">Пользователь: —</span>
+      <button type="button" id="badb-auth-logout">Выход</button>
+    `;
+
+    const overlay = document.createElement('div');
+    overlay.id = 'badb-auth-overlay';
+    overlay.hidden = true;
+    overlay.innerHTML = `
+      <form id="badb-auth-form" autocomplete="on">
+        <h2>Вход</h2>
+        <label>
+          Логин
+          <input id="badb-auth-login" name="login" autocomplete="username" required>
+        </label>
+        <label>
+          Пароль
+          <input id="badb-auth-password" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit">Войти</button>
+        <div id="badb-auth-error" role="alert"></div>
+      </form>
+    `;
+
+    document.body.appendChild(badge);
+    document.body.appendChild(overlay);
+
+    authUi = {
+      badge,
+      user: badge.querySelector('#badb-auth-user'),
+      logout: badge.querySelector('#badb-auth-logout'),
+      overlay,
+      form: overlay.querySelector('#badb-auth-form'),
+      login: overlay.querySelector('#badb-auth-login'),
+      password: overlay.querySelector('#badb-auth-password'),
+      error: overlay.querySelector('#badb-auth-error')
+    };
+
+    authUi.form.addEventListener('submit', handleLoginSubmit);
+    authUi.logout.addEventListener('click', handleLogout);
+    return authUi;
+  }
+
+  function renderAuthUi() {
+    const ui = ensureAuthUi();
+    const label = currentUser
+      ? `${currentUser.name || currentUser.login || `#${currentUser.userId}`}`
+      : '—';
+
+    ui.user.textContent = `Пользователь: ${label}`;
+    ui.logout.hidden = bypassMode || !currentUser;
+    syncCurrentUserButtons();
+  }
+
+  function showLogin(message = '') {
+    const ui = ensureAuthUi();
+    ui.overlay.hidden = false;
+    ui.error.textContent = message;
+    setTimeout(() => ui.login.focus(), 0);
+  }
+
+  function hideLogin() {
+    const ui = ensureAuthUi();
+    ui.overlay.hidden = true;
+    ui.error.textContent = '';
+    ui.password.value = '';
+  }
+
+  async function handleLoginSubmit(event) {
+    event.preventDefault();
+    const ui = ensureAuthUi();
+    ui.error.textContent = '';
+
+    try {
+      const res = await rawFetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          login: ui.login.value.trim(),
+          password: ui.password.value
+        })
+      });
+
+      if (!res.ok) {
+        ui.error.textContent = 'Неверный логин или пароль';
+        return;
+      }
+
+      const data = await res.json();
+      setToken(data.token);
+      currentUser = normalizeUser(data.user);
+      bypassMode = false;
+      hideLogin();
+      renderAuthUi();
+      resolveAuthReady?.(currentUser);
+    } catch {
+      ui.error.textContent = 'Не удалось выполнить вход';
+    }
+  }
+
+  function handleLogout() {
+    setToken('');
+    currentUser = null;
+    bypassMode = false;
+    resetAuthGate();
+    renderAuthUi();
+    showLogin();
+  }
+
+  async function loadSession() {
+    ensureAuthUi();
+    const token = getToken();
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+    try {
+      const res = await rawFetch('/api/auth/me', { headers });
+      if (!res.ok) {
+        setToken('');
+        currentUser = null;
+        bypassMode = false;
+        renderAuthUi();
+        showLogin();
+        return;
+      }
+
+      currentUser = normalizeUser(await res.json());
+      bypassMode = !token;
+      hideLogin();
+      renderAuthUi();
+      resolveAuthReady?.(currentUser);
+    } catch {
+      showLogin('Не удалось проверить сессию');
+    }
+  }
+
+  async function badbAuthFetch(resource, options) {
+    if (!isProtectedApiRequest(resource)) {
+      return rawFetch(resource, options);
+    }
+
+    await authReady;
+    const [nextResource, nextOptions] = withAuthHeader(resource, options);
+    const res = await rawFetch(nextResource, nextOptions);
+
+    if (res.status === 401 || res.status === 403) {
+      setToken('');
+      currentUser = null;
+      bypassMode = false;
+      resetAuthGate();
+      renderAuthUi();
+      showLogin(res.status === 403 ? 'Недостаточно прав' : 'Сессия истекла');
+    }
+
+    return res;
+  }
+
+  function isEditableUserSelect(select) {
+    if (!(select instanceof HTMLSelectElement) || select.multiple) return false;
+
+    const id = (select.id || '').toLowerCase();
+    const name = (select.name || '').toLowerCase();
+    const label = select.labels?.[0]?.textContent?.toLowerCase() || '';
+    const marker = `${id} ${name} ${label}`;
+
+    if (select.disabled) {
+      return Boolean(select.dataset.currentUserEnhanced);
+    }
+
+    return marker.includes('operator')
+      || marker.includes('performed_by')
+      || marker.includes('lead_id')
+      || marker.includes('пользователь')
+      || marker.includes('оператор')
+      || marker.includes('руководитель');
+  }
+
+  function ensureCurrentUserOption(select) {
+    if (!currentUser?.userId) return false;
+    const value = String(currentUser.userId);
+    const exists = Array.from(select.options).some((option) => option.value === value);
+
+    if (!exists) {
+      select.add(new Option(currentUser.name || currentUser.login || `#${value}`, value));
+    }
+
+    select.value = value;
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  function enhanceUserSelect(select) {
+    if (!isEditableUserSelect(select)) return;
+
+    let button = select.nextElementSibling;
+    if (!button || !button.classList?.contains('badb-current-user-button')) {
+      button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'badb-current-user-button';
+      button.textContent = 'Текущий пользователь';
+      button.addEventListener('click', () => {
+        if (!select.disabled) ensureCurrentUserOption(select);
+      });
+      select.insertAdjacentElement('afterend', button);
+    }
+
+    select.dataset.currentUserEnhanced = 'true';
+    button.hidden = select.disabled;
+    button.disabled = select.disabled || !currentUser?.userId;
+  }
+
+  function syncCurrentUserButtons() {
+    document.querySelectorAll('select').forEach(enhanceUserSelect);
+  }
+
+  function observeUserSelects() {
+    syncCurrentUserButtons();
+    const observer = new MutationObserver(syncCurrentUserButtons);
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['disabled']
+    });
+  }
+
+  resetAuthGate();
+  window.fetch = badbAuthFetch;
+  window.BADB_AUTH = {
+    getCurrentUser: () => currentUser,
+    isReady: () => authReady
+  };
+
+  document.addEventListener('DOMContentLoaded', () => {
+    ensureAuthUi();
+    observeUserSelects();
+    loadSession();
+  });
+})();

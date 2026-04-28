@@ -1,428 +1,60 @@
 const express = require('express');
-const fs = require('fs/promises');
-const path = require('path');
 const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
-const { trackChanges } = require('../middleware/trackChanges');
-
-const ALLOWED_COIN_LAYOUTS = new Set(['SE', 'ES', 'ESE']);
-const ALLOWED_POUCH_CASE_SIZE_CODES = new Set(['103x83', '86x56', 'other']);
-
-function toFiniteNumberOrNull(value) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : null;
-}
-
-function calculateCutBatchAreaMm2(batch) {
-  if (!batch) return null;
-
-  if (batch.shape === 'circle') {
-    const diameter = toFiniteNumberOrNull(batch.diameter_mm);
-    if (!(diameter > 0)) return null;
-    const radius = diameter / 2;
-    return Math.PI * radius * radius;
-  }
-
-  if (batch.shape === 'rectangle') {
-    const length = toFiniteNumberOrNull(batch.length_mm);
-    const width = toFiniteNumberOrNull(batch.width_mm);
-    if (!(length > 0) || !(width > 0)) return null;
-    return length * width;
-  }
-
-  return null;
-}
-
-function getSideCountFromSidedness(coatingSidedness) {
-  if (coatingSidedness === 'one_sided') return 1;
-  if (coatingSidedness === 'two_sided') return 2;
-  return null;
-}
-
-function averageOfFinite(values) {
-  const numeric = (Array.isArray(values) ? values : []).filter((value) => Number.isFinite(value));
-  if (!numeric.length) return null;
-  return numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
-}
-
-function getEffectiveActualMass(line) {
-  if (!line) return null;
-
-  if (line.measure_mode === 'mass') {
-    const actualMass = toFiniteNumberOrNull(line.actual_mass_g);
-    return Number.isFinite(actualMass) && actualMass > 0 ? actualMass : null;
-  }
-
-  if (line.measure_mode === 'volume') {
-    const actualVolumeMl = toFiniteNumberOrNull(line.actual_volume_ml);
-    const density = toFiniteNumberOrNull(line.density_g_ml);
-    if (!(Number.isFinite(actualVolumeMl) && actualVolumeMl > 0 && Number.isFinite(density) && density > 0)) {
-      return null;
-    }
-    return actualVolumeMl * density;
-  }
-
-  return null;
-}
-
-function sumOfFinite(values) {
-  const numeric = (Array.isArray(values) ? values : []).filter((value) => Number.isFinite(value));
-  if (!numeric.length) return null;
-  return numeric.reduce((sum, value) => sum + value, 0);
-}
-
-function computeElectrodeDerivedValues(electrode, capacityContext) {
-  const electrodeMass = toFiniteNumberOrNull(electrode?.electrode_mass_g);
-  const averageFoilMass = toFiniteNumberOrNull(capacityContext?.average_foil_mass_g);
-  const activeFractionTheoretical = toFiniteNumberOrNull(capacityContext?.active_fraction_theoretical);
-  const activeFractionActual = toFiniteNumberOrNull(capacityContext?.active_fraction_actual);
-  const specificCapacity = toFiniteNumberOrNull(capacityContext?.specific_capacity_mAh_g);
-
-  const coatingMass =
-    Number.isFinite(electrodeMass) && Number.isFinite(averageFoilMass)
-      ? electrodeMass - averageFoilMass
-      : null;
-
-  const normalizedCoatingMass = Number.isFinite(coatingMass) && coatingMass > 0 ? coatingMass : null;
-
-  const activeMaterialMassTheoretical =
-    Number.isFinite(normalizedCoatingMass) && Number.isFinite(activeFractionTheoretical)
-      ? normalizedCoatingMass * activeFractionTheoretical
-      : null;
-
-  const activeMaterialMassActual =
-    Number.isFinite(normalizedCoatingMass) && Number.isFinite(activeFractionActual)
-      ? normalizedCoatingMass * activeFractionActual
-      : null;
-
-  const capacityTheoretical =
-    Number.isFinite(activeMaterialMassTheoretical) && Number.isFinite(specificCapacity)
-      ? activeMaterialMassTheoretical * specificCapacity
-      : null;
-
-  const capacityActual =
-    Number.isFinite(activeMaterialMassActual) && Number.isFinite(specificCapacity)
-      ? activeMaterialMassActual * specificCapacity
-      : null;
-
-  return {
-    coating_mass_g: normalizedCoatingMass,
-    active_material_mass_theoretical_g: Number.isFinite(activeMaterialMassTheoretical) ? activeMaterialMassTheoretical : null,
-    active_material_mass_actual_g: Number.isFinite(activeMaterialMassActual) ? activeMaterialMassActual : null,
-    capacity_theoretical_mAh: Number.isFinite(capacityTheoretical) ? capacityTheoretical : null,
-    capacity_actual_mAh: Number.isFinite(capacityActual) ? capacityActual : null
-  };
-}
-
-async function fetchCutBatchCapacityContext(queryable, cutBatchId) {
-  const batchResult = await queryable.query(
-    `
-    SELECT
-      b.cut_batch_id,
-      b.tape_id,
-      b.shape,
-      b.diameter_mm,
-      b.length_mm,
-      b.width_mm,
-      (
-        SELECT c.coating_sidedness
-        FROM tape_process_steps ts_coating
-        JOIN operation_types ot_coating
-          ON ot_coating.operation_type_id = ts_coating.operation_type_id
-        JOIN tape_step_coating c
-          ON c.step_id = ts_coating.step_id
-        WHERE ts_coating.tape_id = b.tape_id
-          AND ot_coating.code = 'coating'
-        LIMIT 1
-      ) AS coating_sidedness
-    FROM electrode_cut_batches b
-    WHERE b.cut_batch_id = $1
-    `,
-    [cutBatchId]
-  );
-
-  if (!batchResult.rowCount) {
-    return null;
-  }
-
-  const batch = batchResult.rows[0];
-
-  const recipeLinesResult = await queryable.query(
-    `
-    SELECT
-      rl.recipe_line_id,
-      rl.recipe_role,
-      rl.include_in_pct,
-      rl.slurry_percent,
-      m.name AS material_name,
-      a.measure_mode,
-      a.actual_volume_ml,
-      a.actual_mass_g,
-      mp.specific_capacity_mah_g,
-      mp.density_g_ml
-    FROM electrode_cut_batches b
-    JOIN tapes t
-      ON t.tape_id = b.tape_id
-    JOIN tape_recipe_lines rl
-      ON rl.tape_recipe_id = t.tape_recipe_id
-    JOIN materials m
-      ON m.material_id = rl.material_id
-    LEFT JOIN tape_recipe_line_actuals a
-      ON a.tape_id = t.tape_id
-     AND a.recipe_line_id = rl.recipe_line_id
-    LEFT JOIN material_properties mp
-      ON mp.material_instance_id = a.material_instance_id
-    WHERE b.cut_batch_id = $1
-    ORDER BY rl.recipe_role, rl.recipe_line_id
-    `,
-    [cutBatchId]
-  );
-
-  const rows = recipeLinesResult.rows;
-  const activeLine = rows.find(
-    (line) => line.recipe_role === 'cathode_active' || line.recipe_role === 'anode_active'
-  ) || null;
-
-  const totalDryPercent = rows
-    .filter((line) => line.include_in_pct)
-    .reduce((sum, line) => sum + Number(line.slurry_percent || 0), 0);
-
-  const activePercent = toFiniteNumberOrNull(activeLine?.slurry_percent);
-  const activeFractionTheoretical =
-    Number.isFinite(activePercent) &&
-    Number.isFinite(totalDryPercent) &&
-    totalDryPercent > 0
-      ? activePercent / totalDryPercent
-      : null;
-
-  const actualSolidsRows = rows.filter((line) =>
-    Number.isFinite(getEffectiveActualMass(line)) &&
-    line.recipe_role !== 'solvent'
-  );
-
-  const actualSolidsMass = actualSolidsRows.reduce((sum, line) => {
-    const effectiveMass = getEffectiveActualMass(line);
-    return sum + (Number.isFinite(effectiveMass) ? effectiveMass : 0);
-  }, 0);
-
-  const actualActiveMass = getEffectiveActualMass(activeLine);
-
-  let activeFractionActual = null;
-  let actualFractionStatus = 'missing';
-
-  if (Number.isFinite(actualActiveMass) && actualSolidsMass > 0) {
-    activeFractionActual = actualActiveMass / actualSolidsMass;
-    actualFractionStatus = 'complete';
-  } else if (actualSolidsRows.length > 0) {
-    actualFractionStatus = 'incomplete';
-  }
-
-  const foilMassResult = await queryable.query(
-    `
-    SELECT mass_g
-    FROM foil_mass_measurements
-    WHERE cut_batch_id = $1
-    ORDER BY foil_measurement_id
-    `,
-    [cutBatchId]
-  );
-
-  const foilMasses = foilMassResult.rows
-    .map((row) => toFiniteNumberOrNull(row.mass_g))
-    .filter((value) => Number.isFinite(value));
-
-  const averageFoilMass = averageOfFinite(foilMasses);
-  const electrodeAreaMm2 = calculateCutBatchAreaMm2(batch);
-  const electrodeAreaCm2 =
-    Number.isFinite(electrodeAreaMm2) ? electrodeAreaMm2 / 100 : null;
-
-  return {
-    cut_batch_id: batch.cut_batch_id,
-    tape_id: batch.tape_id,
-    active_material_name: activeLine?.material_name || null,
-    active_recipe_role: activeLine?.recipe_role || null,
-    specific_capacity_mAh_g: toFiniteNumberOrNull(activeLine?.specific_capacity_mah_g),
-    active_fraction_theoretical: activeFractionTheoretical,
-    active_fraction_actual: activeFractionActual,
-    actual_fraction_status: actualFractionStatus,
-    average_foil_mass_g: averageFoilMass,
-    foil_measurement_count: foilMasses.length,
-    electrode_area_mm2: electrodeAreaMm2,
-    electrode_area_cm2: electrodeAreaCm2,
-    coating_sidedness: batch.coating_sidedness || null,
-    side_count: getSideCountFromSidedness(batch.coating_sidedness)
-  };
-}
-
-async function enrichBatteryElectrodesWithCapacity(queryable, rows) {
-  const inputRows = Array.isArray(rows) ? rows : [];
-  const cutBatchIds = [...new Set(
-    inputRows
-      .map((row) => Number(row.cut_batch_id))
-      .filter((value) => Number.isInteger(value))
-  )];
-
-  const contextEntries = await Promise.all(
-    cutBatchIds.map(async (cutBatchId) => [cutBatchId, await fetchCutBatchCapacityContext(queryable, cutBatchId)])
-  );
-  const contextByBatchId = new Map(contextEntries);
-
-  return inputRows.map((row) => {
-    const context = contextByBatchId.get(Number(row.cut_batch_id)) || null;
-    const derived = context ? computeElectrodeDerivedValues(row, context) : {
-      coating_mass_g: null,
-      active_material_mass_theoretical_g: null,
-      active_material_mass_actual_g: null,
-      capacity_theoretical_mAh: null,
-      capacity_actual_mAh: null
-    };
-
-    return {
-      ...row,
-      ...derived,
-      coating_sidedness: context?.coating_sidedness || null,
-      active_material_name: context?.active_material_name || null,
-      specific_capacity_mAh_g: context?.specific_capacity_mAh_g ?? null
-    };
-  });
-}
-
-function buildBatteryCapacitySummary(rows) {
-  const inputRows = Array.isArray(rows) ? rows : [];
-  const cathodes = inputRows.filter((row) => row.role === 'cathode');
-  const anodes = inputRows.filter((row) => row.role === 'anode');
-
-  const cathodeCapacityTheoretical = sumOfFinite(cathodes.map((row) => toFiniteNumberOrNull(row.capacity_theoretical_mAh)));
-  const cathodeCapacityActual = sumOfFinite(cathodes.map((row) => toFiniteNumberOrNull(row.capacity_actual_mAh)));
-  const anodeCapacityTheoretical = sumOfFinite(anodes.map((row) => toFiniteNumberOrNull(row.capacity_theoretical_mAh)));
-  const anodeCapacityActual = sumOfFinite(anodes.map((row) => toFiniteNumberOrNull(row.capacity_actual_mAh)));
-
-  const limitingCapacityTheoretical =
-    Number.isFinite(cathodeCapacityTheoretical) && Number.isFinite(anodeCapacityTheoretical)
-      ? Math.min(cathodeCapacityTheoretical, anodeCapacityTheoretical)
-      : Number.isFinite(cathodeCapacityTheoretical)
-        ? cathodeCapacityTheoretical
-        : Number.isFinite(anodeCapacityTheoretical)
-          ? anodeCapacityTheoretical
-          : null;
-
-  const limitingCapacityActual =
-    Number.isFinite(cathodeCapacityActual) && Number.isFinite(anodeCapacityActual)
-      ? Math.min(cathodeCapacityActual, anodeCapacityActual)
-      : Number.isFinite(cathodeCapacityActual)
-        ? cathodeCapacityActual
-        : Number.isFinite(anodeCapacityActual)
-          ? anodeCapacityActual
-          : null;
-
-  const npTheoretical =
-    Number.isFinite(cathodeCapacityTheoretical) &&
-    cathodeCapacityTheoretical > 0 &&
-    Number.isFinite(anodeCapacityTheoretical)
-      ? anodeCapacityTheoretical / cathodeCapacityTheoretical
-      : null;
-
-  const npActual =
-    Number.isFinite(cathodeCapacityActual) &&
-    cathodeCapacityActual > 0 &&
-    Number.isFinite(anodeCapacityActual)
-      ? anodeCapacityActual / cathodeCapacityActual
-      : null;
-
-  return {
-    cathode_count: cathodes.length,
-    anode_count: anodes.length,
-    cathode_capacity_theoretical_mAh: cathodeCapacityTheoretical,
-    cathode_capacity_actual_mAh: cathodeCapacityActual,
-    anode_capacity_theoretical_mAh: anodeCapacityTheoretical,
-    anode_capacity_actual_mAh: anodeCapacityActual,
-    limiting_capacity_theoretical_mAh: limitingCapacityTheoretical,
-    limiting_capacity_actual_mAh: limitingCapacityActual,
-    np_theoretical: npTheoretical,
-    np_actual: npActual
-  };
-}
-
-function validatePouchCaseSizeInput(pouchCaseSizeCode, pouchCaseSizeOther) {
-  if (pouchCaseSizeCode == null || pouchCaseSizeCode === '') {
-    return null;
-  }
-
-  if (!ALLOWED_POUCH_CASE_SIZE_CODES.has(pouchCaseSizeCode)) {
-    return 'Допустимые размеры pouch case: 103x83, 86x56, other';
-  }
-
-  if (
-    pouchCaseSizeCode === 'other' &&
-    (!pouchCaseSizeOther || !String(pouchCaseSizeOther).trim())
-  ) {
-    return 'Для pouch_case_size_code = other необходимо заполнить pouch_case_size_other';
-  }
-
-  return null;
-}
-
-async function ensureBatteryAssembledStatus(batteryId) {
-  await pool.query(
-    `
-    WITH readiness AS (
-      SELECT
-        (
-          EXISTS (
-            SELECT 1
-            FROM batteries b
-            JOIN battery_coin_config c ON c.battery_id = b.battery_id
-            WHERE b.battery_id = $1
-              AND b.form_factor = 'coin'
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM batteries b
-            JOIN battery_pouch_config p ON p.battery_id = b.battery_id
-            WHERE b.battery_id = $1
-              AND b.form_factor = 'pouch'
-              AND p.pouch_case_size_code IS NOT NULL
-              AND (
-                p.pouch_case_size_code <> 'other'
-                OR NULLIF(BTRIM(p.pouch_case_size_other), '') IS NOT NULL
-              )
-          )
-          OR EXISTS (
-            SELECT 1
-            FROM batteries b
-            JOIN battery_cyl_config cy ON cy.battery_id = b.battery_id
-            WHERE b.battery_id = $1
-              AND b.form_factor = 'cylindrical'
-          )
-        ) AS has_config,
-        EXISTS (
-          SELECT 1 FROM battery_electrode_sources es WHERE es.battery_id = $1
-        ) AS has_sources,
-        EXISTS (
-          SELECT 1 FROM battery_electrodes el WHERE el.battery_id = $1
-        ) AS has_electrodes,
-        EXISTS (
-          SELECT 1 FROM battery_sep_config s WHERE s.battery_id = $1
-        ) AS has_separator,
-        EXISTS (
-          SELECT 1 FROM battery_electrolyte e WHERE e.battery_id = $1
-        ) AS has_electrolyte
-    )
-    UPDATE batteries b
-    SET status = 'assembled'
-    FROM readiness r
-    WHERE b.battery_id = $1
-      AND b.status IS NULL
-      AND r.has_config
-      AND r.has_sources
-      AND r.has_electrodes
-      AND r.has_separator
-      AND r.has_electrolyte
-    `,
-    [batteryId]
-  );
-}
+const {
+  createBattery,
+  getBattery,
+  listBatteries,
+  updateBattery
+} = require('../services/batteryCatalogService');
+const {
+  fetchCompatibleElectrodeCutBatches
+} = require('../services/batteryCompatibleCutBatchService');
+const {
+  fetchBatteryAssembly,
+  fetchBatteryReport
+} = require('../services/batteryAssemblyService');
+const {
+  BatteryElectrodeStackConflictError,
+  fetchBatteryElectrodeStack,
+  saveBatteryElectrodeStack
+} = require('../services/batteryElectrodeStackService');
+const {
+  BatteryElectrodeSourceValidationError,
+  fetchBatteryElectrodeSources,
+  saveBatteryElectrodeSources,
+  updateBatteryElectrodeSources
+} = require('../services/batteryElectrodeSourceService');
+const {
+  BatteryCellConfigValidationError,
+  getCoinConfig,
+  getCylConfig,
+  getPouchConfig,
+  saveCoinConfig,
+  saveCylConfig,
+  savePouchConfig,
+  updateCoinConfig,
+  updateCylConfig,
+  updatePouchConfig
+} = require('../services/batteryCellConfigService');
+const {
+  getElectrolyteConfig,
+  getSeparatorConfig,
+  saveElectrolyteConfig,
+  saveSeparatorConfig,
+  updateElectrolyteConfig,
+  updateSeparatorConfig
+} = require('../services/batteryComponentConfigService');
+const {
+  getBatteryQc,
+  saveBatteryQc,
+  updateBatteryQc
+} = require('../services/batteryQcService');
+const {
+  fetchBatteryElectrochem,
+  saveBatteryElectrochem
+} = require('../services/batteryElectrochemService');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -438,44 +70,20 @@ router.post('/', auth, async (req, res) => {
 
   const {
     project_id,
-    form_factor,
-    created_by,
-    battery_notes
+    form_factor
   } = req.body;
 
   const projectId = Number(project_id);
-  const createdBy = Number(created_by);
 
   if (
     !Number.isInteger(projectId) ||
-    !Number.isInteger(createdBy) ||
     !form_factor
   ) {
     return res.status(400).json({ error: 'Некорректные данные' });
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      INSERT INTO batteries (
-        project_id,
-        form_factor,
-        created_by,
-        battery_notes
-      )
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-      `,
-      [
-        projectId,
-        form_factor,
-        createdBy,
-        battery_notes || null
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(await createBattery(pool, req.body, req.user.userId));
 
   } catch (err) {
 
@@ -489,79 +97,7 @@ router.post('/', auth, async (req, res) => {
 // List batteries
 router.get('/', auth, async (req, res) => {
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        b.battery_id,
-        b.project_id,
-        p.name AS project_name,
-        b.form_factor,
-        b.status,
-        cc.coin_size_code,
-        cathode_materials.active_material_names AS cathode_active_materials,
-        cathode_batch.shape AS cathode_batch_shape,
-        cathode_batch.diameter_mm AS cathode_batch_diameter_mm,
-        cathode_batch.length_mm AS cathode_batch_length_mm,
-        cathode_batch.width_mm AS cathode_batch_width_mm,
-        anode_materials.active_material_names AS anode_active_materials,
-        anode_batch.shape AS anode_batch_shape,
-        anode_batch.diameter_mm AS anode_batch_diameter_mm,
-        anode_batch.length_mm AS anode_batch_length_mm,
-        anode_batch.width_mm AS anode_batch_width_mm,
-        b.created_by,
-        u_created.name AS created_by_name,
-        b.battery_notes AS notes,
-        b.created_at,
-        b.updated_by,
-        b.updated_at,
-        u_updated.name AS updated_by_name
-      FROM batteries b
-      LEFT JOIN projects p
-        ON p.project_id = b.project_id
-      LEFT JOIN users u_created
-        ON u_created.user_id = b.created_by
-      LEFT JOIN users u_updated
-        ON u_updated.user_id = b.updated_by
-      LEFT JOIN battery_coin_config cc
-        ON cc.battery_id = b.battery_id
-      LEFT JOIN battery_electrode_sources cathode_src
-        ON cathode_src.battery_id = b.battery_id
-       AND cathode_src.role = 'cathode'
-      LEFT JOIN tapes cathode_tape
-        ON cathode_tape.tape_id = cathode_src.tape_id
-      LEFT JOIN LATERAL (
-        SELECT STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS active_material_names
-        FROM tape_recipe_lines trl
-        JOIN materials m
-          ON m.material_id = trl.material_id
-        WHERE trl.tape_recipe_id = cathode_tape.tape_recipe_id
-          AND trl.recipe_role = 'cathode_active'
-      ) cathode_materials
-        ON TRUE
-      LEFT JOIN electrode_cut_batches cathode_batch
-        ON cathode_batch.cut_batch_id = cathode_src.cut_batch_id
-      LEFT JOIN battery_electrode_sources anode_src
-        ON anode_src.battery_id = b.battery_id
-       AND anode_src.role = 'anode'
-      LEFT JOIN tapes anode_tape
-        ON anode_tape.tape_id = anode_src.tape_id
-      LEFT JOIN LATERAL (
-        SELECT STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS active_material_names
-        FROM tape_recipe_lines trl
-        JOIN materials m
-          ON m.material_id = trl.material_id
-        WHERE trl.tape_recipe_id = anode_tape.tape_recipe_id
-          AND trl.recipe_role = 'anode_active'
-      ) anode_materials
-        ON TRUE
-      LEFT JOIN electrode_cut_batches anode_batch
-        ON anode_batch.cut_batch_id = anode_src.cut_batch_id
-      ORDER BY b.battery_id DESC
-      `
-    );
-
-    res.json(result.rows);
+    res.json(await listBatteries(pool));
 
   } catch (err) {
 
@@ -571,7 +107,7 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-router.get('/:id/electrode-cut-batches', async (req, res) => {
+router.get('/:id/electrode-cut-batches', auth, async (req, res) => {
 
   const batteryId = Number(req.params.id);
   const tapeId = Number(req.query.tape_id);
@@ -590,93 +126,7 @@ router.get('/:id/electrode-cut-batches', async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
-      `
-      WITH battery_context AS (
-        SELECT
-          b.battery_id,
-          b.form_factor,
-          CASE
-            WHEN b.form_factor = 'coin' THEN cc.coin_size_code
-            WHEN b.form_factor = 'pouch' THEN pc.pouch_case_size_code
-            WHEN b.form_factor = 'cylindrical' THEN cy.cyl_size_code
-            ELSE NULL
-          END AS target_config_code,
-          CASE
-            WHEN b.form_factor = 'coin' THEN 'circle'
-            WHEN b.form_factor IN ('pouch', 'cylindrical') THEN 'rectangle'
-            ELSE NULL
-          END AS expected_shape
-        FROM batteries b
-        LEFT JOIN battery_coin_config cc
-          ON cc.battery_id = b.battery_id
-        LEFT JOIN battery_pouch_config pc
-          ON pc.battery_id = b.battery_id
-        LEFT JOIN battery_cyl_config cy
-          ON cy.battery_id = b.battery_id
-        WHERE b.battery_id = $1
-      )
-      SELECT
-        b.*,
-        u.name AS created_by_name,
-        (
-          SELECT c.coating_sidedness
-          FROM tape_process_steps ts_coating
-          JOIN operation_types ot_coating
-            ON ot_coating.operation_type_id = ts_coating.operation_type_id
-          JOIN tape_step_coating c
-            ON c.step_id = ts_coating.step_id
-          WHERE ts_coating.tape_id = b.tape_id
-            AND ot_coating.code = 'coating'
-          LIMIT 1
-        ) AS coating_sidedness,
-        (
-          ctx.expected_shape IS NOT NULL
-          AND ctx.target_config_code IS NOT NULL
-          AND b.shape = ctx.expected_shape
-          AND b.target_form_factor = ctx.form_factor
-          AND b.target_config_code = ctx.target_config_code
-        ) AS is_compatibility_match,
-        d.start_time AS drying_start,
-        d.end_time AS drying_end,
-        COALESCE(ec.electrode_count, 0) AS electrode_count
-      FROM electrode_cut_batches b
-      CROSS JOIN battery_context ctx
-      LEFT JOIN users u
-        ON u.user_id = b.created_by
-      LEFT JOIN electrode_drying d
-        ON d.cut_batch_id = b.cut_batch_id
-      LEFT JOIN (
-        SELECT
-          cut_batch_id,
-          COUNT(*) AS electrode_count
-        FROM electrodes
-        GROUP BY cut_batch_id
-      ) ec
-        ON ec.cut_batch_id = b.cut_batch_id
-      WHERE b.tape_id = $2
-        AND (
-          (
-            ctx.expected_shape IS NOT NULL
-            AND ctx.target_config_code IS NOT NULL
-            AND b.shape = ctx.expected_shape
-            AND b.target_form_factor = ctx.form_factor
-            AND b.target_config_code = ctx.target_config_code
-          )
-          OR (
-            $3::integer IS NOT NULL
-            AND b.cut_batch_id = $3
-          )
-        )
-      ORDER BY
-        CASE WHEN $3::integer IS NOT NULL AND b.cut_batch_id = $3 THEN 0 ELSE 1 END,
-        b.created_at DESC,
-        b.cut_batch_id DESC
-      `,
-      [batteryId, tapeId, selectedBatchId]
-    );
-
-    res.json(result.rows);
+    res.json(await fetchCompatibleElectrodeCutBatches(pool, batteryId, tapeId, selectedBatchId));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Ошибка загрузки совместимых партий электродов' });
@@ -694,83 +144,13 @@ router.get('/:id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        b.battery_id,
-        b.project_id,
-        p.name AS project_name,
-        b.form_factor,
-        b.status,
-        cc.coin_size_code,
-        cathode_materials.active_material_names AS cathode_active_materials,
-        cathode_batch.shape AS cathode_batch_shape,
-        cathode_batch.diameter_mm AS cathode_batch_diameter_mm,
-        cathode_batch.length_mm AS cathode_batch_length_mm,
-        cathode_batch.width_mm AS cathode_batch_width_mm,
-        anode_materials.active_material_names AS anode_active_materials,
-        anode_batch.shape AS anode_batch_shape,
-        anode_batch.diameter_mm AS anode_batch_diameter_mm,
-        anode_batch.length_mm AS anode_batch_length_mm,
-        anode_batch.width_mm AS anode_batch_width_mm,
-        b.created_by,
-        u.name AS created_by_name,
-        b.battery_notes AS notes,
-        b.created_at,
-        b.updated_at
-      FROM batteries b
-      LEFT JOIN projects p
-        ON p.project_id = b.project_id
-      LEFT JOIN users u
-        ON u.user_id = b.created_by
-      LEFT JOIN battery_coin_config cc
-        ON cc.battery_id = b.battery_id
-      LEFT JOIN battery_electrode_sources cathode_src
-        ON cathode_src.battery_id = b.battery_id
-       AND cathode_src.role = 'cathode'
-      LEFT JOIN tapes cathode_tape
-        ON cathode_tape.tape_id = cathode_src.tape_id
-      LEFT JOIN LATERAL (
-        SELECT STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS active_material_names
-        FROM tape_recipe_lines trl
-        JOIN materials m
-          ON m.material_id = trl.material_id
-        WHERE trl.tape_recipe_id = cathode_tape.tape_recipe_id
-          AND trl.recipe_role = 'cathode_active'
-      ) cathode_materials
-        ON TRUE
-      LEFT JOIN electrode_cut_batches cathode_batch
-        ON cathode_batch.cut_batch_id = cathode_src.cut_batch_id
-      LEFT JOIN battery_electrode_sources anode_src
-        ON anode_src.battery_id = b.battery_id
-       AND anode_src.role = 'anode'
-      LEFT JOIN tapes anode_tape
-        ON anode_tape.tape_id = anode_src.tape_id
-      LEFT JOIN LATERAL (
-        SELECT STRING_AGG(DISTINCT m.name, ', ' ORDER BY m.name) AS active_material_names
-        FROM tape_recipe_lines trl
-        JOIN materials m
-          ON m.material_id = trl.material_id
-        WHERE trl.tape_recipe_id = anode_tape.tape_recipe_id
-          AND trl.recipe_role = 'anode_active'
-      ) anode_materials
-        ON TRUE
-      LEFT JOIN electrode_cut_batches anode_batch
-        ON anode_batch.cut_batch_id = anode_src.cut_batch_id
-      WHERE b.battery_id = $1
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Батарея не найдена' });
-    }
-
-    res.json(result.rows[0]);
+    res.json(await getBattery(pool, batteryId));
 
   } catch (err) {
 
+    if (err.statusCode === 404) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка загрузки батареи' });
 
@@ -783,117 +163,18 @@ router.patch('/:id', auth, async (req, res) => {
 
   const batteryId = Number(req.params.id);
 
-  const {
-    project_id,
-    form_factor,
-    created_by,
-    battery_notes,
-    status
-  } = req.body;
-
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный ID батареи' });
   }
 
   try {
-
-    if (status === 'assembled') {
-
-      const check = await pool.query(`
-        SELECT
-          COUNT(*) FILTER (WHERE role = 'anode') AS anodes,
-          COUNT(*) FILTER (WHERE role = 'cathode') AS cathodes
-        FROM battery_electrodes
-        WHERE battery_id = $1
-      `, [batteryId]);
-
-      const { anodes, cathodes } = check.rows[0];
-
-      const modeRes = await pool.query(`
-        SELECT coin_cell_mode
-        FROM battery_coin_config
-        WHERE battery_id = $1
-      `, [batteryId]);
-
-      const mode = modeRes.rows[0]?.coin_cell_mode;
-
-      if (mode === 'full_cell' && (anodes !== 1 || cathodes !== 1)) {
-        return res.status(400).json({
-          error: 'Full cell must have exactly 1 anode and 1 cathode'
-        });
-      }
-
-      if (mode === 'half_cell' && (anodes + cathodes) !== 1) {
-        return res.status(400).json({
-          error: 'Half cell must have exactly 1 electrode'
-        });
-      }
-    }
-
-    const currentRes = await pool.query(
-      `
-      SELECT
-        project_id,
-        form_factor,
-        created_by,
-        battery_notes,
-        status
-      FROM batteries
-      WHERE battery_id = $1
-      `,
-      [batteryId]
-    );
-
-    if (currentRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Батарея не найдена' });
-    }
-
-    const current = currentRes.rows[0];
-
-    const newVals = {
-      project_id: project_id !== undefined ? Number(project_id) : current.project_id,
-      form_factor: form_factor !== undefined ? form_factor : current.form_factor,
-      created_by: created_by !== undefined ? Number(created_by) : current.created_by,
-      battery_notes: battery_notes !== undefined ? battery_notes : current.battery_notes,
-      status: status !== undefined ? status : current.status,
-    };
-
-    const result = await pool.query(
-      `
-      UPDATE batteries
-      SET
-        project_id = $1,
-        form_factor = $2,
-        created_by = $3,
-        battery_notes = $4,
-        status = $5,
-        updated_by = $6,
-        updated_at = now()
-      WHERE battery_id = $7
-      RETURNING
-        battery_id,
-        project_id,
-        form_factor,
-        created_by,
-        battery_notes AS notes,
-        status,
-        created_at,
-        updated_by,
-        updated_at
-      `,
-      [newVals.project_id, newVals.form_factor, newVals.created_by, newVals.battery_notes, newVals.status, req.user.userId, batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Батарея не найдена' });
-    }
-
-    await trackChanges(pool, 'battery', 'batteries', 'battery_id', batteryId, current, newVals, req.user.userId);
-
-    res.json(result.rows[0]);
+    res.json(await updateBattery(pool, batteryId, req.body, req.user.userId));
 
   } catch (err) {
 
+    if (err.statusCode === 400 || err.statusCode === 404) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка обновления батареи' });
 
@@ -906,66 +187,14 @@ router.patch('/:id', auth, async (req, res) => {
 // Save coin-cell configuration
 router.post('/battery_coin_config', auth, async (req, res) => {
 
-  const {
-    battery_id,
-    coin_cell_mode,
-    coin_size_code,
-    half_cell_type,
-    li_foil_notes,
-    spacer_thickness_mm,
-    spacer_count,
-    spacer_notes,
-    coin_layout
-  } = req.body;
-
-  if (coin_layout != null && coin_layout !== '' && !ALLOWED_COIN_LAYOUTS.has(coin_layout)) {
-    return res.status(400).json({ error: 'Допустимые схемы для coin cell: SE, ES, ESE' });
-  }
-
   try {
-
-    const result = await pool.query(
-      `
-      INSERT INTO battery_coin_config (
-        battery_id,
-        coin_cell_mode,
-        coin_size_code,
-        half_cell_type,
-        li_foil_notes,
-        spacer_thickness_mm,
-        spacer_count,
-        spacer_notes,
-        coin_layout
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-      ON CONFLICT (battery_id) DO UPDATE SET
-        coin_cell_mode = EXCLUDED.coin_cell_mode,
-        coin_size_code = EXCLUDED.coin_size_code,
-        half_cell_type = EXCLUDED.half_cell_type,
-        li_foil_notes = EXCLUDED.li_foil_notes,
-        spacer_thickness_mm = EXCLUDED.spacer_thickness_mm,
-        spacer_count = EXCLUDED.spacer_count,
-        spacer_notes = EXCLUDED.spacer_notes,
-        coin_layout = EXCLUDED.coin_layout
-      RETURNING *
-      `,
-      [
-        battery_id,
-        coin_cell_mode || null,
-        coin_size_code || null,
-        half_cell_type || null,
-        li_foil_notes || null,
-        spacer_thickness_mm != null ? Number(spacer_thickness_mm) : null,
-        spacer_count != null ? Number(spacer_count) : null,
-        spacer_notes || null,
-        coin_layout || null
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(await saveCoinConfig(pool, req.body));
 
   } catch (err) {
 
+    if (err instanceof BatteryCellConfigValidationError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка создания конфигурации монеточного элемента' });
 
@@ -983,30 +212,7 @@ router.get('/battery_coin_config/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_id,
-        coin_cell_mode,
-        coin_size_code,
-        half_cell_type,
-        li_foil_notes,
-        spacer_thickness_mm,
-        spacer_count,
-        spacer_notes,
-        coin_layout
-      FROM battery_coin_config
-      WHERE battery_id = $1
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json(null);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await getCoinConfig(pool, batteryId));
 
   } catch (err) {
 
@@ -1021,102 +227,19 @@ router.get('/battery_coin_config/:battery_id', auth, async (req, res) => {
 router.patch('/battery_coin_config/:battery_id', auth, async (req, res) => {
 
   const batteryId = Number(req.params.battery_id);
-  const hasCoinCellMode = Object.prototype.hasOwnProperty.call(req.body, 'coin_cell_mode');
-  const hasCoinSizeCode = Object.prototype.hasOwnProperty.call(req.body, 'coin_size_code');
-  const hasHalfCellType = Object.prototype.hasOwnProperty.call(req.body, 'half_cell_type');
-  const hasLiFoilNotes = Object.prototype.hasOwnProperty.call(req.body, 'li_foil_notes');
-  const hasSpacerThickness = Object.prototype.hasOwnProperty.call(req.body, 'spacer_thickness_mm');
-  const hasSpacerCount = Object.prototype.hasOwnProperty.call(req.body, 'spacer_count');
-  const hasSpacerNotes = Object.prototype.hasOwnProperty.call(req.body, 'spacer_notes');
-  const hasCoinLayout = Object.prototype.hasOwnProperty.call(req.body, 'coin_layout');
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
-  if (hasCoinLayout) {
-    const layout = req.body.coin_layout;
-    if (layout != null && layout !== '' && !ALLOWED_COIN_LAYOUTS.has(layout)) {
-      return res.status(400).json({ error: 'Допустимые схемы для coin cell: SE, ES, ESE' });
-    }
-  }
-
   try {
-    const current = await pool.query(
-      'SELECT coin_cell_mode, coin_size_code, half_cell_type, li_foil_notes, spacer_thickness_mm, spacer_count, spacer_notes, coin_layout FROM battery_coin_config WHERE battery_id = $1',
-      [batteryId]
-    );
-
-    const result = await pool.query(
-      `
-      UPDATE battery_coin_config
-      SET
-        coin_cell_mode = CASE WHEN $1 THEN $2 ELSE coin_cell_mode END,
-        coin_size_code = CASE WHEN $3 THEN $4 ELSE coin_size_code END,
-        half_cell_type = CASE WHEN $5 THEN $6 ELSE half_cell_type END,
-        li_foil_notes = CASE WHEN $7 THEN $8 ELSE li_foil_notes END,
-        spacer_thickness_mm = CASE WHEN $9 THEN $10 ELSE spacer_thickness_mm END,
-        spacer_count = CASE WHEN $11 THEN $12 ELSE spacer_count END,
-        spacer_notes = CASE WHEN $13 THEN $14 ELSE spacer_notes END,
-        coin_layout = CASE WHEN $15 THEN $16 ELSE coin_layout END
-      WHERE battery_id = $17
-      RETURNING
-        battery_id,
-        coin_cell_mode,
-        coin_size_code,
-        half_cell_type,
-        li_foil_notes,
-        spacer_thickness_mm,
-        spacer_count,
-        spacer_notes,
-        coin_layout
-      `,
-      [
-        hasCoinCellMode,
-        hasCoinCellMode ? (req.body.coin_cell_mode || null) : null,
-        hasCoinSizeCode,
-        hasCoinSizeCode ? (req.body.coin_size_code || null) : null,
-        hasHalfCellType,
-        hasHalfCellType ? (req.body.half_cell_type || null) : null,
-        hasLiFoilNotes,
-        hasLiFoilNotes ? (req.body.li_foil_notes || null) : null,
-        hasSpacerThickness,
-        hasSpacerThickness ? (
-          req.body.spacer_thickness_mm != null ? Number(req.body.spacer_thickness_mm) : null
-        ) : null,
-        hasSpacerCount,
-        hasSpacerCount ? (
-          req.body.spacer_count != null ? Number(req.body.spacer_count) : null
-        ) : null,
-        hasSpacerNotes,
-        hasSpacerNotes ? (req.body.spacer_notes || null) : null,
-        hasCoinLayout,
-        hasCoinLayout ? (req.body.coin_layout || null) : null,
-        batteryId
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Конфигурация не найдена' });
-    }
-
-    if (current.rowCount > 0) {
-      const newVals = {};
-      if (hasCoinCellMode) newVals.coin_cell_mode = req.body.coin_cell_mode || null;
-      if (hasCoinSizeCode) newVals.coin_size_code = req.body.coin_size_code || null;
-      if (hasHalfCellType) newVals.half_cell_type = req.body.half_cell_type || null;
-      if (hasLiFoilNotes) newVals.li_foil_notes = req.body.li_foil_notes || null;
-      if (hasSpacerThickness) newVals.spacer_thickness_mm = req.body.spacer_thickness_mm != null ? Number(req.body.spacer_thickness_mm) : null;
-      if (hasSpacerCount) newVals.spacer_count = req.body.spacer_count != null ? Number(req.body.spacer_count) : null;
-      if (hasSpacerNotes) newVals.spacer_notes = req.body.spacer_notes || null;
-      if (hasCoinLayout) newVals.coin_layout = req.body.coin_layout || null;
-      await trackChanges(pool, 'battery_coin_config', 'battery_coin_config', 'battery_id', batteryId, current.rows[0], newVals, req.user.userId, null, false);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await updateCoinConfig(pool, batteryId, req.body, req.user.userId));
 
   } catch (err) {
 
+    if (err instanceof BatteryCellConfigValidationError || err.statusCode === 404) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка обновления конфигурации монеточного элемента' });
 
@@ -1128,58 +251,20 @@ router.patch('/battery_coin_config/:battery_id', auth, async (req, res) => {
 // Save pouch-cell configuration
 router.post('/battery_pouch_config', auth, async (req, res) => {
 
-  const {
-    battery_id,
-    pouch_case_size_code,
-    pouch_case_size_other,
-    pouch_notes
-  } = req.body;
-
-  const batteryId = Number(battery_id);
+  const batteryId = Number(req.body.battery_id);
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
-  const pouchCaseValidationError = validatePouchCaseSizeInput(
-    pouch_case_size_code,
-    pouch_case_size_other
-  );
-
-  if (pouchCaseValidationError) {
-    return res.status(400).json({ error: pouchCaseValidationError });
-  }
-
   try {
-
-    const result = await pool.query(
-      `
-      INSERT INTO battery_pouch_config (
-        battery_id,
-        pouch_case_size_code,
-        pouch_case_size_other,
-        pouch_notes
-      )
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (battery_id)
-      DO UPDATE SET
-        pouch_case_size_code = EXCLUDED.pouch_case_size_code,
-        pouch_case_size_other = EXCLUDED.pouch_case_size_other,
-        pouch_notes = EXCLUDED.pouch_notes
-      RETURNING *
-      `,
-      [
-        batteryId,
-        pouch_case_size_code || null,
-        pouch_case_size_other?.trim() || null,
-        pouch_notes || null
-      ]
-    );
-
-    res.status(200).json(result.rows[0]);
+    res.status(200).json(await savePouchConfig(pool, req.body));
 
   } catch (err) {
 
+    if (err instanceof BatteryCellConfigValidationError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сохранения конфигурации пакетного элемента' });
 
@@ -1197,25 +282,7 @@ router.get('/battery_pouch_config/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_id,
-        pouch_case_size_code,
-        pouch_case_size_other,
-        pouch_notes
-      FROM battery_pouch_config
-      WHERE battery_id = $1
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json(null);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await getPouchConfig(pool, batteryId));
 
   } catch (err) {
 
@@ -1231,62 +298,18 @@ router.patch('/battery_pouch_config/:battery_id', auth, async (req, res) => {
 
   const batteryId = Number(req.params.battery_id);
 
-  const {
-    pouch_case_size_code,
-    pouch_case_size_other,
-    pouch_notes
-  } = req.body;
-
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
-  const pouchCaseValidationError = validatePouchCaseSizeInput(
-    pouch_case_size_code,
-    pouch_case_size_other
-  );
-
-  if (pouchCaseValidationError) {
-    return res.status(400).json({ error: pouchCaseValidationError });
-  }
-
   try {
-    const current = await pool.query('SELECT pouch_notes FROM battery_pouch_config WHERE battery_id = $1', [batteryId]);
-
-    const result = await pool.query(
-      `
-      UPDATE battery_pouch_config
-      SET
-        pouch_case_size_code = $1,
-        pouch_case_size_other = $2,
-        pouch_notes = $3
-      WHERE battery_id = $4
-      RETURNING
-        battery_id,
-        pouch_case_size_code,
-        pouch_case_size_other,
-        pouch_notes
-      `,
-      [
-        pouch_case_size_code || null,
-        pouch_case_size_other?.trim() || null,
-        pouch_notes || null,
-        batteryId
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Конфигурация не найдена' });
-    }
-
-    if (current.rowCount > 0) {
-      await trackChanges(pool, 'battery_pouch_config', 'battery_pouch_config', 'battery_id', batteryId, current.rows[0], { pouch_notes: pouch_notes || null }, req.user.userId, null, false);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await updatePouchConfig(pool, batteryId, req.body, req.user.userId));
 
   } catch (err) {
 
+    if (err instanceof BatteryCellConfigValidationError || err.statusCode === 404) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка обновления конфигурации пакетного элемента' });
 
@@ -1299,42 +322,14 @@ router.patch('/battery_pouch_config/:battery_id', auth, async (req, res) => {
 // Save cylindrical-cell configuration
 router.post('/battery_cyl_config', auth, async (req, res) => {
 
-  const {
-    battery_id,
-    cyl_size_code,
-    cyl_notes
-  } = req.body;
-
-  const batteryId = Number(battery_id);
+  const batteryId = Number(req.body.battery_id);
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      INSERT INTO battery_cyl_config (
-        battery_id,
-        cyl_size_code,
-        cyl_notes
-      )
-      VALUES ($1, $2, $3)
-      ON CONFLICT (battery_id)
-      DO UPDATE SET
-        cyl_size_code = EXCLUDED.cyl_size_code,
-        cyl_notes = EXCLUDED.cyl_notes
-      RETURNING *
-      `,
-      [
-        batteryId,
-        cyl_size_code || null,
-        cyl_notes || null
-      ]
-    );
-
-    res.status(200).json(result.rows[0]);
+    res.status(200).json(await saveCylConfig(pool, req.body));
 
   } catch (err) {
 
@@ -1355,24 +350,7 @@ router.get('/battery_cyl_config/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_id,
-        cyl_size_code,
-        cyl_notes
-      FROM battery_cyl_config
-      WHERE battery_id = $1
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json(null);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await getCylConfig(pool, batteryId));
 
   } catch (err) {
 
@@ -1388,49 +366,18 @@ router.patch('/battery_cyl_config/:battery_id', auth, async (req, res) => {
 
   const batteryId = Number(req.params.battery_id);
 
-  const {
-    cyl_size_code,
-    cyl_notes
-  } = req.body;
-
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-    const current = await pool.query('SELECT cyl_size_code, cyl_notes FROM battery_cyl_config WHERE battery_id = $1', [batteryId]);
-
-    const result = await pool.query(
-      `
-      UPDATE battery_cyl_config
-      SET
-        cyl_size_code = $1,
-        cyl_notes = $2
-      WHERE battery_id = $3
-      RETURNING
-        battery_id,
-        cyl_size_code,
-        cyl_notes
-      `,
-      [
-        cyl_size_code || null,
-        cyl_notes || null,
-        batteryId
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Конфигурация не найдена' });
-    }
-
-    if (current.rowCount > 0) {
-      await trackChanges(pool, 'battery_cyl_config', 'battery_cyl_config', 'battery_id', batteryId, current.rows[0], { cyl_size_code: cyl_size_code || null, cyl_notes: cyl_notes || null }, req.user.userId, null, false);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await updateCylConfig(pool, batteryId, req.body, req.user.userId));
 
   } catch (err) {
 
+    if (err.statusCode === 404) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка обновления конфигурации цилиндрического элемента' });
 
@@ -1443,198 +390,19 @@ router.patch('/battery_cyl_config/:battery_id', auth, async (req, res) => {
 // Save electrode sources for a battery
 
 router.post('/battery_electrode_sources', auth, async (req, res) => {
-  
-  const {
-    battery_id,
-    cathode_tape_id,
-    cathode_cut_batch_id,
-    cathode_source_notes,
-    anode_tape_id,
-    anode_cut_batch_id,
-    anode_source_notes
-  } = req.body;
-
-  const batteryId = Number(battery_id);
+  const batteryId = Number(req.body.battery_id);
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-    const batteryResult = await pool.query(
-      `SELECT form_factor FROM batteries WHERE battery_id = $1`,
-      [batteryId]
-    );
-
-    if (batteryResult.rows.length === 0) {
-      return res.status(400).json({ error: 'Некорректный ID батареи' });
-    }
-
-    const form = batteryResult.rows[0].form_factor;
-
-    let coinMode = null;
-
-    if (form === 'coin') {
-      const modeResult = await pool.query(
-        `
-        SELECT coin_cell_mode
-        FROM battery_coin_config
-        WHERE battery_id = $1
-        `,
-        [batteryId]
-      );
-
-      if (modeResult.rows.length === 0) {
-        return res.status(400).json({ error: 'Конфигурация coin cell не найдена' });
-      }
-
-      coinMode = modeResult.rows[0].coin_cell_mode;
-    }
-
-    const hasCathode = !!cathode_tape_id && !!cathode_cut_batch_id;
-    const hasAnode = !!anode_tape_id && !!anode_cut_batch_id;
-
-    if (hasCathode && hasAnode) {
-      const sidednessResult = await pool.query(
-        `
-        SELECT
-          cb.cut_batch_id,
-          (
-            SELECT c.coating_sidedness
-            FROM tape_process_steps ts
-            JOIN operation_types ot
-              ON ot.operation_type_id = ts.operation_type_id
-            JOIN tape_step_coating c
-              ON c.step_id = ts.step_id
-            WHERE ts.tape_id = cb.tape_id
-              AND ot.code = 'coating'
-            LIMIT 1
-          ) AS coating_sidedness
-        FROM electrode_cut_batches cb
-        WHERE cb.cut_batch_id = ANY($1::int[])
-        `,
-        [[Number(cathode_cut_batch_id), Number(anode_cut_batch_id)]]
-      );
-
-      const sidednessValues = [...new Set(
-        sidednessResult.rows
-          .map((row) => row.coating_sidedness || null)
-          .filter(Boolean)
-      )];
-
-      if (sidednessValues.length > 1) {
-        return res.status(400).json({
-          error: 'Нельзя смешивать 1- и 2-сторонние электроды в одной ячейке'
-        });
-      }
-    }
-
-    if (form === 'coin' && coinMode === 'half_cell') {
-      if ((hasCathode ? 1 : 0) + (hasAnode ? 1 : 0) !== 1) {
-        return res.status(400).json({
-          error: 'Для монеточной полуячейки должен быть выбран ровно один источник электродов'
-        });
-      }
-    } else {
-      if (!hasCathode || !hasAnode) {
-        return res.status(400).json({
-          error: 'Для данного элемента должны быть выбраны и катодный, и анодный источники'
-        });
-      }
-    }
-
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-
-      if (hasCathode) {
-        await client.query(
-          `
-          INSERT INTO battery_electrode_sources
-            (battery_id, role, tape_id, cut_batch_id, source_notes)
-          VALUES
-            ($1, 'cathode', $2, $3, $4)
-          ON CONFLICT (battery_id, role)
-          DO UPDATE SET
-            tape_id = EXCLUDED.tape_id,
-            cut_batch_id = EXCLUDED.cut_batch_id,
-            source_notes = EXCLUDED.source_notes
-          `,
-          [
-            batteryId,
-            Number(cathode_tape_id),
-            Number(cathode_cut_batch_id),
-            cathode_source_notes || null
-          ]
-        );
-      } else {
-        await client.query(
-          `
-          DELETE FROM battery_electrode_sources
-          WHERE battery_id = $1 AND role = 'cathode'
-          `,
-          [batteryId]
-        );
-      }
-
-      if (hasAnode) {
-        await client.query(
-          `
-          INSERT INTO battery_electrode_sources
-            (battery_id, role, tape_id, cut_batch_id, source_notes)
-          VALUES
-            ($1, 'anode', $2, $3, $4)
-          ON CONFLICT (battery_id, role)
-          DO UPDATE SET
-            tape_id = EXCLUDED.tape_id,
-            cut_batch_id = EXCLUDED.cut_batch_id,
-            source_notes = EXCLUDED.source_notes
-          `,
-          [
-            batteryId,
-            Number(anode_tape_id),
-            Number(anode_cut_batch_id),
-            anode_source_notes || null
-          ]
-        );
-      } else {
-        await client.query(
-          `
-          DELETE FROM battery_electrode_sources
-          WHERE battery_id = $1 AND role = 'anode'
-          `,
-          [batteryId]
-        );
-      }
-
-      const result = await client.query(
-        `
-        SELECT
-          battery_id,
-          role,
-          tape_id,
-          cut_batch_id,
-          source_notes
-        FROM battery_electrode_sources
-        WHERE battery_id = $1
-        ORDER BY role
-        `,
-        [batteryId]
-      );
-
-      await client.query('COMMIT');
-      res.status(200).json(result.rows);
-
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error(err);
-      res.status(500).json({ error: 'Ошибка сохранения источников электродов' });
-    } finally {
-      client.release();
-    }
+    res.status(200).json(await saveBatteryElectrodeSources(pool, batteryId, req.body));
 
   } catch (err) {
+    if (err instanceof BatteryElectrodeSourceValidationError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сохранения источников электродов' });
   }
@@ -1650,40 +418,7 @@ router.get('/battery_electrode_sources/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_id,
-        role,
-        tape_id,
-        cut_batch_id,
-        source_notes,
-        (
-          SELECT c.coating_sidedness
-          FROM electrode_cut_batches cb
-          JOIN tape_process_steps ts
-            ON ts.tape_id = cb.tape_id
-          JOIN operation_types ot
-            ON ot.operation_type_id = ts.operation_type_id
-          JOIN tape_step_coating c
-            ON c.step_id = ts.step_id
-          WHERE cb.cut_batch_id = battery_electrode_sources.cut_batch_id
-            AND ot.code = 'coating'
-          LIMIT 1
-        ) AS coating_sidedness
-      FROM battery_electrode_sources
-      WHERE battery_id = $1
-      ORDER BY role;
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json(null);
-    }
-
-    res.json(result.rows);
+    res.json(await fetchBatteryElectrodeSources(pool, batteryId));
 
   } catch (err) {
 
@@ -1699,112 +434,18 @@ router.patch('/battery_electrode_sources/:battery_id', auth, async (req, res) =>
 
   const batteryId = Number(req.params.battery_id);
 
-  const {
-    cathode_tape_id,
-    cathode_cut_batch_id,
-    cathode_source_notes,
-    anode_tape_id,
-    anode_cut_batch_id,
-    anode_source_notes
-  } = req.body;
-
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-    const hasCathode = !!cathode_tape_id && !!cathode_cut_batch_id;
-    const hasAnode = !!anode_tape_id && !!anode_cut_batch_id;
-
-    if (hasCathode && hasAnode) {
-      const sidednessResult = await pool.query(
-        `
-        SELECT
-          cb.cut_batch_id,
-          (
-            SELECT c.coating_sidedness
-            FROM tape_process_steps ts
-            JOIN operation_types ot
-              ON ot.operation_type_id = ts.operation_type_id
-            JOIN tape_step_coating c
-              ON c.step_id = ts.step_id
-            WHERE ts.tape_id = cb.tape_id
-              AND ot.code = 'coating'
-            LIMIT 1
-          ) AS coating_sidedness
-        FROM electrode_cut_batches cb
-        WHERE cb.cut_batch_id = ANY($1::int[])
-        `,
-        [[Number(cathode_cut_batch_id), Number(anode_cut_batch_id)]]
-      );
-
-      const sidednessValues = [...new Set(
-        sidednessResult.rows
-          .map((row) => row.coating_sidedness || null)
-          .filter(Boolean)
-      )];
-
-      if (sidednessValues.length > 1) {
-        return res.status(400).json({
-          error: 'Нельзя смешивать 1- и 2-сторонние электроды в одной ячейке'
-        });
-      }
-    }
-
-    // Snapshot current state
-    const currentSources = await pool.query(
-      'SELECT role, tape_id, cut_batch_id, source_notes FROM battery_electrode_sources WHERE battery_id = $1',
-      [batteryId]
-    );
-    const oldCathode = currentSources.rows.find(r => r.role === 'cathode') || {};
-    const oldAnode = currentSources.rows.find(r => r.role === 'anode') || {};
-
-    await pool.query(
-      `
-      UPDATE battery_electrode_sources
-      SET
-        tape_id = $2,
-        cut_batch_id = $3,
-        source_notes = $4
-      WHERE battery_id = $1
-        AND role = 'cathode'
-      `,
-      [
-        batteryId,
-        cathode_tape_id || null,
-        cathode_cut_batch_id || null,
-        cathode_source_notes || null
-      ]
-      );
-
-      await pool.query(
-      `
-      UPDATE battery_electrode_sources
-      SET
-        tape_id = $2,
-        cut_batch_id = $3,
-        source_notes = $4
-      WHERE battery_id = $1
-        AND role = 'anode'
-      `,
-      [
-        batteryId,
-        anode_tape_id || null,
-        anode_cut_batch_id || null,
-        anode_source_notes || null
-      ]
-      );
-
-      const cathodeNew = { tape_id: cathode_tape_id || null, cut_batch_id: cathode_cut_batch_id || null, source_notes: cathode_source_notes || null };
-      const anodeNew = { tape_id: anode_tape_id || null, cut_batch_id: anode_cut_batch_id || null, source_notes: anode_source_notes || null };
-
-      if (oldCathode.role) await trackChanges(pool, 'battery_electrode_source_cathode', 'battery_electrode_sources', 'battery_id', batteryId, oldCathode, cathodeNew, req.user.userId, null, false);
-      if (oldAnode.role) await trackChanges(pool, 'battery_electrode_source_anode', 'battery_electrode_sources', 'battery_id', batteryId, oldAnode, anodeNew, req.user.userId, null, false);
-
-      res.json({ success: true });
+    res.json(await updateBatteryElectrodeSources(pool, batteryId, req.body, req.user.userId));
 
   } catch (err) {
 
+    if (err instanceof BatteryElectrodeSourceValidationError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка обновления источников электродов' });
 
@@ -1815,7 +456,6 @@ router.patch('/battery_electrode_sources/:battery_id', auth, async (req, res) =>
 
 // Update electrode stack
 router.put('/battery_electrodes/:battery_id', auth, async (req, res) => {
-
   const batteryId = Number(req.params.battery_id);
   const stack = req.body;
 
@@ -1827,79 +467,20 @@ router.put('/battery_electrodes/:battery_id', auth, async (req, res) => {
     return res.status(400).json({ error: 'Стек должен быть массивом' });
   }
 
-  const client = await pool.connect();
-
   try {
-
-    await client.query('BEGIN');
-
-    // remove existing stack
-    await client.query(
-      `DELETE FROM battery_electrodes WHERE battery_id = $1`,
-      [batteryId]
-    );
-
-    for (const row of stack) {
-
-      await client.query(
-        `
-        INSERT INTO battery_electrodes (
-          battery_id,
-          electrode_id,
-          role,
-          position_index
-        )
-        VALUES ($1,$2,$3,$4)
-        `,
-        [
-          batteryId,
-          row.electrode_id,
-          row.role,
-          row.position_index
-        ]
-      );
-
-      const updateResult = await client.query(
-        `
-        UPDATE electrodes
-        SET
-          status_code = 2,
-          used_in_battery_id = $1
-        WHERE electrode_id = $2
-        AND status_code = 1
-        RETURNING electrode_id
-        `,
-        [
-          batteryId,
-          row.electrode_id
-        ]
-      );
-
-      if (updateResult.rows.length === 0) {
-        throw new Error(`Electrode ${row.electrode_id} is already used`);
-      }
-
-    }
-
-    await client.query('COMMIT');
-
+    await saveBatteryElectrodeStack(pool, batteryId, stack);
     res.json({ success: true });
-
   } catch (err) {
-
-    await client.query('ROLLBACK');
     console.error(err);
+
+    if (err instanceof BatteryElectrodeStackConflictError) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
 
     res.status(500).json({
       error: 'Ошибка сохранения стека электродов'
     });
-
-  } finally {
-
-    client.release();
-
   }
-
 });
 
 // Read electrode stack for a battery
@@ -1912,29 +493,11 @@ router.get('/battery_electrodes/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        electrode_id,
-        role,
-        position_index
-      FROM battery_electrodes
-      WHERE battery_id = $1
-      ORDER BY position_index
-      `,
-      [batteryId]
-    );
-
-    res.json(result.rows);
-
+    res.json(await fetchBatteryElectrodeStack(pool, batteryId));
   } catch (err) {
-
     console.error(err);
     res.status(500).json({ error: 'Ошибка загрузки стека электродов' });
-
   }
-
 });
 
 
@@ -1942,43 +505,14 @@ router.get('/battery_electrodes/:battery_id', auth, async (req, res) => {
 // Save separator configuration
 router.post('/battery_sep_config', auth, async (req, res) => {
 
-  const {
-    battery_id,
-    separator_id,
-    separator_notes
-  } = req.body;
-
-  const batteryId = Number(battery_id);
-  const separatorId = separator_id ? Number(separator_id) : null;
+  const batteryId = Number(req.body.battery_id);
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      INSERT INTO battery_sep_config (
-        battery_id,
-        separator_id,
-        separator_notes
-      )
-      VALUES ($1,$2,$3)
-      ON CONFLICT (battery_id)
-      DO UPDATE SET
-        separator_id = EXCLUDED.separator_id,
-        separator_notes = EXCLUDED.separator_notes
-      RETURNING *
-      `,
-      [
-        batteryId,
-        separatorId,
-        separator_notes || null
-      ]
-    );
-
-    res.status(200).json(result.rows[0]);
+    res.status(200).json(await saveSeparatorConfig(pool, req.body));
 
   } catch (err) {
 
@@ -1999,24 +533,7 @@ router.get('/battery_sep_config/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_id,
-        separator_id,
-        separator_notes
-      FROM battery_sep_config
-      WHERE battery_id = $1
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json(null);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await getSeparatorConfig(pool, batteryId));
 
   } catch (err) {
 
@@ -2032,44 +549,18 @@ router.patch('/battery_sep_config/:battery_id', auth, async (req, res) => {
 
   const batteryId = Number(req.params.battery_id);
 
-  const {
-    separator_id,
-    separator_notes
-  } = req.body;
-
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      UPDATE battery_sep_config
-      SET
-        separator_id = $1,
-        separator_notes = $2
-      WHERE battery_id = $3
-      RETURNING
-        battery_id,
-        separator_id,
-        separator_notes
-      `,
-      [
-        separator_id ? Number(separator_id) : null,
-        separator_notes || null,
-        batteryId
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Конфигурация сепаратора не найдена' });
-    }
-
-    res.json(result.rows[0]);
+    res.json(await updateSeparatorConfig(pool, batteryId, req.body));
 
   } catch (err) {
 
+    if (err.statusCode === 404) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка обновления конфигурации сепаратора' });
 
@@ -2082,47 +573,14 @@ router.patch('/battery_sep_config/:battery_id', auth, async (req, res) => {
 // Save electrolyte configuration
 router.post('/battery_electrolyte', auth, async (req, res) => {
 
-  const {
-    battery_id,
-    electrolyte_id,
-    electrolyte_notes,
-    electrolyte_total_ul
-  } = req.body;
-
-  const batteryId = Number(battery_id);
-  const electrolyteId = electrolyte_id ? Number(electrolyte_id) : null;
+  const batteryId = Number(req.body.battery_id);
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      INSERT INTO battery_electrolyte (
-        battery_id,
-        electrolyte_id,
-        electrolyte_notes,
-        electrolyte_total_ul
-      )
-      VALUES ($1,$2,$3,$4)
-      ON CONFLICT (battery_id)
-      DO UPDATE SET
-        electrolyte_id = EXCLUDED.electrolyte_id,
-        electrolyte_notes = EXCLUDED.electrolyte_notes,
-        electrolyte_total_ul = EXCLUDED.electrolyte_total_ul
-      RETURNING *
-      `,
-      [
-        batteryId,
-        electrolyteId,
-        electrolyte_notes || null,
-        electrolyte_total_ul ?? null
-      ]
-    );
-
-    res.status(200).json(result.rows[0]);
+    res.status(200).json(await saveElectrolyteConfig(pool, req.body));
 
   } catch (err) {
 
@@ -2143,25 +601,7 @@ router.get('/battery_electrolyte/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_id,
-        electrolyte_id,
-        electrolyte_notes,
-        electrolyte_total_ul
-      FROM battery_electrolyte
-      WHERE battery_id = $1
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json(null);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await getElectrolyteConfig(pool, batteryId));
 
   } catch (err) {
 
@@ -2177,48 +617,18 @@ router.patch('/battery_electrolyte/:battery_id', auth, async (req, res) => {
 
   const batteryId = Number(req.params.battery_id);
 
-  const {
-    electrolyte_id,
-    electrolyte_notes,
-    electrolyte_total_ul
-  } = req.body;
-
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      UPDATE battery_electrolyte
-      SET
-        electrolyte_id = $1,
-        electrolyte_notes = $2,
-        electrolyte_total_ul = $3
-      WHERE battery_id = $4
-      RETURNING
-        battery_id,
-        electrolyte_id,
-        electrolyte_notes,
-        electrolyte_total_ul
-      `,
-      [
-        electrolyte_id ? Number(electrolyte_id) : null,
-        electrolyte_notes || null,
-        electrolyte_total_ul ?? null,
-        batteryId
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Конфигурация электролита не найдена' });
-    }
-
-    res.json(result.rows[0]);
+    res.json(await updateElectrolyteConfig(pool, batteryId, req.body));
 
   } catch (err) {
 
+    if (err.statusCode === 404) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка обновления конфигурации электролита' });
 
@@ -2231,46 +641,14 @@ router.patch('/battery_electrolyte/:battery_id', auth, async (req, res) => {
 // Save battery QC data
 router.post('/battery_qc', auth, async (req, res) => {
 
-  const {
-    battery_id,
-    ocv_v,
-    esr_mohm,
-    qc_notes
-  } = req.body;
-
-  const batteryId = Number(battery_id);
+  const batteryId = Number(req.body.battery_id);
 
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      INSERT INTO battery_qc (
-        battery_id,
-        ocv_v,
-        esr_mohm,
-        qc_notes
-      )
-      VALUES ($1,$2,$3,$4)
-      ON CONFLICT (battery_id)
-      DO UPDATE SET
-        ocv_v = EXCLUDED.ocv_v,
-        esr_mohm = EXCLUDED.esr_mohm,
-        qc_notes = EXCLUDED.qc_notes
-      RETURNING *
-      `,
-      [
-        batteryId,
-        ocv_v ?? null,
-        esr_mohm ?? null,
-        qc_notes || null
-      ]
-    );
-
-    res.status(200).json(result.rows[0]);
+    res.status(200).json(await saveBatteryQc(pool, req.body));
 
   } catch (err) {
 
@@ -2291,25 +669,7 @@ router.get('/battery_qc/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_id,
-        ocv_v,
-        esr_mohm,
-        qc_notes
-      FROM battery_qc
-      WHERE battery_id = $1
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json(null);
-    }
-
-    res.json(result.rows[0]);
+    res.json(await getBatteryQc(pool, batteryId));
 
   } catch (err) {
 
@@ -2325,48 +685,18 @@ router.patch('/battery_qc/:battery_id', auth, async (req, res) => {
 
   const batteryId = Number(req.params.battery_id);
 
-  const {
-    ocv_v,
-    esr_mohm,
-    qc_notes
-  } = req.body;
-
   if (!Number.isInteger(batteryId)) {
     return res.status(400).json({ error: 'Некорректный battery_id' });
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      UPDATE battery_qc
-      SET
-        ocv_v = $1,
-        esr_mohm = $2,
-        qc_notes = $3
-      WHERE battery_id = $4
-      RETURNING
-        battery_id,
-        ocv_v,
-        esr_mohm,
-        qc_notes
-      `,
-      [
-        ocv_v ?? null,
-        esr_mohm ?? null,
-        qc_notes || null,
-        batteryId
-      ]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Данные выходного контроля не найдены' });
-    }
-
-    res.json(result.rows[0]);
+    res.json(await updateBatteryQc(pool, batteryId, req.body));
 
   } catch (err) {
 
+    if (err.statusCode === 404) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка обновления данных выходного контроля' });
 
@@ -2394,60 +724,7 @@ router.post('/battery_electrochem', auth, async (req, res) => {
   }
 
   try {
-
-    const uploadDir = path.join(__dirname, '..', 'uploads', 'electrochem');
-    await fs.mkdir(uploadDir, { recursive: true });
-
-    for (const entry of entries) {
-      const originalName = entry.file_name || 'electrochem_file';
-      const safeName = String(originalName).replace(/[^a-zA-Z0-9._-]/g, '_');
-      const storedName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
-      const relativePath = `/uploads/electrochem/${storedName}`;
-      const absolutePath = path.join(uploadDir, storedName);
-
-      if (!entry.file_content_base64) {
-        throw new Error('Не передано содержимое файла');
-      }
-
-      const buffer = Buffer.from(entry.file_content_base64, 'base64');
-      await fs.writeFile(absolutePath, buffer);
-
-      await pool.query(
-        `
-        INSERT INTO battery_electrochem (
-          battery_id,
-          file_name,
-          file_link,
-          electrochem_notes
-        )
-        VALUES ($1,$2,$3,$4)
-        `,
-        [
-          batteryId,
-          originalName,
-          relativePath,
-          entry.electrochem_notes || null
-        ]
-      );
-    }
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_electrochem_id,
-        battery_id,
-        file_name,
-        file_link,
-        electrochem_notes,
-        uploaded_at
-      FROM battery_electrochem
-      WHERE battery_id = $1
-      ORDER BY battery_electrochem_id
-      `,
-      [batteryId]
-    );
-
-    res.status(200).json(result.rows);
+    res.status(200).json(await saveBatteryElectrochem(pool, batteryId, entries));
 
   } catch (err) {
 
@@ -2468,28 +745,7 @@ router.get('/battery_electrochem/:battery_id', auth, async (req, res) => {
   }
 
   try {
-
-    const result = await pool.query(
-      `
-      SELECT
-        battery_electrochem_id,
-        battery_id,
-        file_name,
-        file_link,
-        electrochem_notes,
-        uploaded_at
-      FROM battery_electrochem
-      WHERE battery_id = $1
-      ORDER BY battery_electrochem_id
-      `,
-      [batteryId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.json(null);
-    }
-
-    res.json(result.rows);
+    res.json(await fetchBatteryElectrochem(pool, batteryId));
 
   } catch (err) {
 
@@ -2512,7 +768,6 @@ router.patch('/battery_electrochem/:battery_id', auth, async (req, res) => {
 
 // Generates JSON
 router.get('/:id/assembly', auth, async (req, res) => {
-
   const batteryId = Number(req.params.id);
 
   if (!Number.isInteger(batteryId)) {
@@ -2520,130 +775,20 @@ router.get('/:id/assembly', auth, async (req, res) => {
   }
 
   try {
+    const assembly = await fetchBatteryAssembly(pool, batteryId);
 
-    await ensureBatteryAssembledStatus(batteryId);
-
-    const result = await pool.query(
-      `
-      SELECT jsonb_build_object(
-
-        'battery',
-        (
-          SELECT row_to_json(b)
-          FROM batteries b
-          WHERE b.battery_id = $1
-        ),
-
-        'coin_config',
-        (
-          SELECT row_to_json(c)
-          FROM battery_coin_config c
-          WHERE c.battery_id = $1
-        ),
-
-        'pouch_config',
-        (
-          SELECT row_to_json(p)
-          FROM battery_pouch_config p
-          WHERE p.battery_id = $1
-        ),
-
-        'cyl_config',
-        (
-          SELECT row_to_json(cy)
-          FROM battery_cyl_config cy
-          WHERE cy.battery_id = $1
-        ),
-
-        'separator',
-        (
-          SELECT row_to_json(s)
-          FROM battery_sep_config s
-          WHERE s.battery_id = $1
-        ),
-
-        'electrolyte',
-        (
-          SELECT row_to_json(e)
-          FROM battery_electrolyte e
-          WHERE e.battery_id = $1
-        ),
-
-        'qc',
-        (
-          SELECT row_to_json(q)
-          FROM battery_qc q
-          WHERE q.battery_id = $1
-        ),
-
-        'electrochem',
-        (
-          SELECT COALESCE(
-            jsonb_agg(to_jsonb(ec) ORDER BY ec.battery_electrochem_id),
-            '[]'::jsonb
-          )
-          FROM battery_electrochem ec
-          WHERE ec.battery_id = $1
-        ),
-
-        'electrode_sources',
-        (
-          SELECT COALESCE(
-            jsonb_agg(to_jsonb(es)),
-            '[]'::jsonb
-          )
-          FROM battery_electrode_sources es
-          WHERE es.battery_id = $1
-        ),
-
-        'electrodes',
-        (
-          SELECT COALESCE(
-            jsonb_agg(to_jsonb(elx) ORDER BY elx.position_index),
-            '[]'::jsonb
-          )
-          FROM (
-            SELECT
-              be.battery_id,
-              be.electrode_id,
-              be.role,
-              be.position_index,
-              e.electrode_mass_g,
-              e.cut_batch_id
-            FROM battery_electrodes be
-            LEFT JOIN electrodes e
-              ON e.electrode_id = be.electrode_id
-            WHERE be.battery_id = $1
-          ) elx
-        )
-
-      ) AS assembly
-      `,
-      [batteryId]
-    );
-
-    const assembly = result.rows[0].assembly;
-
-    if (!assembly.battery) {
+    if (!assembly) {
       return res.status(404).json({ error: 'Батарея не найдена' });
     }
-
-    assembly.electrodes = await enrichBatteryElectrodesWithCapacity(pool, assembly.electrodes);
-    assembly.capacity_summary = buildBatteryCapacitySummary(assembly.electrodes);
 
     res.json(assembly);
-
   } catch (err) {
-
     console.error(err);
     res.status(500).json({ error: 'Ошибка загрузки сборки батареи' });
-
   }
-
 });
 
-router.get('/:id/report', async (req, res) => {
-
+router.get('/:id/report', auth, async (req, res) => {
   const batteryId = Number(req.params.id);
 
   if (!Number.isInteger(batteryId)) {
@@ -2651,228 +796,17 @@ router.get('/:id/report', async (req, res) => {
   }
 
   try {
+    const report = await fetchBatteryReport(pool, batteryId);
 
-    await ensureBatteryAssembledStatus(batteryId);
-
-    const result = await pool.query(
-      `
-      SELECT jsonb_build_object(
-
-        'battery',
-        (
-          SELECT row_to_json(bx)
-          FROM (
-            SELECT
-              b.battery_id,
-              b.project_id,
-              p.name AS project_name,
-              b.form_factor,
-              b.status,
-              b.created_by,
-              u.name AS created_by_name,
-              b.battery_notes,
-              b.created_at,
-              b.updated_at
-            FROM batteries b
-            LEFT JOIN projects p
-              ON p.project_id = b.project_id
-            LEFT JOIN users u
-              ON u.user_id = b.created_by
-            WHERE b.battery_id = $1
-          ) bx
-        ),
-
-        'coin_config',
-        (
-          SELECT row_to_json(cx)
-          FROM (
-            SELECT
-              c.*
-            FROM battery_coin_config c
-            WHERE c.battery_id = $1
-          ) cx
-        ),
-
-        'pouch_config',
-        (
-          SELECT row_to_json(px)
-          FROM (
-            SELECT
-              p.*
-            FROM battery_pouch_config p
-            WHERE p.battery_id = $1
-          ) px
-        ),
-
-        'cyl_config',
-        (
-          SELECT row_to_json(cyx)
-          FROM (
-            SELECT
-              cy.*
-            FROM battery_cyl_config cy
-            WHERE cy.battery_id = $1
-          ) cyx
-        ),
-
-        'separator',
-        (
-          SELECT row_to_json(sx)
-          FROM (
-            SELECT
-              sconfig.*,
-              s.name AS separator_name,
-              s.supplier AS separator_supplier,
-              s.brand AS separator_brand,
-              s.batch AS separator_batch,
-              s.thickness_um AS separator_thickness_um
-            FROM battery_sep_config sconfig
-            LEFT JOIN separators s
-              ON s.sep_id = sconfig.separator_id
-            WHERE sconfig.battery_id = $1
-          ) sx
-        ),
-
-        'electrolyte',
-        (
-          SELECT row_to_json(ex)
-          FROM (
-            SELECT
-              econfig.*,
-              e.name AS electrolyte_name,
-              e.solvent_system,
-              e.salts,
-              e.concentration,
-              e.additives
-            FROM battery_electrolyte econfig
-            LEFT JOIN electrolytes e
-              ON e.electrolyte_id = econfig.electrolyte_id
-            WHERE econfig.battery_id = $1
-          ) ex
-        ),
-
-        'qc',
-        (
-          SELECT row_to_json(qx)
-          FROM (
-            SELECT
-              q.*
-            FROM battery_qc q
-            WHERE q.battery_id = $1
-          ) qx
-        ),
-
-        'electrochem',
-        (
-          SELECT COALESCE(
-            jsonb_agg(to_jsonb(ecx) ORDER BY ecx.battery_electrochem_id),
-            '[]'::jsonb
-          )
-          FROM (
-            SELECT
-              ec.battery_electrochem_id,
-              ec.file_name,
-              ec.file_link,
-              ec.electrochem_notes,
-              ec.uploaded_at
-            FROM battery_electrochem ec
-            WHERE ec.battery_id = $1
-          ) ecx
-        ),
-
-        'electrode_sources',
-        (
-          SELECT COALESCE(
-            jsonb_agg(to_jsonb(esx) ORDER BY esx.role),
-            '[]'::jsonb
-          )
-          FROM (
-            SELECT
-              es.battery_id,
-              es.role,
-              es.tape_id,
-              es.cut_batch_id,
-              es.source_notes,
-              t.name AS tape_name,
-              p.name AS tape_project_name,
-              tr.name AS tape_recipe_name,
-              tr.role AS tape_recipe_role,
-              cb.target_form_factor,
-              cb.target_config_code,
-              cb.target_config_other,
-              cb.shape,
-              cb.diameter_mm,
-              cb.length_mm,
-              cb.width_mm,
-              cb.created_by,
-              ub.name AS cut_batch_created_by_name,
-              COALESCE(ec.electrode_count, 0) AS electrode_count
-            FROM battery_electrode_sources es
-            LEFT JOIN tapes t
-              ON t.tape_id = es.tape_id
-            LEFT JOIN projects p
-              ON p.project_id = t.project_id
-            LEFT JOIN tape_recipes tr
-              ON tr.tape_recipe_id = t.tape_recipe_id
-            LEFT JOIN electrode_cut_batches cb
-              ON cb.cut_batch_id = es.cut_batch_id
-            LEFT JOIN users ub
-              ON ub.user_id = cb.created_by
-            LEFT JOIN (
-              SELECT
-                cut_batch_id,
-                COUNT(*) AS electrode_count
-              FROM electrodes
-              GROUP BY cut_batch_id
-            ) ec
-              ON ec.cut_batch_id = cb.cut_batch_id
-            WHERE es.battery_id = $1
-          ) esx
-        ),
-
-        'electrodes',
-        (
-          SELECT COALESCE(
-            jsonb_agg(to_jsonb(elx) ORDER BY elx.position_index),
-            '[]'::jsonb
-          )
-          FROM (
-            SELECT
-              be.electrode_id,
-              be.role,
-              be.position_index,
-              e.electrode_mass_g,
-              e.cut_batch_id
-            FROM battery_electrodes be
-            LEFT JOIN electrodes e
-              ON e.electrode_id = be.electrode_id
-            WHERE be.battery_id = $1
-          ) elx
-        )
-
-      ) AS report
-      `,
-      [batteryId]
-    );
-
-    const report = result.rows[0].report;
-
-    if (!report.battery) {
+    if (!report) {
       return res.status(404).json({ error: 'Батарея не найдена' });
     }
 
-    report.electrodes = await enrichBatteryElectrodesWithCapacity(pool, report.electrodes);
-    report.capacity_summary = buildBatteryCapacitySummary(report.electrodes);
-
     res.json(report);
-
   } catch (err) {
-
     console.error(err);
     res.status(500).json({ error: 'Ошибка загрузки печатного отчёта по батарее' });
-
   }
-
 });
 
 

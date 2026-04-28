@@ -1,0 +1,666 @@
+{
+  "version": 1,
+  "scope": "public/js/**/*.js",
+  "updatedAt": "2026-04-24",
+  "normalization": {
+    "pathParams": ":param",
+    "query": "?:query"
+  },
+  "defaults": {
+    "auth": "see route middleware",
+    "request": "GET/DELETE have no JSON body; POST/PUT/PATCH use the vanilla form payload for that route",
+    "response": "JSON unless the route is a print/report endpoint or returns 204"
+  },
+  "notes": [
+    "This file is the checked contract for the vanilla public UI, not the client-web frontend.",
+    "The checker treats :param as a dynamic path segment and ?:query as an optional query string.",
+    "Literal step endpoints such as /steps/by-code/weighing are kept because they appear literally in public/js."
+  ],
+  "endpoints": [
+    {
+      "path": "/api/batteries",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST creates the battery shell; created_by is server-derived",
+      "response": "battery list or created battery JSON",
+      "sources": ["public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/batteries/:param",
+      "methods": ["PATCH", "POST"],
+      "auth": "auth",
+      "request": "PATCH updates a battery by id; POST represents dynamic battery section create routes",
+      "response": "updated or created section JSON",
+      "sources": ["public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/batteries/:param/:param",
+      "methods": ["PATCH"],
+      "auth": "auth",
+      "request": "dynamic battery section update route: /api/batteries/{section}/{battery_id}",
+      "response": "updated battery section JSON",
+      "sources": ["public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/batteries/:param/assembly",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "assembled battery details",
+      "sources": ["public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/batteries/:param/electrode-cut-batches?:query",
+      "methods": ["GET"],
+      "auth": "route currently has no auth middleware",
+      "request": "query includes tape_id and optionally selected_batch_id",
+      "response": "compatible electrode cut batch list",
+      "sources": ["public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/batteries/:param/report",
+      "methods": ["GET"],
+      "auth": "route currently has no auth middleware",
+      "request": "none",
+      "response": "battery print/report payload",
+      "sources": ["public/js/battery-print.js"]
+    },
+    {
+      "path": "/api/batteries/battery_electrochem",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "battery electrochem file/data payload",
+      "response": "created electrochem JSON",
+      "sources": ["public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/batteries/battery_electrode_sources",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "battery electrode source selection payload",
+      "response": "created electrode source JSON",
+      "sources": ["public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/batteries/battery_electrodes/:param",
+      "methods": ["PUT"],
+      "auth": "auth",
+      "request": "selected electrode IDs for a battery",
+      "response": "updated battery electrode assignment JSON",
+      "sources": ["public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/electrodes",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "single electrode mass/cup payload",
+      "response": "created electrode JSON",
+      "sources": ["public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/electrodes/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT updates electrode fields; DELETE has no body",
+      "response": "updated electrode JSON or delete status",
+      "sources": ["public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/electrodes/:param/status",
+      "methods": ["PUT"],
+      "auth": "auth",
+      "request": "status_code, optional used_in_battery_id and scrapped_reason",
+      "response": "updated electrode status JSON",
+      "sources": ["public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/electrodes/electrode-cut-batches",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "cut batch form payload; created_by is server-derived",
+      "response": "created cut batch JSON",
+      "sources": ["public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/electrodes/electrode-cut-batches/:param",
+      "methods": ["GET", "PUT"],
+      "auth": "auth",
+      "request": "GET none; PUT cut batch update payload; updated_by is server-derived",
+      "response": "cut batch JSON",
+      "sources": ["public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/electrodes/electrode-cut-batches/:param/drying",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST electrode drying payload",
+      "response": "drying state JSON",
+      "sources": ["public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/electrodes/electrode-cut-batches/:param/electrodes",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "electrodes in cut batch",
+      "sources": ["public/js/2-electrodes.js", "public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/electrodes/electrode-cut-batches/:param/foil-masses",
+      "methods": ["GET", "POST", "DELETE"],
+      "auth": "auth",
+      "request": "GET/DELETE none; POST foil mass payload",
+      "response": "foil mass list/status JSON",
+      "sources": ["public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/electrodes/electrode-cut-batches/:param/report",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "electrode batch print/report payload",
+      "sources": ["public/js/electrode-batch-print.js"]
+    },
+    {
+      "path": "/api/electrolytes",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST electrolyte form payload; created_by is server-derived",
+      "response": "electrolyte list or created electrolyte JSON",
+      "sources": ["public/js/electrolytes.js", "public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/electrolytes/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT electrolyte update payload with updated_by server-derived; DELETE none",
+      "response": "updated electrolyte JSON or delete status",
+      "sources": ["public/js/electrolytes.js"]
+    },
+    {
+      "path": "/api/electrolytes/:param/files",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST file entries with base64 content",
+      "response": "electrolyte file list",
+      "sources": ["public/js/electrolytes.js"]
+    },
+    {
+      "path": "/api/electrolytes/files/:param",
+      "methods": ["DELETE"],
+      "auth": "auth",
+      "request": "none",
+      "response": "delete status",
+      "sources": ["public/js/electrolytes.js"]
+    },
+    {
+      "path": "/api/materials",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST material name/role payload",
+      "response": "material list or created material JSON",
+      "sources": ["public/js/materials.js", "public/js/recipes.js"]
+    },
+    {
+      "path": "/api/materials/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT material update payload; DELETE none",
+      "response": "updated material JSON or delete status",
+      "sources": ["public/js/materials.js"]
+    },
+    {
+      "path": "/api/materials/:param/instances",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST material instance payload",
+      "response": "instance list or created instance JSON",
+      "sources": ["public/js/1-tapes.js", "public/js/materials.js"]
+    },
+    {
+      "path": "/api/materials/instances",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "all material instances",
+      "sources": ["public/js/materials.js"]
+    },
+    {
+      "path": "/api/materials/instances/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT instance update payload; DELETE none",
+      "response": "updated instance JSON or delete status",
+      "sources": ["public/js/materials.js"]
+    },
+    {
+      "path": "/api/materials/instances/:param/components",
+      "methods": ["GET", "PUT"],
+      "auth": "auth",
+      "request": "GET none; PUT component composition payload",
+      "response": "component list/status JSON",
+      "sources": ["public/js/1-tapes.js", "public/js/materials.js"]
+    },
+    {
+      "path": "/api/materials/instances/:param/properties",
+      "methods": ["GET", "PUT"],
+      "auth": "auth",
+      "request": "GET none; PUT material property payload",
+      "response": "material properties JSON",
+      "sources": ["public/js/material-details.js"]
+    },
+    {
+      "path": "/api/materials/instances/:param/properties/files",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST file entries with base64 content",
+      "response": "property file list",
+      "sources": ["public/js/material-details.js"]
+    },
+    {
+      "path": "/api/materials/instances/:param/source-info",
+      "methods": ["GET", "PUT"],
+      "auth": "auth",
+      "request": "GET none; PUT source info payload",
+      "response": "source info JSON",
+      "sources": ["public/js/material-source-info.js"]
+    },
+    {
+      "path": "/api/materials/instances/:param/source-info/files",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST file entries with base64 content",
+      "response": "source file list",
+      "sources": ["public/js/material-source-info.js"]
+    },
+    {
+      "path": "/api/materials/instances/components/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT single component payload; DELETE none",
+      "response": "component status JSON",
+      "sources": ["public/js/materials.js"]
+    },
+    {
+      "path": "/api/materials/property-files/:param",
+      "methods": ["DELETE"],
+      "auth": "auth",
+      "request": "none",
+      "response": "delete status",
+      "sources": ["public/js/material-details.js"]
+    },
+    {
+      "path": "/api/materials/source-files/:param",
+      "methods": ["DELETE"],
+      "auth": "auth",
+      "request": "none",
+      "response": "delete status",
+      "sources": ["public/js/material-source-info.js"]
+    },
+    {
+      "path": "/api/projects",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST project form payload; created_by is server-derived",
+      "response": "project list or created project JSON",
+      "sources": ["public/js/1-tapes.js", "public/js/projects.js"]
+    },
+    {
+      "path": "/api/projects?:query",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "optional project_id query used by reference selectors",
+      "response": "project list",
+      "sources": ["public/js/2-electrodes.js", "public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/projects/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth plus project modify policy",
+      "request": "PUT project update payload with updated_by server-derived; DELETE none",
+      "response": "updated project JSON or delete status",
+      "sources": ["public/js/projects.js"]
+    },
+    {
+      "path": "/api/recipes",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST recipe header and lines; created_by is server-derived",
+      "response": "recipe list or created recipe JSON",
+      "sources": ["public/js/1-tapes.js", "public/js/recipes.js"]
+    },
+    {
+      "path": "/api/recipes?:query",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "optional role query from the tape workflow",
+      "response": "filtered recipe list",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/recipes/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT recipe header and lines with updated_by server-derived; DELETE none",
+      "response": "updated recipe JSON or delete status",
+      "sources": ["public/js/recipes.js"]
+    },
+    {
+      "path": "/api/recipes/:param/duplicate",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "none; created_by is server-derived",
+      "response": "new recipe JSON",
+      "sources": ["public/js/recipes.js"]
+    },
+    {
+      "path": "/api/recipes/:param/lines",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "recipe lines",
+      "sources": ["public/js/1-tapes.js", "public/js/recipes.js"]
+    },
+    {
+      "path": "/api/reference/coating-methods",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "reference list",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/reference/dry-mixing-methods",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "reference list",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/reference/drying-atmospheres",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "reference list",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/reference/foils",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "reference list",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/reference/wet-mixing-methods",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "reference list",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/separators",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST separator form payload; created_by is server-derived",
+      "response": "separator list or created separator JSON",
+      "sources": ["public/js/separators.js", "public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/separators/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT separator update payload with updated_by server-derived; DELETE none",
+      "response": "updated separator JSON or delete status",
+      "sources": ["public/js/separators.js"]
+    },
+    {
+      "path": "/api/separators/:param/files",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST file entries with base64 content",
+      "response": "separator file list",
+      "sources": ["public/js/separators.js"]
+    },
+    {
+      "path": "/api/separators/files/:param",
+      "methods": ["DELETE"],
+      "auth": "auth",
+      "request": "none",
+      "response": "delete status",
+      "sources": ["public/js/separators.js"]
+    },
+    {
+      "path": "/api/structures",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST structure name/comments",
+      "response": "structure list or created structure JSON",
+      "sources": ["public/js/separator-structures.js", "public/js/separators.js"]
+    },
+    {
+      "path": "/api/structures/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT structure update payload; DELETE none",
+      "response": "updated structure JSON or delete status",
+      "sources": ["public/js/separator-structures.js"]
+    },
+    {
+      "path": "/api/tapes",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST tape header payload; created_by is server-derived",
+      "response": "tape list or created tape JSON",
+      "sources": ["public/js/1-tapes.js", "public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/tapes/for-electrodes",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "tape list tailored for electrode workflows",
+      "sources": ["public/js/2-electrodes.js", "public/js/3-batteries.js"]
+    },
+    {
+      "path": "/api/tapes/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "auth",
+      "request": "PUT tape update payload with updated_by server-derived; DELETE none",
+      "response": "updated tape JSON or delete status",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/actuals",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST actual material amount payload",
+      "response": "actuals list/status JSON",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/dry-box-state",
+      "methods": ["GET", "PUT"],
+      "auth": "auth",
+      "request": "GET none; PUT dry-box state payload; updated_by is server-derived",
+      "response": "dry-box state JSON",
+      "sources": ["public/js/1-tapes.js", "public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/dry-box-state/deplete",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "optional timestamp payload; updated_by is server-derived",
+      "response": "updated dry-box state JSON",
+      "sources": ["public/js/1-tapes.js", "public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/dry-box-state/remove-now",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "none; updated_by is server-derived",
+      "response": "updated dry-box state JSON",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/dry-box-state/return-now",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "optional timestamp payload; updated_by is server-derived",
+      "response": "updated dry-box state JSON",
+      "sources": ["public/js/1-tapes.js", "public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/electrode-cut-batches",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "cut batches for a tape",
+      "sources": ["public/js/2-electrodes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/report",
+      "methods": ["GET"],
+      "auth": "route currently has no auth middleware",
+      "request": "none",
+      "response": "tape print/report payload",
+      "sources": ["public/js/tape-print.js"]
+    },
+    {
+      "path": "/api/tapes/:param/steps/by-code/:param",
+      "methods": ["GET", "POST"],
+      "auth": "auth",
+      "request": "GET none; POST step payload",
+      "response": "workflow step JSON",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/steps/by-code/calendering",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "calendering step payload",
+      "response": "workflow step JSON",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/steps/by-code/coating",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "coating step payload",
+      "response": "workflow step JSON",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/steps/by-code/mixing",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "mixing step payload",
+      "response": "workflow step JSON",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/steps/by-code/weighing",
+      "methods": ["POST"],
+      "auth": "auth",
+      "request": "weighing step payload",
+      "response": "workflow step JSON",
+      "sources": ["public/js/1-tapes.js"]
+    },
+    {
+      "path": "/api/tapes/:param/steps/drying?:query",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "optional operation_code query",
+      "response": "drying step JSON or null state",
+      "sources": ["public/js/1-tapes.js"],
+      "legacyAlias": true,
+      "aliasOf": "/api/tapes/:param/steps/by-code/:param"
+    },
+    {
+      "path": "/api/users",
+      "methods": ["GET", "POST"],
+      "auth": "GET currently open; POST auth plus admin/lead",
+      "request": "GET none; POST user form payload",
+      "response": "user list or created user JSON",
+      "sources": [
+        "public/js/1-tapes.js",
+        "public/js/2-electrodes.js",
+        "public/js/3-batteries.js",
+        "public/js/electrolytes.js",
+        "public/js/projects.js",
+        "public/js/recipes.js",
+        "public/js/separators.js",
+        "public/js/users.js"
+      ]
+    },
+    {
+      "path": "/api/users/:param",
+      "methods": ["PUT", "DELETE"],
+      "auth": "PUT auth plus admin/lead; DELETE auth plus admin",
+      "request": "PUT user update payload; DELETE none",
+      "response": "updated user JSON or delete status",
+      "sources": ["public/js/users.js"]
+    }
+  ],
+  "dynamicFetches": [
+    {
+      "source": "public/js/1-tapes.js",
+      "function": "fetchRecipes",
+      "variable": "url",
+      "methods": ["GET"],
+      "possibleEndpoints": ["/api/recipes", "/api/recipes?:query"],
+      "notes": "Role-specific recipe dropdown helper builds /api/recipes or /api/recipes?role=..."
+    },
+    {
+      "source": "public/js/2-electrodes.js",
+      "function": "fetchElectrodeArray",
+      "variable": "url",
+      "methods": ["GET"],
+      "possibleEndpoints": [
+        "/api/tapes/for-electrodes",
+        "/api/projects?:query",
+        "/api/users",
+        "/api/tapes",
+        "/api/tapes/:param/electrode-cut-batches",
+        "/api/electrodes/electrode-cut-batches/:param/electrodes",
+        "/api/electrodes/electrode-cut-batches/:param/foil-masses"
+      ],
+      "notes": "Shared electrode page dropdown/list helper."
+    },
+    {
+      "source": "public/js/3-batteries.js",
+      "function": "fetchBatteryArray",
+      "variable": "url",
+      "methods": ["GET"],
+      "possibleEndpoints": [
+        "/api/projects?:query",
+        "/api/users",
+        "/api/batteries",
+        "/api/separators",
+        "/api/electrolytes",
+        "/api/tapes/for-electrodes",
+        "/api/batteries/:param/electrode-cut-batches?:query",
+        "/api/electrodes/electrode-cut-batches/:param/electrodes"
+      ],
+      "notes": "Shared battery page dropdown/list helper."
+    }
+  ],
+  "dynamicRouteFamilies": [
+    {
+      "source": "public/js/3-batteries.js",
+      "function": "savePayloadSection",
+      "routeBaseValues": [
+        "battery_coin_config",
+        "battery_pouch_config",
+        "battery_cyl_config",
+        "battery_sep_config",
+        "battery_electrolyte",
+        "battery_qc"
+      ],
+      "patterns": ["POST /api/batteries/:param", "PATCH /api/batteries/:param/:param"]
+    }
+  ]
+}

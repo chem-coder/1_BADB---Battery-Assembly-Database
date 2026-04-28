@@ -56,15 +56,26 @@
 
       .inline-save-status {
         display: inline-block;
+        max-width: min(52rem, 70vw);
         min-height: 1.2em;
         margin-left: 0.6rem;
         color: darkcyan;
         font-size: 0.95rem;
+        line-height: 1.3;
         vertical-align: middle;
       }
 
       .inline-save-status.is-error {
         color: #b00020;
+      }
+
+      .inline-save-status.is-saving {
+        color: #59616d;
+      }
+
+      button[data-saving="true"] {
+        cursor: wait;
+        opacity: 0.72;
       }
 
       .actual-derived-info {
@@ -126,9 +137,9 @@
         </summary>
         
         <fieldset id="tapes-general-info">
-          <label for="tape-created-by">Кто добавил</label>
-          <select id="tape-created-by" name="created_by" required>
-            <option value="">— выбрать пользователя —</option>
+          <label for="tape-created-by">Создал</label>
+          <select id="tape-created-by" name="created_by" disabled>
+            <option value="">— автоматически —</option>
           </select>
           <a href="/reference/users.html" target="_blank" class="ref-link">
             Управление пользователями
@@ -656,6 +667,7 @@
     <ul id="tapesList" class="users-list"></ul>
     <div class="autosave-message" aria-live="polite"></div>
     
+    <script src="/js/auth.js"></script>
     <script src="/js/1-tapes.js"></script>
     
   </body>

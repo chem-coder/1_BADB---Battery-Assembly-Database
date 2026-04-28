@@ -85,14 +85,25 @@
 
       .inline_status {
         display: inline-block;
+        max-width: min(52rem, 70vw);
         margin-left: 10px;
         font-size: 12px;
+        line-height: 1.35;
         color: #3d6b2f;
         vertical-align: middle;
       }
 
       .inline_status.is_error {
         color: #8f2f2f;
+      }
+
+      .inline_status.is_saving {
+        color: #59616d;
+      }
+
+      button[data-saving="true"] {
+        cursor: wait;
+        opacity: 0.72;
       }
 
       #battery_stack_builder.locked {
@@ -169,7 +180,7 @@
             </span>
 
             <span>
-              <strong>Оператор:</strong>
+              <strong>Создал:</strong>
               <span id="battery_operator_label">—</span>
             </span>
 
@@ -191,9 +202,9 @@
             Управление проектами
           </a><br>
 
-          <label for="battery_created_by">Оператор</label>
-          <select id="battery_created_by" name="created_by" required>
-            <option value="">— выбрать пользователя —</option>
+          <label for="battery_created_by">Создал</label>
+          <select id="battery_created_by" name="created_by" disabled>
+            <option value="">— автоматически —</option>
           </select>
           <a href="/reference/users.html" target="_blank" class="ref-link">
             Управление пользователями
@@ -805,6 +816,7 @@
       <ul id="batteriesList" class="users-list"></ul>
     </div>
     
+    <script src="/js/auth.js"></script>
     <script src="/js/3-batteries.js"></script>
     
   </body>

@@ -1,0 +1,1182 @@
+#!/usr/bin/env node
+
+/**
+ * BADB vanilla API smoke/regression harness.
+ *
+ * This script restores a full SQL dump into a throwaway database, starts the
+ * Express API against that database with auth bypass, exercises the endpoints
+ * used by the vanilla public UI, and then cleans up.
+ *
+ * Usage:
+ *   npm run smoke:vanilla
+ *   node scripts/smoke_vanilla_api.js --dump=sql_backups/0424_badb_app_v1_full.sql
+ *   node scripts/smoke_vanilla_api.js --keep-db --verbose
+ */
+
+const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
+const net = require('net');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+const DEFAULT_DUMP = path.join(ROOT, 'sql_backups', '0424_badb_app_v1_full.sql');
+const DEFAULT_DB = 'badb_app_v1_smoke';
+const DEFAULT_LOGIN = 'dkmaraulayte';
+
+function parseArgs(argv) {
+  const opts = {
+    dump: DEFAULT_DUMP,
+    db: DEFAULT_DB,
+    port: null,
+    bypassLogin: DEFAULT_LOGIN,
+    keepDb: false,
+    keepServer: false,
+    restoreOnly: false,
+    getOnly: false,
+    verbose: false
+  };
+
+  for (const arg of argv) {
+    if (arg.startsWith('--dump=')) opts.dump = path.resolve(ROOT, arg.slice('--dump='.length));
+    else if (arg.startsWith('--db=')) opts.db = arg.slice('--db='.length);
+    else if (arg.startsWith('--port=')) opts.port = Number(arg.slice('--port='.length));
+    else if (arg.startsWith('--bypass-login=')) opts.bypassLogin = arg.slice('--bypass-login='.length);
+    else if (arg === '--keep-db') opts.keepDb = true;
+    else if (arg === '--keep-server') opts.keepServer = true;
+    else if (arg === '--restore-only') opts.restoreOnly = true;
+    else if (arg === '--get-only') opts.getOnly = true;
+    else if (arg === '--verbose') opts.verbose = true;
+    else if (arg === '--help' || arg === '-h') {
+      printHelp();
+      process.exit(0);
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  if (!opts.db.startsWith('badb_app_v1_smoke')) {
+    throw new Error(`Refusing to manage non-smoke database: ${opts.db}`);
+  }
+
+  if (opts.port !== null && (!Number.isInteger(opts.port) || opts.port <= 0)) {
+    throw new Error(`Invalid port: ${opts.port}`);
+  }
+
+  return opts;
+}
+
+function printHelp() {
+  console.log(`
+BADB vanilla API smoke/regression harness
+
+Options:
+  --dump=<path>          SQL dump to restore
+  --db=<name>            Throwaway DB name; must start with badb_app_v1_smoke
+  --port=<port>          API port; random free port by default
+  --bypass-login=<login> Auth-bypass login; default ${DEFAULT_LOGIN}
+  --get-only             Skip write-path smoke tests
+  --restore-only         Restore dump, then exit
+  --keep-db              Do not drop smoke DB at the end
+  --keep-server          Leave spawned API server running; also keeps DB
+  --verbose              Print server output and successful checks
+`);
+}
+
+function log(message) {
+  console.log(`[smoke] ${message}`);
+}
+
+function findTool(tool) {
+  const candidates = [
+    tool,
+    `/Applications/Postgres.app/Contents/Versions/latest/bin/${tool}`,
+    `/Applications/Postgres.app/Contents/Versions/16/bin/${tool}`,
+    `/opt/homebrew/bin/${tool}`,
+    `/usr/local/bin/${tool}`
+  ];
+
+  for (const candidate of candidates) {
+    if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return candidate;
+    const found = spawnSync('which', [candidate], { encoding: 'utf8' });
+    if (found.status === 0) return found.stdout.trim().split('\n')[0];
+  }
+
+  throw new Error(`Could not find ${tool}`);
+}
+
+function run(command, args, { env, quiet = false } = {}) {
+  const result = spawnSync(command, args, {
+    cwd: ROOT,
+    env: { ...process.env, PAGER: '', ...(env || {}) },
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024 * 50
+  });
+
+  if (result.status !== 0) {
+    const rendered = [command, ...args].join(' ');
+    const stderr = (result.stderr || '').trim();
+    const stdout = (result.stdout || '').trim();
+    throw new Error(`${rendered} failed\n${stderr || stdout}`);
+  }
+
+  if (!quiet && result.stdout) process.stdout.write(result.stdout);
+  return result.stdout || '';
+}
+
+async function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      server.close(() => resolve(address.port));
+    });
+  });
+}
+
+async function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForApi(baseUrl, serverLog) {
+  const deadline = Date.now() + 20000;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${baseUrl}/api/users`);
+      if (res.ok) return;
+      lastError = new Error(`HTTP ${res.status}: ${await res.text()}`);
+    } catch (err) {
+      lastError = err;
+    }
+    await sleep(300);
+  }
+
+  throw new Error(`API did not become ready. Last error: ${lastError?.message || 'unknown'}\n${serverLog()}`);
+}
+
+function startApi({ db, port, bypassLogin, verbose }) {
+  const lines = [];
+  const proc = spawn(process.execPath, ['server.js'], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      DB_NAME: db,
+      PORT: String(port),
+      AUTH_BYPASS: 'true',
+      BYPASS_LOGIN: bypassLogin
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  const remember = (chunk, stream) => {
+    const text = chunk.toString();
+    if (verbose) process[stream].write(text);
+    for (const line of text.split(/\r?\n/).filter(Boolean)) {
+      lines.push(line);
+      while (lines.length > 60) lines.shift();
+    }
+  };
+
+  proc.stdout.on('data', (chunk) => remember(chunk, 'stdout'));
+  proc.stderr.on('data', (chunk) => remember(chunk, 'stderr'));
+
+  return {
+    proc,
+    log: () => lines.join('\n')
+  };
+}
+
+async function stopApi(server) {
+  if (!server?.proc || server.proc.killed) return;
+  server.proc.kill('SIGTERM');
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (server.proc.exitCode !== null || server.proc.signalCode !== null) return;
+    await sleep(100);
+  }
+  server.proc.kill('SIGKILL');
+}
+
+function installGlobalErrorContext() {
+  process.on('unhandledRejection', (err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+class SmokeClient {
+  constructor(baseUrl, { verbose = false } = {}) {
+    this.baseUrl = baseUrl;
+    this.verbose = verbose;
+    this.checks = [];
+    this.failures = [];
+  }
+
+  async request(method, endpoint, body, accept = [200, 201, 204]) {
+    const res = await fetch(this.baseUrl + endpoint, {
+      method,
+      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+
+    const text = await res.text();
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      parsed = text;
+    }
+
+    const record = {
+      method,
+      endpoint,
+      status: res.status,
+      ok: accept.includes(res.status),
+      body: parsed,
+      text: text.slice(0, 800)
+    };
+    this.checks.push(record);
+
+    if (!record.ok) {
+      this.failures.push(record);
+      console.error(`FAIL ${method} ${endpoint} -> ${res.status}`);
+      if (record.text) console.error(record.text);
+    } else if (this.verbose) {
+      console.log(`OK   ${method} ${endpoint}`);
+    }
+
+    return parsed;
+  }
+
+  get(endpoint, accept) {
+    return this.request('GET', endpoint, undefined, accept);
+  }
+
+  post(endpoint, body, accept) {
+    return this.request('POST', endpoint, body, accept);
+  }
+
+  put(endpoint, body, accept) {
+    return this.request('PUT', endpoint, body, accept);
+  }
+
+  patch(endpoint, body, accept) {
+    return this.request('PATCH', endpoint, body, accept);
+  }
+
+  del(endpoint, accept) {
+    return this.request('DELETE', endpoint, undefined, accept);
+  }
+
+  async expectDependencyConflict(method, endpoint, body) {
+    const parsed = await this.request(method, endpoint, body, [409]);
+    const hasConflictPayload = parsed &&
+      typeof parsed.error === 'string' &&
+      Array.isArray(parsed.dependencies) &&
+      parsed.dependencies.length > 0;
+
+    if (!hasConflictPayload) {
+      this.failures.push({
+        method,
+        endpoint,
+        status: 'assertion',
+        ok: false,
+        body: parsed,
+        text: 'Expected 409 dependency payload with error and dependencies[]'
+      });
+      console.error(`FAIL ${method} ${endpoint} -> missing dependency conflict payload`);
+    }
+
+    return parsed;
+  }
+
+  assertEqual(actual, expected, label) {
+    if (String(actual) === String(expected)) return;
+
+    this.failures.push({
+      method: 'ASSERT',
+      endpoint: label,
+      status: 'assertion',
+      ok: false,
+      body: { actual, expected },
+      text: `${label}: expected ${expected}, got ${actual}`
+    });
+    console.error(`FAIL ASSERT ${label}: expected ${expected}, got ${actual}`);
+  }
+
+  assertNoFailures(label) {
+    if (this.failures.length > 0) {
+      throw new Error(`${label} failed: ${this.failures.length} failed check(s)`);
+    }
+  }
+}
+
+async function runGetSmoke(client) {
+  const seed = {};
+
+  seed.me = await client.get('/api/auth/me');
+  seed.users = await client.get('/api/users');
+  seed.projects = await client.get('/api/projects');
+  seed.materials = await client.get('/api/materials');
+  seed.materialInstances = await client.get('/api/materials/instances');
+  seed.recipes = await client.get('/api/recipes');
+  seed.separators = await client.get('/api/separators');
+  seed.structures = await client.get('/api/structures');
+  seed.electrolytes = await client.get('/api/electrolytes');
+  seed.tapes = await client.get('/api/tapes');
+  seed.tapesForElectrodes = await client.get('/api/tapes/for-electrodes');
+  seed.cutBatches = await client.get('/api/electrodes/electrode-cut-batches');
+  seed.batteries = await client.get('/api/batteries');
+
+  for (const ref of [
+    'drying-atmospheres',
+    'dry-mixing-methods',
+    'wet-mixing-methods',
+    'coating-methods',
+    'foils'
+  ]) {
+    await client.get(`/api/reference/${ref}`);
+  }
+
+  const project = first(seed.projects);
+  if (project) await client.get(`/api/projects/${project.project_id}/access`, [200, 403]);
+
+  const material = first(seed.materials);
+  if (material) await client.get(`/api/materials/${material.material_id}/instances`);
+
+  const pureInstance = seed.materialInstances.find((item) => item.is_pure) || first(seed.materialInstances);
+  if (pureInstance) {
+    const id = pureInstance.material_instance_id;
+    await client.get(`/api/materials/instances/${id}/components`);
+    await client.get(`/api/materials/instances/${id}/source-info`);
+    await client.get(`/api/materials/instances/${id}/source-info/files`);
+    await client.get(`/api/materials/instances/${id}/properties`);
+    await client.get(`/api/materials/instances/${id}/properties/files`);
+  }
+
+  const recipe = first(seed.recipes);
+  if (recipe) {
+    await client.get(`/api/recipes/${recipe.tape_recipe_id}`);
+    await client.get(`/api/recipes/${recipe.tape_recipe_id}/lines`);
+  }
+
+  const separator = first(seed.separators);
+  if (separator) await client.get(`/api/separators/${separator.sep_id}/files`);
+
+  const electrolyte = first(seed.electrolytes);
+  if (electrolyte) await client.get(`/api/electrolytes/${electrolyte.electrolyte_id}/files`);
+
+  const tape = first(seed.tapes);
+  if (tape) {
+    const id = tape.tape_id;
+    await client.get(`/api/tapes/${id}`);
+    await client.get(`/api/tapes/${id}/actuals`);
+    await client.get(`/api/tapes/${id}/dry-box-state`);
+    await client.get(`/api/tapes/${id}/electrode-cut-batches`);
+    await client.get(`/api/tapes/${id}/report`);
+
+    for (const code of [
+      'drying_am',
+      'weighing',
+      'mixing',
+      'coating',
+      'drying_tape',
+      'calendering',
+      'drying_pressed_tape'
+    ]) {
+      await client.get(`/api/tapes/${id}/steps/by-code/${code}`);
+    }
+
+    for (const code of ['drying_am', 'drying_tape', 'drying_pressed_tape']) {
+      await client.get(`/api/tapes/${id}/steps/drying?operation_code=${code}`);
+    }
+    await client.get(`/api/tapes/${id}/steps/drying`);
+  }
+
+  const batch = first(seed.cutBatches);
+  if (batch) {
+    const id = batch.cut_batch_id;
+    await client.get(`/api/electrodes/electrode-cut-batches/${id}`);
+    await client.get(`/api/electrodes/electrode-cut-batches/${id}/report`);
+    await client.get(`/api/electrodes/electrode-cut-batches/${id}/electrodes`);
+    await client.get(`/api/electrodes/electrode-cut-batches/${id}/foil-masses`);
+    await client.get(`/api/electrodes/electrode-cut-batches/${id}/drying`);
+  }
+
+  const battery = first(seed.batteries);
+  const batteryTapeId = first(seed.cutBatches)?.tape_id || tape?.tape_id;
+  if (battery) {
+    const id = battery.battery_id;
+    await client.get(`/api/batteries/${id}`);
+    await client.get(`/api/batteries/${id}/assembly`);
+    await client.get(`/api/batteries/${id}/report`);
+    if (batteryTapeId) await client.get(`/api/batteries/${id}/electrode-cut-batches?tape_id=${batteryTapeId}`);
+
+    for (const route of [
+      'battery_coin_config',
+      'battery_pouch_config',
+      'battery_cyl_config',
+      'battery_electrode_sources',
+      'battery_electrodes',
+      'battery_sep_config',
+      'battery_electrolyte',
+      'battery_qc',
+      'battery_electrochem'
+    ]) {
+      await client.get(`/api/batteries/${route}/${id}`, [200, 404]);
+    }
+  }
+
+  return seed;
+}
+
+async function runWriteSmoke(client, seed) {
+  const suffix = Date.now();
+  const fileBase64 = Buffer.from('BADB smoke file').toString('base64');
+  const made = {};
+
+  try {
+    const userId = seed.me?.userId ||
+      seed.users.find((u) => u.login === DEFAULT_LOGIN)?.user_id ||
+      first(seed.users)?.user_id;
+    const projectId = first(seed.projects)?.project_id;
+    const existingRecipeId = first(seed.recipes)?.tape_recipe_id;
+    const existingElectrolyteId = first(seed.electrolytes)?.electrolyte_id;
+    const activeMaterial = seed.materials.find((m) => String(m.role).includes('active')) || first(seed.materials);
+    const binderMaterial = seed.materials.find((m) => m.role === 'binder') || seed.materials[1] || first(seed.materials);
+    const solventMaterial = seed.materials.find((m) => m.role === 'solvent') || seed.materials[2] || first(seed.materials);
+
+    requireSeed({ userId, projectId, existingRecipeId, existingElectrolyteId, activeMaterial, binderMaterial, solventMaterial });
+
+    made.userId = (await client.post('/api/users', {
+      name: `Codex Smoke User ${suffix}`,
+      role: 'employee',
+      position: 'QA',
+      department_id: 1
+    })).user_id;
+    await client.put(`/api/users/${made.userId}`, {
+      name: `Codex Smoke User ${suffix} Updated`,
+      active: true,
+      role: 'employee',
+      position: 'QA2',
+      department_id: 1
+    });
+    const forgedUserId = made.userId;
+
+    made.projectId = (await client.post('/api/projects', {
+      name: `Codex Smoke Project ${suffix}`,
+      lead_id: userId,
+      created_by: forgedUserId,
+      status: 'active',
+      description: 'smoke',
+      confidentiality_level: 'public'
+    })).project_id;
+    client.assertEqual(
+      (await client.get('/api/projects')).find((project) => project.project_id === made.projectId)?.created_by,
+      userId,
+      'project create ignores browser-created created_by'
+    );
+    await client.put(`/api/projects/${made.projectId}`, {
+      name: `Codex Smoke Project ${suffix} Updated`,
+      lead_id: userId,
+      status: 'active',
+      description: 'smoke update',
+      confidentiality_level: 'public'
+    });
+
+    made.structureId = (await client.post('/api/structures', {
+      name: `Codex Smoke Structure ${suffix}`,
+      comments: 'smoke'
+    })).sep_str_id;
+    await client.put(`/api/structures/${made.structureId}`, {
+      name: `Codex Smoke Structure ${suffix} Updated`,
+      comments: 'smoke update'
+    });
+
+    made.separatorId = (await client.post('/api/separators', {
+      name: `Codex Smoke Separator ${suffix}`,
+      supplier: 'Codex',
+      brand: 'Smoke',
+      batch: String(suffix),
+      structure_id: made.structureId,
+      air_perm: 1,
+      air_perm_units: 's/100ml',
+      thickness_um: 20,
+      porosity: 40,
+      comments: 'smoke',
+      status: 'available',
+      created_by: forgedUserId
+    })).sep_id;
+    client.assertEqual(
+      (await client.get('/api/separators')).find((separator) => separator.sep_id === made.separatorId)?.created_by,
+      userId,
+      'separator create ignores browser-created created_by'
+    );
+    await client.expectDependencyConflict('DELETE', `/api/structures/${made.structureId}`);
+    await client.put(`/api/separators/${made.separatorId}`, {
+      name: `Codex Smoke Separator ${suffix} Updated`,
+      supplier: 'Codex',
+      brand: 'Smoke',
+      batch: String(suffix),
+      structure_id: made.structureId,
+      air_perm: 2,
+      air_perm_units: 's/100ml',
+      thickness_um: 21,
+      porosity: 41,
+      comments: 'smoke update',
+      status: 'available',
+      created_by: userId
+    });
+    made.separatorFileId = (await client.post(`/api/separators/${made.separatorId}/files`, {
+      entries: [{ file_name: 'separator.txt', mime_type: 'text/plain', file_content_base64: fileBase64 }]
+    }))?.[0]?.separator_file_id;
+
+    const electrolyte = await client.post('/api/electrolytes', {
+      name: `Codex Smoke Electrolyte ${suffix}`,
+      electrolyte_type: 'liquid',
+      solvent_system: 'EC:DMC',
+      salts: 'LiPF6',
+      concentration: '1M',
+      additives: 'none',
+      notes: 'smoke',
+      status: 'active',
+      created_by: forgedUserId
+    });
+    made.electrolyteId = electrolyte.electrolyte_id;
+    client.assertEqual(
+      electrolyte.created_by,
+      userId,
+      'electrolyte create ignores browser-created created_by'
+    );
+    await client.put(`/api/electrolytes/${made.electrolyteId}`, {
+      name: `Codex Smoke Electrolyte ${suffix} Updated`,
+      electrolyte_type: 'liquid',
+      solvent_system: 'EC:DMC',
+      salts: 'LiPF6',
+      concentration: '1M',
+      additives: 'none',
+      notes: 'smoke update',
+      status: 'active'
+    });
+    made.electrolyteFileId = (await client.post(`/api/electrolytes/${made.electrolyteId}/files`, {
+      entries: [{ file_name: 'electrolyte.txt', mime_type: 'text/plain', file_content_base64: fileBase64 }]
+    }))?.[0]?.electrolyte_file_id;
+
+    made.materialId = (await client.post('/api/materials', {
+      name: `Codex Smoke Material ${suffix}`,
+      role: 'other'
+    })).material_id;
+    await client.put(`/api/materials/${made.materialId}`, {
+      name: `Codex Smoke Material ${suffix} Updated`,
+      role: 'other'
+    });
+    made.materialInstanceId = (await client.get(`/api/materials/${made.materialId}/instances`))[0]?.material_instance_id;
+    await client.expectDependencyConflict('DELETE', `/api/materials/${made.materialId}`);
+    made.extraMaterialInstanceId = (await client.post(`/api/materials/${made.materialId}/instances`, {
+      name: `Codex Smoke Extra Instance ${suffix}`,
+      notes: 'extra',
+      is_pure: true
+    })).material_instance_id;
+    await client.put(`/api/materials/instances/${made.extraMaterialInstanceId}`, {
+      name: `Codex Smoke Extra Instance ${suffix} Updated`,
+      notes: 'extra update'
+    });
+    const compositionRows = await client.put(`/api/materials/instances/${made.extraMaterialInstanceId}/components`, {
+      components: [{
+        component_material_instance_id: made.materialInstanceId,
+        mass_fraction: 1,
+        notes: 'smoke composition'
+      }]
+    });
+    client.assertEqual(compositionRows.length, 1, 'material composition replacement returns one row');
+    client.assertEqual(
+      compositionRows[0]?.component_material_instance_id,
+      made.materialInstanceId,
+      'material composition replacement uses selected component'
+    );
+    const updatedCompositionRow = await client.put(
+      `/api/materials/instances/components/${compositionRows[0].material_instance_component_id}`,
+      {
+        mass_fraction: 1,
+        notes: 'smoke composition update'
+      }
+    );
+    client.assertEqual(updatedCompositionRow.notes, 'smoke composition update', 'material component update persists notes');
+    await client.del(`/api/materials/instances/components/${compositionRows[0].material_instance_component_id}`);
+    const addedCompositionRow = await client.post(`/api/materials/instances/${made.extraMaterialInstanceId}/components`, {
+      component_material_instance_id: made.materialInstanceId,
+      mass_fraction: 1
+    });
+    client.assertEqual(
+      addedCompositionRow.component_material_instance_id,
+      made.materialInstanceId,
+      'material component add returns selected component'
+    );
+    await client.put(`/api/materials/instances/${made.materialInstanceId}/source-info`, {
+      supplier: 'Codex',
+      brand: 'Smoke',
+      model_or_catalog_no: 'SMK-1',
+      lot_number: String(suffix),
+      date_ordered: '2026-04-24',
+      date_received: '2026-04-24',
+      quality_rating_label: 'good',
+      quality_rating_score: 5,
+      evaluation_notes: 'smoke',
+      is_evaluated: true
+    });
+    made.sourceFileId = (await client.post(`/api/materials/instances/${made.materialInstanceId}/source-info/files`, {
+      entries: [{ file_name: 'source.txt', mime_type: 'text/plain', file_content_base64: fileBase64 }]
+    }))?.[0]?.material_source_file_id;
+    await client.put(`/api/materials/instances/${made.materialInstanceId}/properties`, {
+      specific_capacity_mAh_g: 123,
+      density_g_ml: 1.23,
+      notes: 'smoke props'
+    });
+    made.propertyFileId = (await client.post(`/api/materials/instances/${made.materialInstanceId}/properties/files`, {
+      entries: [{ file_name: 'props.txt', mime_type: 'text/plain', file_content_base64: fileBase64 }]
+    }))?.[0]?.material_property_file_id;
+
+    made.recipeId = (await client.post('/api/recipes', {
+      role: 'cathode',
+      name: `Codex Smoke Recipe ${suffix}`,
+      variant_label: 'A',
+      notes: 'smoke',
+      created_by: forgedUserId,
+      lines: [
+        recipeLine(activeMaterial.material_id, 'cathode_active', true, 90, 'active'),
+        recipeLine(binderMaterial.material_id, 'binder', true, 10, 'binder'),
+        recipeLine(solventMaterial.material_id, 'solvent', false, null, 'solvent')
+      ]
+    })).tape_recipe_id;
+    client.assertEqual(
+      (await client.get(`/api/recipes/${made.recipeId}`)).created_by,
+      userId,
+      'recipe create ignores browser-created created_by'
+    );
+    made.duplicateRecipeId = (await client.post(`/api/recipes/${made.recipeId}/duplicate`, {
+      name: `Codex Smoke Recipe ${suffix} Copy`,
+      created_by: forgedUserId
+    })).tape_recipe_id;
+    client.assertEqual(
+      (await client.get(`/api/recipes/${made.duplicateRecipeId}`)).created_by,
+      userId,
+      'recipe duplicate ignores browser-created created_by'
+    );
+    await client.put(`/api/recipes/${made.recipeId}`, {
+      role: 'cathode',
+      name: `Codex Smoke Recipe ${suffix} Updated`,
+      variant_label: 'B',
+      notes: 'smoke update',
+      lines: [
+        recipeLine(activeMaterial.material_id, 'cathode_active', true, 88, 'active'),
+        recipeLine(binderMaterial.material_id, 'binder', true, 12, 'binder'),
+        recipeLine(solventMaterial.material_id, 'solvent', false, null, 'solvent')
+      ]
+    });
+
+    const tape = await client.post('/api/tapes', {
+      name: `Codex Smoke Tape ${suffix}`,
+      project_id: projectId,
+      tape_recipe_id: existingRecipeId,
+      created_by: forgedUserId,
+      notes: 'smoke',
+      calc_mode: 'from_active_mass',
+      target_mass_g: 1.5
+    });
+    made.tapeId = tape.tape_id;
+    client.assertEqual(tape.created_by, userId, 'tape create ignores browser-created created_by');
+    const updatedTape = await client.put(`/api/tapes/${made.tapeId}`, {
+      name: `Codex Smoke Tape ${suffix} Updated`,
+      project_id: projectId,
+      tape_recipe_id: existingRecipeId,
+      created_by: forgedUserId,
+      notes: 'smoke update',
+      calc_mode: 'from_slurry_mass',
+      target_mass_g: 2.5
+    });
+    client.assertEqual(updatedTape.created_by, userId, 'tape update preserves server-owned created_by');
+
+    await client.put(`/api/tapes/${made.tapeId}`, {
+      name: `Codex Smoke Tape ${suffix} Updated`,
+      project_id: projectId,
+      tape_recipe_id: made.recipeId,
+      created_by: userId,
+      notes: 'smoke recipe dependency check',
+      calc_mode: 'from_slurry_mass',
+      target_mass_g: 2.5
+    });
+    await client.expectDependencyConflict('DELETE', `/api/recipes/${made.recipeId}`);
+    await client.put(`/api/tapes/${made.tapeId}`, {
+      name: `Codex Smoke Tape ${suffix} Updated`,
+      project_id: projectId,
+      tape_recipe_id: existingRecipeId,
+      created_by: userId,
+      notes: 'smoke update',
+      calc_mode: 'from_slurry_mass',
+      target_mass_g: 2.5
+    });
+
+    const firstLine = (await client.get(`/api/recipes/${existingRecipeId}/lines`)).find((line) => line.include_in_pct);
+    const instanceId = (await client.get(`/api/materials/${firstLine.material_id}/instances`))[0]?.material_instance_id;
+    await client.post(`/api/tapes/${made.tapeId}/actuals`, {
+      recipe_line_id: firstLine.recipe_line_id,
+      material_instance_id: instanceId,
+      measure_mode: 'mass',
+      actual_mass_g: 1.1,
+      actual_volume_ml: null
+    });
+
+    const now = '2026-04-24T10:00:00.000Z';
+    await client.post(`/api/tapes/${made.tapeId}/steps/by-code/weighing`, {
+      performed_by: userId,
+      started_at: now,
+      comments: 'smoke weighing'
+    });
+    await client.post(`/api/tapes/${made.tapeId}/steps/by-code/mixing`, {
+      performed_by: userId,
+      started_at: now,
+      comments: 'smoke mixing',
+      slurry_volume_ml: 1,
+      dry_start_time: now,
+      dry_duration_min: 1,
+      dry_rpm: '100',
+      wet_start_time: now,
+      wet_duration_min: 1,
+      wet_rpm: '100',
+      viscosity_cP: 5
+    });
+    await client.post(`/api/tapes/${made.tapeId}/steps/by-code/coating`, {
+      performed_by: userId,
+      started_at: now,
+      comments: 'smoke coating',
+      foil_id: 1,
+      coating_id: 1,
+      coating_sidedness: 'one_sided',
+      gap_um: 100,
+      coat_temp_c: 25,
+      coat_time_min: 10,
+      method_comments: 'smoke'
+    });
+    await client.post(`/api/tapes/${made.tapeId}/steps/by-code/drying_pressed_tape`, {
+      performed_by: userId,
+      started_at: now,
+      ended_at: '2026-04-24T11:00:00.000Z',
+      comments: 'smoke final drying',
+      temperature_c: 80,
+      atmosphere: 'vacuum',
+      target_duration_min: 60,
+      other_parameters: 'none'
+    });
+    await client.get(`/api/tapes/${made.tapeId}/steps/drying?operation_code=drying_pressed_tape`);
+    const dryBoxState = await client.put(`/api/tapes/${made.tapeId}/dry-box-state`, {
+      started_at: '2026-04-24T11:05:00.000Z',
+      removed_at: null,
+      temperature_c: 80,
+      atmosphere: 'vacuum',
+      other_parameters: 'none',
+      comments: 'smoke',
+      updated_by: forgedUserId
+    });
+    client.assertEqual(dryBoxState.updated_by, userId, 'dry-box update ignores browser-created updated_by');
+
+    const cutBatch = await client.post('/api/electrodes/electrode-cut-batches', {
+      tape_id: made.tapeId,
+      created_by: forgedUserId,
+      target_form_factor: 'coin',
+      target_config_code: '2032',
+      shape: 'circle',
+      diameter_mm: 16,
+      comments: 'smoke cut'
+    });
+    made.cutBatchId = cutBatch.cut_batch_id;
+    client.assertEqual(
+      cutBatch.created_by,
+      userId,
+      'electrode cut batch create ignores browser-created created_by'
+    );
+    await client.put(`/api/electrodes/electrode-cut-batches/${made.cutBatchId}`, {
+      target_form_factor: 'coin',
+      target_config_code: '2032',
+      shape: 'circle',
+      diameter_mm: 15.9,
+      comments: 'smoke cut update'
+    });
+    const foil = await client.post(`/api/electrodes/electrode-cut-batches/${made.cutBatchId}/foil-masses`, {
+      mass_g: 0.0123
+    });
+    await client.put(`/api/electrodes/foil-measurements/${foil.foil_measurement_id}`, {
+      mass_g: 0.0124
+    });
+    await client.post(`/api/electrodes/electrode-cut-batches/${made.cutBatchId}/drying`, {
+      start_time: now,
+      end_time: '2026-04-24T12:00:00.000Z',
+      temperature_c: 80,
+      other_parameters: 'none',
+      comments: 'smoke electrode drying'
+    });
+    const drying = await client.get(`/api/electrodes/electrode-cut-batches/${made.cutBatchId}/drying`);
+    await client.put(`/api/electrodes/electrode-drying/${drying.drying_id}`, {
+      start_time: now,
+      end_time: '2026-04-24T12:30:00.000Z',
+      temperature_c: 81,
+      other_parameters: 'none',
+      comments: 'smoke electrode drying update'
+    });
+    made.electrodeId = (await client.post('/api/electrodes', {
+      cut_batch_id: made.cutBatchId,
+      electrode_mass_g: 0.1234,
+      cup_number: 1,
+      comments: 'smoke electrode'
+    })).electrode_id;
+    await client.put(`/api/electrodes/${made.electrodeId}`, {
+      electrode_mass_g: 0.1235,
+      cup_number: 2,
+      comments: 'smoke electrode update'
+    });
+    await client.put(`/api/electrodes/${made.electrodeId}/status`, {
+      status_code: 1,
+      used_in_battery_id: null,
+      scrapped_reason: null
+    });
+
+    const battery = await client.post('/api/batteries', {
+      project_id: projectId,
+      form_factor: 'coin',
+      created_by: forgedUserId,
+      battery_notes: `Codex Smoke Battery ${suffix}`
+    });
+    made.batteryId = battery.battery_id;
+    client.assertEqual(battery.created_by, userId, 'battery create ignores browser-created created_by');
+    const patchedBattery = await client.patch(`/api/batteries/${made.batteryId}`, {
+      project_id: projectId,
+      form_factor: 'coin',
+      created_by: forgedUserId,
+      status: 'assembled',
+      battery_notes: `Codex Smoke Battery ${suffix} Updated`
+    });
+    client.assertEqual(patchedBattery.created_by, userId, 'battery update preserves server-owned created_by');
+    await client.patch(`/api/batteries/${made.batteryId}`, {
+      project_id: made.projectId,
+      form_factor: 'coin',
+      status: 'assembled',
+      battery_notes: `Codex Smoke Battery ${suffix} Updated`
+    });
+    await client.expectDependencyConflict('DELETE', `/api/projects/${made.projectId}`);
+    await client.patch(`/api/batteries/${made.batteryId}`, {
+      project_id: projectId,
+      form_factor: 'coin',
+      status: 'assembled',
+      battery_notes: `Codex Smoke Battery ${suffix} Updated`
+    });
+    await client.post('/api/batteries/battery_coin_config', {
+      battery_id: made.batteryId,
+      coin_cell_mode: 'full_cell',
+      coin_size_code: '2032',
+      spacer_thickness_mm: 1,
+      spacer_count: 1,
+      spacer_notes: 'smoke',
+      coin_layout: 'SE'
+    });
+    await client.patch(`/api/batteries/battery_coin_config/${made.batteryId}`, {
+      coin_cell_mode: 'full_cell',
+      coin_size_code: '2032',
+      spacer_count: 2,
+      coin_layout: 'ESE'
+    });
+    made.pouchBatteryId = (await client.post('/api/batteries', {
+      project_id: projectId,
+      form_factor: 'pouch',
+      created_by: forgedUserId,
+      battery_notes: `Codex Smoke Battery ${suffix} Pouch`
+    })).battery_id;
+    await client.post('/api/batteries/battery_pouch_config', {
+      battery_id: made.pouchBatteryId,
+      pouch_case_size_code: 'other',
+      pouch_case_size_other: 'smoke pouch',
+      pouch_notes: 'smoke pouch config'
+    });
+    const pouchConfig = await client.patch(`/api/batteries/battery_pouch_config/${made.pouchBatteryId}`, {
+      pouch_case_size_code: '103x83',
+      pouch_case_size_other: null,
+      pouch_notes: 'smoke pouch update'
+    });
+    client.assertEqual(pouchConfig.pouch_case_size_code, '103x83', 'pouch config update persists size code');
+    made.cylBatteryId = (await client.post('/api/batteries', {
+      project_id: projectId,
+      form_factor: 'cylindrical',
+      created_by: forgedUserId,
+      battery_notes: `Codex Smoke Battery ${suffix} Cyl`
+    })).battery_id;
+    await client.post('/api/batteries/battery_cyl_config', {
+      battery_id: made.cylBatteryId,
+      cyl_size_code: '18650',
+      cyl_notes: 'smoke cylindrical config'
+    });
+    const cylConfig = await client.patch(`/api/batteries/battery_cyl_config/${made.cylBatteryId}`, {
+      cyl_size_code: '21700',
+      cyl_notes: 'smoke cylindrical update'
+    });
+    client.assertEqual(cylConfig.cyl_size_code, '21700', 'cylindrical config update persists size code');
+    await client.post('/api/batteries/battery_sep_config', {
+      battery_id: made.batteryId,
+      separator_id: made.separatorId,
+      separator_notes: 'smoke separator dependency check'
+    });
+    await client.expectDependencyConflict('DELETE', `/api/separators/${made.separatorId}`);
+    await client.patch(`/api/batteries/battery_sep_config/${made.batteryId}`, {
+      separator_id: null,
+      separator_notes: null
+    });
+    await client.post('/api/batteries/battery_electrolyte', {
+      battery_id: made.batteryId,
+      electrolyte_id: made.electrolyteId,
+      electrolyte_notes: 'smoke electrolyte dependency check',
+      electrolyte_total_ul: 50
+    });
+    await client.expectDependencyConflict('DELETE', `/api/electrolytes/${made.electrolyteId}`);
+    await client.patch(`/api/batteries/battery_electrolyte/${made.batteryId}`, {
+      electrolyte_id: existingElectrolyteId,
+      electrolyte_notes: 'smoke electrolyte dependency reset',
+      electrolyte_total_ul: null
+    });
+    await client.post('/api/batteries/battery_qc', {
+      battery_id: made.batteryId,
+      ocv_v: 3.7,
+      esr_mohm: 12.5,
+      qc_notes: 'smoke qc'
+    });
+    const qc = await client.patch(`/api/batteries/battery_qc/${made.batteryId}`, {
+      ocv_v: 3.8,
+      esr_mohm: 11.5,
+      qc_notes: 'smoke qc update'
+    });
+    client.assertEqual(qc.qc_notes, 'smoke qc update', 'battery QC update persists notes');
+    const electrochemRows = await client.post('/api/batteries/battery_electrochem', {
+      battery_id: made.batteryId,
+      entries: [{
+        file_name: `electrochem-${suffix}.txt`,
+        file_content_base64: fileBase64,
+        electrochem_notes: 'smoke electrochem'
+      }]
+    });
+    made.electrochemFileLinks = electrochemRows.map((row) => row.file_link).filter(Boolean);
+    client.assertEqual(electrochemRows.length, 1, 'battery electrochem upload returns one row');
+    await client.post('/api/batteries/battery_electrode_sources', {
+      battery_id: made.batteryId,
+      cathode_tape_id: made.tapeId,
+      cathode_cut_batch_id: made.cutBatchId,
+      cathode_source_notes: 'smoke source dependency check',
+      anode_tape_id: made.tapeId,
+      anode_cut_batch_id: made.cutBatchId,
+      anode_source_notes: 'smoke source dependency check'
+    });
+    await client.expectDependencyConflict('DELETE', `/api/tapes/${made.tapeId}`);
+    await client.expectDependencyConflict('DELETE', `/api/electrodes/electrode-cut-batches/${made.cutBatchId}`);
+    await client.patch(`/api/batteries/battery_electrode_sources/${made.batteryId}`, {
+      cathode_tape_id: null,
+      cathode_cut_batch_id: null,
+      cathode_source_notes: null,
+      anode_tape_id: null,
+      anode_cut_batch_id: null,
+      anode_source_notes: null
+    });
+    const batteryStackPayload = [
+      {
+        electrode_id: made.electrodeId,
+        role: 'cathode',
+        position_index: 1
+      }
+    ];
+    await client.put(`/api/batteries/battery_electrodes/${made.batteryId}`, batteryStackPayload);
+    await client.put(`/api/batteries/battery_electrodes/${made.batteryId}`, batteryStackPayload);
+    await client.expectDependencyConflict('DELETE', `/api/electrodes/${made.electrodeId}`);
+    await client.put(`/api/batteries/battery_electrodes/${made.batteryId}`, []);
+    const releasedElectrode = (await client.get(`/api/electrodes/electrode-cut-batches/${made.cutBatchId}/electrodes`))
+      .find((electrode) => Number(electrode.electrode_id) === Number(made.electrodeId));
+    client.assertEqual(releasedElectrode?.status_code, 1, 'clearing battery stack releases electrode status');
+    client.assertEqual(releasedElectrode?.used_in_battery_id, null, 'clearing battery stack clears used_in_battery_id');
+    await client.put(`/api/electrodes/${made.electrodeId}/status`, {
+      status_code: 1,
+      used_in_battery_id: null,
+      scrapped_reason: null
+    });
+    await client.get(`/api/batteries/${made.batteryId}/assembly`);
+  } finally {
+    await cleanupCreatedData(client, made);
+  }
+}
+
+async function cleanupCreatedData(client, made) {
+  const electrochemRoot = path.join(ROOT, 'uploads', 'electrochem');
+  for (const fileLink of made.electrochemFileLinks || []) {
+    const absolutePath = path.join(ROOT, String(fileLink).replace(/^\/+/, ''));
+    if (!absolutePath.startsWith(electrochemRoot)) continue;
+    try {
+      fs.unlinkSync(absolutePath);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  }
+
+  const cleanup = [
+    made.electrodeId && ['DELETE', `/api/electrodes/${made.electrodeId}`],
+    made.cutBatchId && ['DELETE', `/api/electrodes/electrode-cut-batches/${made.cutBatchId}`],
+    made.tapeId && ['DELETE', `/api/tapes/${made.tapeId}`],
+    made.batteryId && ['SQL_DELETE_BATTERY', made.batteryId],
+    made.projectId && ['DELETE', `/api/projects/${made.projectId}`],
+    made.recipeId && ['DELETE', `/api/recipes/${made.recipeId}`],
+    made.duplicateRecipeId && ['DELETE', `/api/recipes/${made.duplicateRecipeId}`],
+    made.separatorFileId && ['DELETE', `/api/separators/files/${made.separatorFileId}`],
+    made.separatorId && ['DELETE', `/api/separators/${made.separatorId}`],
+    made.structureId && ['DELETE', `/api/structures/${made.structureId}`],
+    made.electrolyteFileId && ['DELETE', `/api/electrolytes/files/${made.electrolyteFileId}`],
+    made.electrolyteId && ['DELETE', `/api/electrolytes/${made.electrolyteId}`],
+    made.sourceFileId && ['DELETE', `/api/materials/source-files/${made.sourceFileId}`],
+    made.propertyFileId && ['DELETE', `/api/materials/property-files/${made.propertyFileId}`],
+    made.extraMaterialInstanceId && ['DELETE', `/api/materials/instances/${made.extraMaterialInstanceId}`],
+    made.materialInstanceId && ['DELETE', `/api/materials/instances/${made.materialInstanceId}`],
+    made.materialId && ['DELETE', `/api/materials/${made.materialId}`],
+    made.userId && ['DELETE', `/api/users/${made.userId}`]
+  ].filter(Boolean);
+
+  for (const [method, value] of cleanup) {
+    if (method === 'SQL_DELETE_BATTERY') continue;
+    await client.request(method, value, undefined, [200, 204, 404, 409, 500]);
+  }
+}
+
+function first(rows) {
+  return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+}
+
+function requireSeed(values) {
+  for (const [key, value] of Object.entries(values)) {
+    if (!value) throw new Error(`Missing seed data: ${key}`);
+  }
+}
+
+function recipeLine(materialId, recipeRole, includeInPct, slurryPercent, notes) {
+  return {
+    material_id: materialId,
+    recipe_role: recipeRole,
+    include_in_pct: includeInPct,
+    slurry_percent: slurryPercent,
+    line_notes: notes
+  };
+}
+
+function restoreDatabase(opts, tools) {
+  if (!fs.existsSync(opts.dump)) {
+    throw new Error(`Dump not found: ${opts.dump}`);
+  }
+
+  log(`Resetting throwaway database ${opts.db}`);
+  run(tools.dropdb, ['--if-exists', opts.db], { quiet: true });
+  run(tools.createdb, [opts.db], { quiet: true });
+
+  log(`Restoring ${path.relative(ROOT, opts.dump)} into ${opts.db}`);
+  run(tools.psql, ['-d', opts.db, '-v', 'ON_ERROR_STOP=1', '-f', opts.dump], { quiet: true });
+}
+
+function dropDatabase(opts, tools) {
+  log(`Dropping throwaway database ${opts.db}`);
+  run(tools.dropdb, ['--if-exists', opts.db], { quiet: true });
+}
+
+function deleteSmokeBatteries(opts, tools) {
+  run(tools.psql, [
+    '-d',
+    opts.db,
+    '-v',
+    'ON_ERROR_STOP=1',
+    '-c',
+    "DELETE FROM batteries WHERE battery_notes LIKE 'Codex Smoke Battery%';"
+  ], { quiet: true });
+}
+
+function assertNoLeftovers(opts, tools) {
+  const output = run(tools.psql, [
+    '-d',
+    opts.db,
+    '-Atc',
+    `
+    SELECT
+      (SELECT count(*) FROM projects WHERE name LIKE 'Codex Smoke%') || ',' ||
+      (SELECT count(*) FROM tapes WHERE name LIKE 'Codex Smoke%') || ',' ||
+      (SELECT count(*) FROM separators WHERE name LIKE 'Codex Smoke%') || ',' ||
+      (SELECT count(*) FROM electrolytes WHERE name LIKE 'Codex Smoke%') || ',' ||
+      (SELECT count(*) FROM batteries WHERE battery_notes LIKE 'Codex Smoke Battery%') || ',' ||
+      (SELECT count(*) FROM materials WHERE name LIKE 'Codex Smoke%') || ',' ||
+      (SELECT count(*) FROM users WHERE name LIKE 'Codex Smoke%');
+    `
+  ], { quiet: true }).trim();
+
+  const counts = output.split(',').map((value) => Number(value));
+  if (counts.some((count) => count !== 0)) {
+    throw new Error(`Smoke data leftovers detected: ${output}`);
+  }
+}
+
+async function main() {
+  installGlobalErrorContext();
+  const opts = parseArgs(process.argv.slice(2));
+
+  log('Checking vanilla API contract');
+  run(process.execPath, ['scripts/check_vanilla_api_contract.js']);
+
+  const tools = {
+    psql: findTool('psql'),
+    createdb: findTool('createdb'),
+    dropdb: findTool('dropdb')
+  };
+
+  let server = null;
+  let shouldDropDb = !opts.keepDb && !opts.keepServer;
+
+  try {
+    restoreDatabase(opts, tools);
+    if (opts.restoreOnly) {
+      shouldDropDb = false;
+      log(`Restore complete. Kept database ${opts.db}.`);
+      return;
+    }
+
+    const port = opts.port || await getFreePort();
+    const baseUrl = `http://127.0.0.1:${port}`;
+    log(`Starting API on ${baseUrl}`);
+    server = startApi({ db: opts.db, port, bypassLogin: opts.bypassLogin, verbose: opts.verbose });
+    await waitForApi(baseUrl, server.log);
+
+    const client = new SmokeClient(baseUrl, { verbose: opts.verbose });
+    log('Running vanilla GET smoke tests');
+    const seed = await runGetSmoke(client);
+    client.assertNoFailures('GET smoke');
+
+    if (!opts.getOnly) {
+      log('Running write-path smoke tests');
+      await runWriteSmoke(client, seed);
+      deleteSmokeBatteries(opts, tools);
+      assertNoLeftovers(opts, tools);
+      client.assertNoFailures('write smoke');
+    }
+
+    log(`PASS: ${client.checks.filter((check) => check.ok).length} checks, 0 failures`);
+  } finally {
+    if (server && !opts.keepServer) {
+      await stopApi(server);
+    }
+    if (shouldDropDb) {
+      dropDatabase(opts, tools);
+    } else {
+      log(`Kept throwaway database ${opts.db}`);
+    }
+  }
+}
+
+main().catch((err) => {
+  console.error(`\n[smoke] FAIL: ${err.message}`);
+  process.exit(1);
+});

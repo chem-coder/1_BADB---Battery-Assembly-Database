@@ -34,9 +34,9 @@
       <fieldset id="project-meta">
         <legend>Метаданные</legend>
 
-        <label for="project-created-by">Кто добавил</label>
-        <select id="project-created-by" name="created_by" required>
-          <option value="">— выбрать пользователя —</option>
+        <label for="project-created-by">Создал</label>
+        <select id="project-created-by" name="created_by" disabled>
+          <option value="">— автоматически —</option>
         </select>
         <a href="/reference/users.html" target="_blank" class="ref-link">
           Управление пользователями
@@ -100,6 +100,7 @@
     <div class="status-feedback" aria-live="polite"></div>
     <ul id="projectsList" class="users-list"></ul>
 
+    <script src="/js/auth.js"></script>
     <script src="/js/projects.js"></script>
     
   </body>

@@ -3,6 +3,11 @@ const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
+const {
+  collectDependencyConflicts,
+  sendDependencyConflict,
+  sendForeignKeyConflict
+} = require('../utils/dependencyConflicts');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -22,11 +27,12 @@ router.post('/', auth, async (req, res) => {
     concentration,
     additives,
     notes,
-    status = 'active',
-    created_by
+    status = 'active'
   } = req.body;
 
-  if (!name || !electrolyte_type || !created_by) {
+  const created_by = req.user.userId;
+
+  if (!name || !electrolyte_type) {
     return res.status(400).json({ error: 'Обязательные поля отсутствуют' });
   }
 
@@ -361,6 +367,30 @@ router.delete('/:id', auth, async (req, res) => {
   }
 
   try {
+    const dependencies = await collectDependencyConflicts(pool, [
+      {
+        key: 'battery_electrolyte',
+        label: 'аккумуляторы с этим электролитом',
+        query: `
+          SELECT b.battery_id AS id, b.battery_notes AS name
+          FROM battery_electrolyte be
+          JOIN batteries b ON b.battery_id = be.battery_id
+          WHERE be.electrolyte_id = $1
+          ORDER BY b.battery_id
+          LIMIT 25
+        `,
+        params: [electrolyteId]
+      }
+    ]);
+
+    if (dependencies.length > 0) {
+      return sendDependencyConflict(
+        res,
+        'Нельзя удалить электролит: он используется в аккумуляторах',
+        dependencies
+      );
+    }
+
     const result = await pool.query(
       'DELETE FROM electrolytes WHERE electrolyte_id = $1',
       [electrolyteId]
@@ -372,6 +402,9 @@ router.delete('/:id', auth, async (req, res) => {
 
     res.status(204).end();
   } catch (err) {
+    if (sendForeignKeyConflict(res, err, 'Нельзя удалить электролит: он связан с другими записями')) {
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка удаления электролита' });
   }

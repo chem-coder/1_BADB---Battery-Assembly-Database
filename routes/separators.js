@@ -3,6 +3,11 @@ const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
+const {
+  collectDependencyConflicts,
+  sendDependencyConflict,
+  sendForeignKeyConflict
+} = require('../utils/dependencyConflicts');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -30,7 +35,7 @@ router.post('/', auth, async (req, res) => {
   } = req.body;
 
   const structure_id = Number(req.body.structure_id);
-  const created_by  = Number(req.body.created_by);
+  const created_by = req.user.userId;
 
   // 1. validate required strings
   if (!name) {
@@ -38,7 +43,7 @@ router.post('/', auth, async (req, res) => {
   }
 
   // 2. validate required foreign keys
-  if (!Number.isInteger(structure_id) || !Number.isInteger(created_by)) {
+  if (!Number.isInteger(structure_id)) {
     return res.status(400).json({ error: 'Некорректные идентификаторы' });
   }
 
@@ -394,9 +399,37 @@ router.put('/:id', auth, async (req, res) => {
 
 // DELETE
 router.delete('/:id', auth, async (req, res) => {
-  const { id } = req.params;
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный sep_id' });
+  }
 
   try {
+    const dependencies = await collectDependencyConflicts(pool, [
+      {
+        key: 'battery_sep_config',
+        label: 'аккумуляторы с этим сепаратором',
+        query: `
+          SELECT b.battery_id AS id, b.battery_notes AS name
+          FROM battery_sep_config bsc
+          JOIN batteries b ON b.battery_id = bsc.battery_id
+          WHERE bsc.separator_id = $1
+          ORDER BY b.battery_id
+          LIMIT 25
+        `,
+        params: [id]
+      }
+    ]);
+
+    if (dependencies.length > 0) {
+      return sendDependencyConflict(
+        res,
+        'Нельзя удалить сепаратор: он используется в аккумуляторах',
+        dependencies
+      );
+    }
+
     const result = await pool.query(
       'DELETE FROM separators WHERE sep_id = $1',
       [id]
@@ -408,6 +441,9 @@ router.delete('/:id', auth, async (req, res) => {
 
     res.status(204).end();
   } catch (err) {
+    if (sendForeignKeyConflict(res, err, 'Нельзя удалить сепаратор: он связан с другими записями')) {
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }

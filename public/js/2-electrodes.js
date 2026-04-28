@@ -1090,13 +1090,13 @@
 
       if (!data.length) {
         setReferenceUsers([]);
-        select.innerHTML = '<option value="">— выбрать пользователя —</option>';
+        select.innerHTML = '<option value="">— автоматически —</option>';
         return;
       }
 
       setReferenceUsers(data);
       
-      select.innerHTML = '<option value="">— выбрать пользователя —</option>';
+      select.innerHTML = '<option value="">— автоматически —</option>';
       
       data.forEach(u => {
         const option = document.createElement('option');
@@ -1323,7 +1323,7 @@
       syncCutBatchFormStateFromDom();
     }
 
-    function buildCutBatchPayload({ tapeId, createdBy }) {
+    function buildCutBatchPayload({ tapeId }) {
       const batchForm = state.form.batch;
       const shape = batchForm.shape || null;
       const isCircle = shape === 'circle';
@@ -1337,7 +1337,6 @@
 
       return {
         tape_id: tapeId,
-        created_by: createdBy,
         comments: batchForm.comments || null,
         target_form_factor: targetFormFactor,
         target_config_code: targetConfigCode,
@@ -2309,17 +2308,16 @@
       
       syncElectrodePageStateFromDom();
       const tapeId = Number(state.form.filters.tape_id);
-      const createdBy = Number(state.form.filters.created_by);
       
-      if (!tapeId || !createdBy) {
-        showElectrodeInlineStatus('saveBtn', 'Не выбрана лента или оператор', true);
+      if (!tapeId) {
+        showElectrodeInlineStatus('saveBtn', 'Не выбрана лента', true);
         return;
       }
       
       /* ---------- CREATE BATCH IF NEEDED ---------- */
       
       if (!state.selection.currentCutBatchId) {
-        const payload = buildCutBatchPayload({ tapeId, createdBy });
+        const payload = buildCutBatchPayload({ tapeId });
         
         const res = await fetch('/api/electrodes/electrode-cut-batches', {
           method: 'POST',
@@ -2337,7 +2335,7 @@
         setCurrentCutBatchId(batch.cut_batch_id);
         
       } else {
-        const payload = buildCutBatchPayload({ tapeId, createdBy });
+        const payload = buildCutBatchPayload({ tapeId });
 
         const res = await fetch(`/api/electrodes/electrode-cut-batches/${state.selection.currentCutBatchId}`, {
           method: 'PUT',
@@ -2454,17 +2452,16 @@
 
     document.getElementById('electrodes-return-tape-btn').addEventListener('click', async () => {
       const tapeId = Number(state.form.filters.tape_id);
-      const updatedBy = Number(state.form.filters.created_by);
 
-      if (!tapeId || !updatedBy) {
-        showElectrodeInlineStatus('electrodes-return-tape-btn', 'Не выбрана лента или оператор', true);
+      if (!tapeId) {
+        showElectrodeInlineStatus('electrodes-return-tape-btn', 'Не выбрана лента', true);
         return;
       }
 
       const res = await fetch(`/api/tapes/${tapeId}/dry-box-state/return-now`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updated_by: updatedBy })
+        body: JSON.stringify({})
       });
 
       const data = await res.json().catch(() => ({}));
@@ -2482,17 +2479,16 @@
 
     document.getElementById('electrodes-deplete-tape-btn').addEventListener('click', async () => {
       const tapeId = Number(state.form.filters.tape_id);
-      const updatedBy = Number(state.form.filters.created_by);
 
-      if (!tapeId || !updatedBy) {
-        showElectrodeInlineStatus('electrodes-deplete-tape-btn', 'Не выбрана лента или оператор', true);
+      if (!tapeId) {
+        showElectrodeInlineStatus('electrodes-deplete-tape-btn', 'Не выбрана лента', true);
         return;
       }
 
       const res = await fetch(`/api/tapes/${tapeId}/dry-box-state/deplete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updated_by: updatedBy })
+        body: JSON.stringify({})
       });
 
       const data = await res.json().catch(() => ({}));

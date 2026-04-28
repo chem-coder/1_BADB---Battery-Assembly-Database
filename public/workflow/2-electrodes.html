@@ -131,9 +131,9 @@
             
             <!-- user & comments block -->
             <fieldset>
-              <label for="electrodes-created_by">Оператор</label>
-              <select id="electrodes-created_by" required>
-                <option value="">— выбрать пользователя —</option>
+              <label for="electrodes-created_by">Создал</label>
+              <select id="electrodes-created_by" disabled>
+                <option value="">— автоматически —</option>
               </select>
               <a href="/reference/users.html" target="_blank" class="ref-link">
                 Управление пользователями
@@ -377,6 +377,7 @@
   <div class="autosave-message" aria-live="polite"></div>
     </div>
 
+    <script src="/js/auth.js"></script>
     <script src="/js/2-electrodes.js"></script>
 
   </body>

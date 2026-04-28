@@ -364,7 +364,6 @@ function isBatteryMetaSectionComplete() {
   return Boolean(
     state.selection.currentBatteryId &&
     state.meta.project_id &&
-    state.meta.created_by &&
     state.meta.form_factor
   );
 }
@@ -1718,7 +1717,7 @@ async function refreshBatteryStatusState() {
   const res = await fetch(`/api/batteries/${state.selection.currentBatteryId}/assembly`);
 
   if (!res.ok) {
-    throw new Error('Не удалось обновить статус батареи');
+    await throwBatteryResponseError(res, 'Не удалось обновить статус батареи');
   }
 
   const assemblyData = await res.json();
@@ -1738,8 +1737,7 @@ async function saveBatteryStatus() {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка сохранения статуса батареи');
+    await throwBatteryResponseError(res, 'Ошибка сохранения статуса батареи');
   }
 
   return res.json();
@@ -1763,8 +1761,7 @@ async function autoSaveAssembledStatusTransition() {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка автосохранения статуса assembled');
+    await throwBatteryResponseError(res, 'Ошибка автосохранения статуса assembled');
   }
 
   setCurrentBattery({
@@ -1780,6 +1777,59 @@ async function autoSaveAssembledStatusTransition() {
 }
 
 const batteryInlineStatusTimers = {};
+
+function formatBatteryDependencySummary(dependencies) {
+  if (!Array.isArray(dependencies) || dependencies.length === 0) {
+    return '';
+  }
+
+  return dependencies
+    .map((dependency) => {
+      const label = dependency.label || dependency.key || 'Связанные записи';
+      const count = dependency.count ?? dependency.records?.length ?? 0;
+      return `${label}: ${count}`;
+    })
+    .join('; ');
+}
+
+function formatBatterySaveError(err, fallback = 'Ошибка сохранения') {
+  const payload = err?.responseBody || err;
+  const message =
+    payload?.error ||
+    payload?.message ||
+    err?.message ||
+    fallback;
+  const dependencySummary = formatBatteryDependencySummary(payload?.dependencies);
+
+  return dependencySummary
+    ? `${message}. Блокирующие записи: ${dependencySummary}`
+    : message;
+}
+
+async function buildBatteryResponseError(res, fallback = 'Ошибка запроса') {
+  const contentType = res.headers?.get?.('content-type') || '';
+  let payload = null;
+  let text = '';
+
+  if (contentType.includes('application/json')) {
+    payload = await res.json().catch(() => null);
+  } else {
+    text = await res.text().catch(() => '');
+  }
+
+  const message = formatBatterySaveError(
+    payload || { error: text || `${fallback}: HTTP ${res.status}` },
+    fallback
+  );
+  const err = new Error(message);
+  err.status = res.status;
+  err.responseBody = payload;
+  return err;
+}
+
+async function throwBatteryResponseError(res, fallback) {
+  throw await buildBatteryResponseError(res, fallback);
+}
 
 function ensureBatteryInlineStatusElement(buttonId) {
   const button = document.getElementById(buttonId);
@@ -1805,9 +1855,10 @@ function clearBatteryInlineStatus(buttonId) {
 
   statusEl.textContent = '';
   statusEl.classList.remove('is_error');
+  statusEl.classList.remove('is_saving');
 }
 
-function showBatteryInlineStatus(buttonId, message, isError = false) {
+function showBatteryInlineStatus(buttonId, message, isError = false, options = {}) {
   const statusEl = ensureBatteryInlineStatusElement(buttonId);
 
   if (!statusEl) return;
@@ -1818,11 +1869,42 @@ function showBatteryInlineStatus(buttonId, message, isError = false) {
 
   statusEl.textContent = message || '';
   statusEl.classList.toggle('is_error', Boolean(isError));
+  statusEl.classList.toggle('is_saving', Boolean(options.isSaving));
 
-  if (message) {
+  const clearAfterMs = options.clearAfterMs ?? (isError ? 7000 : 4000);
+
+  if (message && clearAfterMs) {
     batteryInlineStatusTimers[buttonId] = setTimeout(() => {
       clearBatteryInlineStatus(buttonId);
-    }, 4000);
+    }, clearAfterMs);
+  }
+}
+
+async function withBatteryInlineSaveStatus(buttonId, task, fallbackError = 'Ошибка сохранения') {
+  const button = document.getElementById(buttonId);
+
+  if (button?.disabled || button?.dataset.saving === 'true') return null;
+
+  if (button) {
+    button.dataset.saving = 'true';
+    button.setAttribute('aria-disabled', 'true');
+  }
+  showBatteryInlineStatus(buttonId, 'Сохранение...', false, {
+    clearAfterMs: 0,
+    isSaving: true
+  });
+
+  try {
+    return await (typeof task === 'function' ? task() : task);
+  } catch (err) {
+    console.error(err);
+    showBatteryInlineStatus(buttonId, formatBatterySaveError(err, fallbackError), true);
+    return null;
+  } finally {
+    if (button && document.getElementById(buttonId) === button) {
+      delete button.dataset.saving;
+      button.removeAttribute('aria-disabled');
+    }
   }
 }
 
@@ -1832,6 +1914,7 @@ function showBatteryInlineStatus(buttonId, message, isError = false) {
 async function saveBatteryConfig() {
   const statusTargetId = 'battery_config_save_btn';
 
+  return withBatteryInlineSaveStatus(statusTargetId, async () => {
   if (!state.selection.currentBatteryId) {
     showBatteryInlineStatus(statusTargetId, 'Сначала создайте элемент.', true);
     return;
@@ -1872,6 +1955,7 @@ async function saveBatteryConfig() {
       true
     );
   }
+  }, 'Ошибка сохранения конфигурации');
 }
 
 
@@ -1879,6 +1963,7 @@ async function saveBatteryConfig() {
 async function saveElectrodeSources() {
   const statusTargetId = 'battery_sources_save_btn';
 
+  return withBatteryInlineSaveStatus(statusTargetId, async () => {
   if (!state.selection.currentBatteryId) {
     showBatteryInlineStatus(statusTargetId, 'Сначала создайте элемент.', true);
     return;
@@ -1983,13 +2068,7 @@ async function saveElectrodeSources() {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    showBatteryInlineStatus(
-      statusTargetId,
-      err.error || `Ошибка сохранения источников электродов: ${res.status}`,
-      true
-    );
-    return;
+    await throwBatteryResponseError(res, 'Ошибка сохранения источников электродов');
   }
 
   markSectionsSaved(['electrode_sources']);
@@ -1997,11 +2076,13 @@ async function saveElectrodeSources() {
   renderBatteryPage();
 
   showBatteryInlineStatus(statusTargetId, 'Источники электродов сохранены.');
+  }, 'Ошибка сохранения источников электродов');
 }
 
 async function saveElectrodeStack() {
   const statusTargetId = 'battery_stack_save_btn';
 
+  return withBatteryInlineSaveStatus(statusTargetId, async () => {
   if (!state.selection.currentBatteryId) {
     showBatteryInlineStatus(statusTargetId, 'Сначала создайте элемент.', true);
     return;
@@ -2021,13 +2102,7 @@ async function saveElectrodeStack() {
   });
   
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    showBatteryInlineStatus(
-      statusTargetId,
-      err.error || `Ошибка сохранения стека: ${res.status}`,
-      true
-    );
-    return;
+    await throwBatteryResponseError(res, 'Ошибка сохранения стека');
   }
   
   markSectionsSaved(['battery_stack']);
@@ -2035,6 +2110,7 @@ async function saveElectrodeStack() {
   renderBatteryPage();
   
   showBatteryInlineStatus(statusTargetId, 'Стек электродов сохранён.');
+  }, 'Ошибка сохранения стека');
 }
 
 async function savePayloadSection(routeBase, payload) {
@@ -2060,8 +2136,7 @@ async function savePayloadSection(routeBase, payload) {
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Ошибка сохранения: ${routeBase}`);
+    await throwBatteryResponseError(res, `Ошибка сохранения: ${routeBase}`);
   }
 
   return res.json();
@@ -2136,6 +2211,7 @@ async function saveAssemblyParams() {
       ? 'pouch_assembly_save_btn'
       : 'cyl_assembly_save_btn';
 
+  return withBatteryInlineSaveStatus(statusTargetId, async () => {
   try {
     const sectionState =
       ctx.formFactor === 'coin' ? { ...state.assembly.coin }
@@ -2189,12 +2265,14 @@ async function saveAssemblyParams() {
       true
     );
   }
+  }, 'Ошибка сохранения параметров сборки');
 }
 
 
 async function saveBatteryQc() {
   const statusTargetId = 'battery_qc_save_btn';
 
+  return withBatteryInlineSaveStatus(statusTargetId, async () => {
   try {
     syncQcStateFromDom();
     const payload = {
@@ -2211,6 +2289,7 @@ async function saveBatteryQc() {
     console.error(err);
     showBatteryInlineStatus(statusTargetId, err.message || 'Ошибка сохранения QC', true);
   }
+  }, 'Ошибка сохранения QC');
 }
 
 function renderElectrochemSavedFiles(entries) {
@@ -2268,6 +2347,7 @@ function fileToBase64(file) {
 async function saveBatteryElectrochem() {
   const statusTargetId = 'battery_electrochem_save_btn';
 
+  return withBatteryInlineSaveStatus(statusTargetId, async () => {
   if (!state.selection.currentBatteryId) {
     showBatteryInlineStatus(statusTargetId, 'Сначала создайте элемент.', true);
     return;
@@ -2304,8 +2384,7 @@ async function saveBatteryElectrochem() {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Ошибка сохранения электрохимических испытаний');
+      await throwBatteryResponseError(res, 'Ошибка сохранения электрохимических испытаний');
     }
 
     const saved = await res.json();
@@ -2327,6 +2406,7 @@ async function saveBatteryElectrochem() {
       true
     );
   }
+  }, 'Ошибка сохранения электрохимических испытаний');
 }
 
 
@@ -2339,8 +2419,7 @@ async function updateBatteryMeta(id, data) {
   });
   
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка обновления аккумулятора');
+    await throwBatteryResponseError(res, 'Ошибка обновления аккумулятора');
   }
   
   return res.json();
@@ -2435,7 +2514,7 @@ async function loadUsers() {
   }
 
   renderBatteryReferenceSelect(createdBySelect, data, {
-    placeholder: '— выбрать пользователя —',
+    placeholder: '— автоматически —',
     valueKey: 'user_id',
     labelBuilder: (user) => user.full_name || user.name
   });
@@ -3751,6 +3830,7 @@ function handleBatteryFormMutation() {
 async function handleBatteryStatusChange() {
   const statusTargetId = 'battery_qc_save_btn';
 
+  return withBatteryInlineSaveStatus(statusTargetId, async () => {
   syncQcStateFromDom();
 
   try {
@@ -3772,6 +3852,7 @@ async function handleBatteryStatusChange() {
       true
     );
   }
+  }, 'Ошибка сохранения статуса батареи');
 }
 
 function resetBatteryPageState() {
@@ -3808,14 +3889,13 @@ async function handleExitBatteryPage() {
 function buildBatteryHeaderPayloadFromState() {
   return {
     project_id: state.meta.project_id ? Number(state.meta.project_id) : null,
-    created_by: state.meta.created_by ? Number(state.meta.created_by) : null,
     form_factor: state.meta.form_factor || null,
     battery_notes: state.meta.battery_notes || null
   };
 }
 
 function validateBatteryHeaderPayload(headerPayload) {
-  if (!headerPayload.project_id || !headerPayload.created_by || !headerPayload.form_factor) {
+  if (!headerPayload.project_id || !headerPayload.form_factor) {
     return false;
   }
 
@@ -3830,7 +3910,7 @@ async function createBatteryHeader(headerPayload) {
   });
 
   if (!res.ok) {
-    throw new Error('Ошибка создания аккумулятора');
+    await throwBatteryResponseError(res, 'Ошибка создания аккумулятора');
   }
 
   return res.json();
@@ -3843,7 +3923,12 @@ async function refreshBatteryHeaderDependencies() {
 
 function applySavedBatteryHeaderState(battery, headerPayload, buttonMode) {
   setCurrentBattery(battery);
-  setMetaState(headerPayload);
+  setMetaState({
+    project_id: battery?.project_id ?? headerPayload.project_id ?? null,
+    created_by: battery?.created_by ?? null,
+    form_factor: battery?.form_factor ?? headerPayload.form_factor ?? null,
+    battery_notes: battery?.battery_notes ?? battery?.notes ?? headerPayload.battery_notes ?? null
+  });
   setBatteryCreateButtonMode(buttonMode);
   renderBatteryPage();
   markBatterySectionsSaved(['battery_meta']);
@@ -3868,12 +3953,13 @@ async function updateBatteryFromHeaderPayload(headerPayload) {
 async function handleBatteryCreateOrUpdate() {
   const statusTargetId = 'battery_create_btn';
 
+  return withBatteryInlineSaveStatus(statusTargetId, async () => {
   syncMetaStateFromDom();
 
   const headerPayload = buildBatteryHeaderPayloadFromState();
 
   if (!validateBatteryHeaderPayload(headerPayload)) {
-    showBatteryInlineStatus(statusTargetId, 'Заполните проект, оператора и форм-фактор.', true);
+    showBatteryInlineStatus(statusTargetId, 'Заполните проект и форм-фактор.', true);
     return;
   }
 
@@ -3888,8 +3974,13 @@ async function handleBatteryCreateOrUpdate() {
     showBatteryInlineStatus(statusTargetId, 'Шапка аккумулятора сохранена.');
   } catch (err) {
     console.error(err);
-    showBatteryInlineStatus(statusTargetId, 'Ошибка сохранения аккумулятора.', true);
+    showBatteryInlineStatus(
+      statusTargetId,
+      formatBatterySaveError(err, 'Ошибка сохранения аккумулятора'),
+      true
+    );
   }
+  }, 'Ошибка сохранения аккумулятора');
 }
 
 function syncAndRenderFormFactorChange() {

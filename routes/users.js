@@ -2,6 +2,11 @@ const { Router } = require('express');
 const pool = require('../db/pool');
 const { auth, requireRole } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
+const {
+  collectDependencyConflicts,
+  sendDependencyConflict,
+  sendForeignKeyConflict
+} = require('../utils/dependencyConflicts');
 const router = Router();
 
 
@@ -39,7 +44,7 @@ router.post('/', auth, requireRole('admin', 'lead'), async (req, res) => {
 });
 
 // READ — no auth required (reference data)
-router.get('/', async (req, res) => {
+router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.user_id, u.name, u.active, u.role, u.position,
@@ -102,12 +107,112 @@ router.put('/:id', auth, requireRole('admin', 'lead'), async (req, res) => {
 
 // DELETE — admin only
 router.delete('/:id', auth, requireRole('admin'), async (req, res) => {
-  const { id } = req.params;
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный user_id' });
+  }
 
   try {
-    await pool.query('DELETE FROM users WHERE user_id = $1', [id]);
+    const dependencies = await collectDependencyConflicts(pool, [
+      {
+        key: 'projects',
+        label: 'проекты, где пользователь является лидом/создателем/редактором',
+        query: `
+          SELECT project_id AS id, name
+          FROM projects
+          WHERE lead_id = $1 OR created_by = $1 OR updated_by = $1
+          ORDER BY project_id
+          LIMIT 25
+        `,
+        params: [id]
+      },
+      {
+        key: 'tapes',
+        label: 'ленты, созданные или обновлённые пользователем',
+        query: `
+          SELECT tape_id AS id, name
+          FROM tapes
+          WHERE created_by = $1 OR updated_by = $1
+          ORDER BY tape_id
+          LIMIT 25
+        `,
+        params: [id]
+      },
+      {
+        key: 'batteries',
+        label: 'аккумуляторы, созданные или обновлённые пользователем',
+        query: `
+          SELECT battery_id AS id, battery_notes AS name
+          FROM batteries
+          WHERE created_by = $1 OR updated_by = $1
+          ORDER BY battery_id
+          LIMIT 25
+        `,
+        params: [id]
+      },
+      {
+        key: 'tape_recipes',
+        label: 'рецепты, созданные или обновлённые пользователем',
+        query: `
+          SELECT tape_recipe_id AS id, name
+          FROM tape_recipes
+          WHERE created_by = $1 OR updated_by = $1
+          ORDER BY tape_recipe_id
+          LIMIT 25
+        `,
+        params: [id]
+      },
+      {
+        key: 'inventory',
+        label: 'материалы, сепараторы, электролиты или партии электродов с этим пользователем',
+        query: `
+          SELECT id, name
+          FROM (
+            SELECT sep_id AS id, name FROM separators WHERE created_by = $1 OR updated_by = $1
+            UNION ALL
+            SELECT electrolyte_id AS id, name FROM electrolytes WHERE created_by = $1 OR updated_by = $1
+            UNION ALL
+            SELECT cut_batch_id AS id, 'electrode cut batch #' || cut_batch_id AS name
+            FROM electrode_cut_batches
+            WHERE created_by = $1 OR updated_by = $1
+          ) refs
+          ORDER BY id
+          LIMIT 25
+        `,
+        params: [id]
+      },
+      {
+        key: 'tape_process_steps',
+        label: 'технологические шаги, выполненные или обновлённые пользователем',
+        query: `
+          SELECT step_id AS id, 'tape #' || tape_id AS name
+          FROM tape_process_steps
+          WHERE performed_by = $1 OR updated_by = $1
+          ORDER BY step_id
+          LIMIT 25
+        `,
+        params: [id]
+      }
+    ]);
+
+    if (dependencies.length > 0) {
+      return sendDependencyConflict(
+        res,
+        'Нельзя удалить пользователя: он связан с существующими записями',
+        dependencies
+      );
+    }
+
+    const result = await pool.query('DELETE FROM users WHERE user_id = $1', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
     res.status(204).end();
   } catch (err) {
+    if (sendForeignKeyConflict(res, err, 'Нельзя удалить пользователя: он связан с другими записями')) {
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }

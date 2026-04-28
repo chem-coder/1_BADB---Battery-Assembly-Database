@@ -1360,8 +1360,7 @@ async function createTape(data) {
   });
   
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка сохранения');
+    await throwResponseError(res, 'Ошибка сохранения ленты');
   }
   
   return res.json();
@@ -1395,8 +1394,7 @@ async function updateTape(id, data) {
   });
   
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка обновления');
+    await throwResponseError(res, 'Ошибка обновления ленты');
   }
   
   return res.json();
@@ -1419,8 +1417,7 @@ async function saveTapeDryBoxState(tapeId, payload) {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка сохранения параметров сушки в шкафу');
+    await throwResponseError(res, 'Ошибка сохранения параметров сушки в шкафу');
   }
 
   return res.json();
@@ -1434,8 +1431,7 @@ async function returnTapeToDryBoxNow(tapeId, payload) {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка возврата ленты в сушильный шкаф');
+    await throwResponseError(res, 'Ошибка возврата ленты в сушильный шкаф');
   }
 
   return res.json();
@@ -1449,8 +1445,7 @@ async function removeTapeFromDryBoxNow(tapeId, payload) {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка изменения статуса ленты в сушильном шкафу');
+    await throwResponseError(res, 'Ошибка изменения статуса ленты в сушильном шкафу');
   }
 
   return res.json();
@@ -1464,8 +1459,7 @@ async function markTapeDepleted(tapeId, payload) {
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка изменения статуса ленты');
+    await throwResponseError(res, 'Ошибка изменения статуса ленты');
   }
 
   return res.json();
@@ -1528,8 +1522,7 @@ async function saveSelectedInstances(tapeId) {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Ошибка сохранения выбранных экземпляров');
+      await throwResponseError(res, 'Ошибка сохранения выбранных экземпляров');
     }
   }
 }
@@ -1575,8 +1568,7 @@ async function saveTapeActuals(tapeId) {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Ошибка сохранения фактических данных');
+      await throwResponseError(res, 'Ошибка сохранения фактических данных');
     }
   }
 }
@@ -2045,14 +2037,15 @@ function renderExpandedCalculation() {
 }
 
 function renderUsersSelects() {
-  const placeholder = '<option value="">— выбрать пользователя —</option>';
+  const userPlaceholder = '<option value="">— выбрать пользователя —</option>';
+  const creatorPlaceholder = '<option value="">— автоматически —</option>';
 
   fillSelect(
     createdBySelect,
     state.reference.users,
     'user_id',
     (u) => u.name,
-    placeholder,
+    creatorPlaceholder,
     state.form.fields.created_by
   );
 
@@ -2072,7 +2065,7 @@ function renderUsersSelects() {
       state.reference.users,
       'user_id',
       (u) => u.name,
-      placeholder,
+      userPlaceholder,
       selectedValue
     );
   });
@@ -2735,7 +2728,6 @@ function buildMaintenanceDryBoxPayload() {
   const step = state.workflow.maintenance_dry_box;
 
   return {
-    updated_by: Number(step.updated_by || state.form.fields.created_by || 0) || null,
     started_at: combineDateAndTime(step.started_at_date, step.started_at_time),
     temperature_c: step.temperature_c || null,
     atmosphere: step.atmosphere || null,
@@ -2790,6 +2782,59 @@ function logLoadError(err) {
   console.error(err);
 }
 
+function formatDependencySummary(dependencies) {
+  if (!Array.isArray(dependencies) || dependencies.length === 0) {
+    return '';
+  }
+
+  return dependencies
+    .map((dependency) => {
+      const label = dependency.label || dependency.key || 'Связанные записи';
+      const count = dependency.count ?? dependency.records?.length ?? 0;
+      return `${label}: ${count}`;
+    })
+    .join('; ');
+}
+
+function formatSaveError(err, fallback = 'Ошибка сохранения') {
+  const payload = err?.responseBody || err;
+  const message =
+    payload?.error ||
+    payload?.message ||
+    err?.message ||
+    fallback;
+  const dependencySummary = formatDependencySummary(payload?.dependencies);
+
+  return dependencySummary
+    ? `${message}. Блокирующие записи: ${dependencySummary}`
+    : message;
+}
+
+async function buildResponseError(res, fallback = 'Ошибка запроса') {
+  const contentType = res.headers?.get?.('content-type') || '';
+  let payload = null;
+  let text = '';
+
+  if (contentType.includes('application/json')) {
+    payload = await res.json().catch(() => null);
+  } else {
+    text = await res.text().catch(() => '');
+  }
+
+  const message = formatSaveError(
+    payload || { error: text || `${fallback}: HTTP ${res.status}` },
+    fallback
+  );
+  const err = new Error(message);
+  err.status = res.status;
+  err.responseBody = payload;
+  return err;
+}
+
+async function throwResponseError(res, fallback) {
+  throw await buildResponseError(res, fallback);
+}
+
 function showStatus(msg, isError = false) {
   if (!statusBox) return;
 
@@ -2815,7 +2860,7 @@ function getInlineStatusEl(buttonId) {
   return null;
 }
 
-function showInlineStatus(buttonId, msg, isError = false) {
+function showInlineStatus(buttonId, msg, isError = false, options = {}) {
   const statusEl = getInlineStatusEl(buttonId);
   if (!statusEl) {
     showStatus(msg, isError);
@@ -2824,21 +2869,54 @@ function showInlineStatus(buttonId, msg, isError = false) {
 
   statusEl.textContent = msg;
   statusEl.classList.toggle('is-error', Boolean(isError));
+  statusEl.classList.toggle('is-saving', Boolean(options.isSaving));
 
   const existingTimeout = inlineStatusTimeouts.get(statusEl);
   if (existingTimeout) {
     clearTimeout(existingTimeout);
   }
 
+  const clearAfterMs = options.clearAfterMs ?? (isError ? 7000 : 2200);
+  if (!clearAfterMs) return;
+
   const timeoutId = setTimeout(() => {
     if (statusEl.textContent === msg) {
       statusEl.textContent = '';
       statusEl.classList.remove('is-error');
+      statusEl.classList.remove('is-saving');
     }
     inlineStatusTimeouts.delete(statusEl);
-  }, 1800);
+  }, clearAfterMs);
 
   inlineStatusTimeouts.set(statusEl, timeoutId);
+}
+
+async function withInlineSaveStatus(buttonId, task, fallbackError = 'Ошибка сохранения') {
+  const button = document.getElementById(buttonId);
+
+  if (button?.disabled || button?.dataset.saving === 'true') return null;
+
+  if (button) {
+    button.dataset.saving = 'true';
+    button.setAttribute('aria-disabled', 'true');
+  }
+  showInlineStatus(buttonId, 'Сохранение...', false, {
+    clearAfterMs: 0,
+    isSaving: true
+  });
+
+  try {
+    return await (typeof task === 'function' ? task() : task);
+  } catch (err) {
+    console.error(err);
+    showInlineStatus(buttonId, formatSaveError(err, fallbackError), true);
+    return null;
+  } finally {
+    if (button && document.getElementById(buttonId) === button) {
+      delete button.dataset.saving;
+      button.removeAttribute('aria-disabled');
+    }
+  }
 }
 
 function trackPendingSave(promise) {
@@ -3502,13 +3580,12 @@ nameInput.addEventListener('blur', () => {
 
 // -------- Top General Tape Buttons --------
 
-saveBtn.addEventListener('click', () => trackPendingSave((async () => {
+saveBtn.addEventListener('click', () => trackPendingSave(withInlineSaveStatus('saveBtn', async () => {
   if (!state.form.mode) return;
   const data = { ...state.form.fields };
   
-  // ADD THIS BLOCK
-  if (!data.project_id || !data.tape_recipe_id || !data.created_by) {
-    alert('Выберите проект, рецепт и пользователя');
+  if (!data.project_id || !data.tape_recipe_id) {
+    showInlineStatus('saveBtn', 'Выберите проект и рецепт', true);
     return;
   }
   
@@ -3545,9 +3622,9 @@ saveBtn.addEventListener('click', () => trackPendingSave((async () => {
     }
   } catch (err) {
     console.error(err);
-    showInlineStatus('saveBtn', 'Ошибка сохранения', true);
+    showInlineStatus('saveBtn', formatSaveError(err, 'Ошибка сохранения ленты'), true);
   }
-})()));
+}, 'Ошибка сохранения ленты')));
 
 clearBtn.addEventListener('click', async () => {
   if (anyDirty()) {
@@ -3579,7 +3656,7 @@ printBtn.addEventListener('click', () => {
   window.open(url, '_blank', 'noopener');
 });
 
-recipeMaterialsSaveBtn.addEventListener('click', () => trackPendingSave((async () => {
+recipeMaterialsSaveBtn.addEventListener('click', () => trackPendingSave(withInlineSaveStatus('0-recipe-materials-save-btn', async () => {
   if (!state.selection.currentTapeId) {
     showInlineStatus('0-recipe-materials-save-btn', 'Сначала создайте ленту', true);
     return;
@@ -3591,9 +3668,13 @@ recipeMaterialsSaveBtn.addEventListener('click', () => trackPendingSave((async (
     refreshDirtyFromSnapshots();
     showInlineStatus('0-recipe-materials-save-btn', 'Выбор экземпляров сохранён');
   } catch (err) {
-    showInlineStatus('0-recipe-materials-save-btn', err.message, true);
+    showInlineStatus(
+      '0-recipe-materials-save-btn',
+      formatSaveError(err, 'Ошибка сохранения выбранных экземпляров'),
+      true
+    );
   }
-})()));
+}, 'Ошибка сохранения выбранных экземпляров')));
 
 function buildDryingPayload(stepKey) {
   const step = state.workflow[stepKey];
@@ -3611,8 +3692,7 @@ function buildDryingPayload(stepKey) {
 
 async function saveDryingStep({ code, stepKey }) {
   if (!state.selection.currentTapeId) {
-    alert('Сначала создайте ленту');
-    return;
+    throw new Error('Сначала создайте ленту');
   }
   const payload = buildDryingPayload(stepKey);
   
@@ -3626,8 +3706,7 @@ async function saveDryingStep({ code, stepKey }) {
   );
   
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Ошибка сохранения');
+    await throwResponseError(res, 'Ошибка сохранения этапа сушки');
   }
 }
 
@@ -3645,7 +3724,7 @@ async function autoSaveDryingTapeFromCoating() {
   const btn = document.getElementById(cfg.btnId);
   if (!btn) return;
   
-  btn.addEventListener('click', () => trackPendingSave((async () => {
+  btn.addEventListener('click', () => trackPendingSave(withInlineSaveStatus(cfg.btnId, async () => {
     try {
       await saveDryingStep(cfg);
       if (cfg.code === 'drying_pressed_tape' && state.selection.currentTapeId) {
@@ -3656,14 +3735,14 @@ async function autoSaveDryingTapeFromCoating() {
       refreshDirtyFromSnapshots();
       showInlineStatus(cfg.btnId, 'Изменения сохранены');
     } catch (err) {
-      showInlineStatus(cfg.btnId, err.message, true);
+      showInlineStatus(cfg.btnId, formatSaveError(err, 'Ошибка сохранения этапа сушки'), true);
     }
-  })()));
+  }, 'Ошибка сохранения этапа сушки')));
 });
 
 const weighingSaveBtn = document.getElementById('1-weighing-save-btn');
 
-weighingSaveBtn.addEventListener('click', () => trackPendingSave((async () => {
+weighingSaveBtn.addEventListener('click', () => trackPendingSave(withInlineSaveStatus('1-weighing-save-btn', async () => {
   
   if (!state.selection.currentTapeId) {
     showInlineStatus('1-weighing-save-btn', 'Сначала создайте ленту', true);
@@ -3687,8 +3766,7 @@ weighingSaveBtn.addEventListener('click', () => trackPendingSave((async () => {
     );
     
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Ошибка сохранения');
+      await throwResponseError(res, 'Ошибка сохранения этапа замеса');
     }
 
     await saveTapeActuals(state.selection.currentTapeId);
@@ -3698,9 +3776,13 @@ weighingSaveBtn.addEventListener('click', () => trackPendingSave((async () => {
     showInlineStatus('1-weighing-save-btn', 'Изменения сохранены');
     
   } catch (err) {
-    showInlineStatus('1-weighing-save-btn', err.message, true);
+    showInlineStatus(
+      '1-weighing-save-btn',
+      formatSaveError(err, 'Ошибка сохранения этапа замеса'),
+      true
+    );
   }
-})()));
+}, 'Ошибка сохранения этапа замеса')));
 
 // -------- I.2. Save mixing --------
 
@@ -3742,7 +3824,7 @@ const wetMixSelect = document.getElementById('1-mixing-wet_mixing_id');
 if (dryMixSelect) dryMixSelect.addEventListener('change', updateMixParamsVisibility);
 if (wetMixSelect) wetMixSelect.addEventListener('change', updateMixParamsVisibility);
 
-document.getElementById('1-mixing-save-btn').onclick = () => trackPendingSave((async () => {
+document.getElementById('1-mixing-save-btn').onclick = () => trackPendingSave(withInlineSaveStatus('1-mixing-save-btn', async () => {
   
   if (!state.selection.currentTapeId) {
     showInlineStatus('1-mixing-save-btn', 'Сначала сохраните ленту', true);
@@ -3780,14 +3862,13 @@ document.getElementById('1-mixing-save-btn').onclick = () => trackPendingSave((a
   );
   
   if (!res.ok) {
-    showInlineStatus('1-mixing-save-btn', 'Ошибка сохранения этапа перемешивания', true);
-    return;
+    await throwResponseError(res, 'Ошибка сохранения этапа перемешивания');
   }
   
   markSavedSnapshot('mixing');
   refreshDirtyFromSnapshots();
   showInlineStatus('1-mixing-save-btn', 'Изменения сохранены');
-})());
+}, 'Ошибка сохранения этапа перемешивания'));
 
 // -------- II.1. Save coating --------
 
@@ -3850,7 +3931,7 @@ function applyCoatingMethodDefaultsToState({ force = false } = {}) {
   });
 }
 
-document.getElementById('2-coating-save-btn').onclick = () => trackPendingSave((async () => {
+document.getElementById('2-coating-save-btn').onclick = () => trackPendingSave(withInlineSaveStatus('2-coating-save-btn', async () => {
   
   const tapeId = state.selection.currentTapeId;
   if (!tapeId) {
@@ -3886,13 +3967,7 @@ document.getElementById('2-coating-save-btn').onclick = () => trackPendingSave((
   });
   
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    showInlineStatus(
-      '2-coating-save-btn',
-      err.error || 'Ошибка сохранения этапа нанесения',
-      true
-    );
-    return;
+    await throwResponseError(res, 'Ошибка сохранения этапа нанесения');
   }
   
   let autoDryingError = null;
@@ -3914,7 +3989,7 @@ document.getElementById('2-coating-save-btn').onclick = () => trackPendingSave((
     '2-coating-save-btn',
     'Нанесение и параметры сушки сохранены'
   );
-})());
+}, 'Ошибка сохранения этапа нанесения'));
 
 document
 .getElementById('2-coating-coating_id')
@@ -3962,10 +4037,15 @@ function buildCalAppearance() {
   return values.join('; ');
 }
 
-document.getElementById('2-calendering-save-btn').onclick = () => trackPendingSave((async () => {
+document.getElementById('2-calendering-save-btn').onclick = () => trackPendingSave(withInlineSaveStatus('2-calendering-save-btn', async () => {
   
   const tapeId = state.selection.currentTapeId;
   const step = state.workflow.calendering;
+
+  if (!tapeId) {
+    showInlineStatus('2-calendering-save-btn', 'Сначала создайте ленту', true);
+    return;
+  }
   
   const payload = {
     
@@ -3994,22 +4074,20 @@ document.getElementById('2-calendering-save-btn').onclick = () => trackPendingSa
   );
   
   if (!res.ok) {
-    const text = await res.text();
-    showInlineStatus('2-calendering-save-btn', text || 'Ошибка сохранения этапа каландрирования', true);
-    return;
+    await throwResponseError(res, 'Ошибка сохранения этапа каландрирования');
   }
   
   await res.json().catch(() => null);
   markSavedSnapshot('calendering');
   refreshDirtyFromSnapshots();
   showInlineStatus('2-calendering-save-btn', 'Изменения сохранены');
-})());
+}, 'Ошибка сохранения этапа каландрирования'));
 
 document.getElementById('2-cal-other-check').addEventListener('change', e => {
   document.getElementById('2-cal-other-text').disabled = !e.target.checked;
 });
 
-document.getElementById('2c-dry-box-save-btn').addEventListener('click', () => trackPendingSave((async () => {
+document.getElementById('2c-dry-box-save-btn').addEventListener('click', () => trackPendingSave(withInlineSaveStatus('2c-dry-box-save-btn', async () => {
   if (!state.selection.currentTapeId) {
     showInlineStatus('2c-dry-box-save-btn', 'Сначала создайте ленту', true);
     return;
@@ -4024,29 +4102,27 @@ document.getElementById('2c-dry-box-save-btn').addEventListener('click', () => t
     await loadTapes();
     showInlineStatus('2c-dry-box-save-btn', 'Параметры сушки сохранены');
   } catch (err) {
-    showInlineStatus('2c-dry-box-save-btn', err.message, true);
+    showInlineStatus('2c-dry-box-save-btn', formatSaveError(err, 'Ошибка сохранения параметров сушки'), true);
   }
-})()));
+}, 'Ошибка сохранения параметров сушки')));
 
-document.getElementById('2c-dry-box-remove-btn').addEventListener('click', () => trackPendingSave((async () => {
+document.getElementById('2c-dry-box-remove-btn').addEventListener('click', () => trackPendingSave(withInlineSaveStatus('2c-dry-box-remove-btn', async () => {
   if (!state.selection.currentTapeId) {
     showInlineStatus('2c-dry-box-remove-btn', 'Сначала создайте ленту', true);
     return;
   }
 
   try {
-    const nextState = await removeTapeFromDryBoxNow(state.selection.currentTapeId, {
-      updated_by: Number(state.workflow.maintenance_dry_box.updated_by || state.form.fields.created_by || 0) || null
-    });
+    const nextState = await removeTapeFromDryBoxNow(state.selection.currentTapeId, {});
     applyDryBoxStateToUi(nextState);
     await loadTapes();
     showInlineStatus('2c-dry-box-remove-btn', 'Лента отмечена как вынутая из шкафа');
   } catch (err) {
-    showInlineStatus('2c-dry-box-remove-btn', err.message, true);
+    showInlineStatus('2c-dry-box-remove-btn', formatSaveError(err, 'Ошибка изменения статуса ленты'), true);
   }
-})()));
+}, 'Ошибка изменения статуса ленты')));
 
-document.getElementById('2c-dry-box-return-btn').addEventListener('click', () => trackPendingSave((async () => {
+document.getElementById('2c-dry-box-return-btn').addEventListener('click', () => trackPendingSave(withInlineSaveStatus('2c-dry-box-return-btn', async () => {
   if (!state.selection.currentTapeId) {
     showInlineStatus('2c-dry-box-return-btn', 'Сначала создайте ленту', true);
     return;
@@ -4061,27 +4137,25 @@ document.getElementById('2c-dry-box-return-btn').addEventListener('click', () =>
     await loadTapes();
     showInlineStatus('2c-dry-box-return-btn', 'Лента возвращена в шкаф');
   } catch (err) {
-    showInlineStatus('2c-dry-box-return-btn', err.message, true);
+    showInlineStatus('2c-dry-box-return-btn', formatSaveError(err, 'Ошибка возврата ленты в шкаф'), true);
   }
-})()));
+}, 'Ошибка возврата ленты в шкаф')));
 
-document.getElementById('2c-dry-box-deplete-btn').addEventListener('click', () => trackPendingSave((async () => {
+document.getElementById('2c-dry-box-deplete-btn').addEventListener('click', () => trackPendingSave(withInlineSaveStatus('2c-dry-box-deplete-btn', async () => {
   if (!state.selection.currentTapeId) {
     showInlineStatus('2c-dry-box-deplete-btn', 'Сначала создайте ленту', true);
     return;
   }
 
   try {
-    const nextState = await markTapeDepleted(state.selection.currentTapeId, {
-      updated_by: Number(state.workflow.maintenance_dry_box.updated_by || state.form.fields.created_by || 0) || null
-    });
+    const nextState = await markTapeDepleted(state.selection.currentTapeId, {});
     applyDryBoxStateToUi(nextState);
     await loadTapes();
     showInlineStatus('2c-dry-box-deplete-btn', 'Лента отмечена как израсходованная');
   } catch (err) {
-    showInlineStatus('2c-dry-box-deplete-btn', err.message, true);
+    showInlineStatus('2c-dry-box-deplete-btn', formatSaveError(err, 'Ошибка списания ленты'), true);
   }
-})()));
+}, 'Ошибка списания ленты')));
 
 // ---- NOW buttons (scoped to their own fieldset) ----
 document.addEventListener('click', (e) => {

@@ -177,7 +177,7 @@ formEl.addEventListener('submit', async (e) => {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        specific_capacity_mAh_g: specificCapacityInput.value,
+        specific_capacity_mah_g: specificCapacityInput.value,
         density_g_ml: densityInput.value,
         notes: notesInput.value
       })

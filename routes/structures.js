@@ -3,6 +3,11 @@ const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
+const {
+  collectDependencyConflicts,
+  sendDependencyConflict,
+  sendForeignKeyConflict
+} = require('../utils/dependencyConflicts');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -106,9 +111,36 @@ router.put('/:id', auth, async (req, res) => {
 
 // DELETE
 router.delete('/:id', auth, async (req, res) => {
-  const { id } = req.params;
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ error: 'Некорректный sep_str_id' });
+  }
 
   try {
+    const dependencies = await collectDependencyConflicts(pool, [
+      {
+        key: 'separators',
+        label: 'сепараторы с этой структурой',
+        query: `
+          SELECT sep_id AS id, name
+          FROM separators
+          WHERE structure_id = $1
+          ORDER BY sep_id
+          LIMIT 25
+        `,
+        params: [id]
+      }
+    ]);
+
+    if (dependencies.length > 0) {
+      return sendDependencyConflict(
+        res,
+        'Нельзя удалить структуру: она используется в сепараторах',
+        dependencies
+      );
+    }
+
     const result = await pool.query(
       'DELETE FROM separator_structure WHERE sep_str_id = $1',
       [id]
@@ -120,11 +152,8 @@ router.delete('/:id', auth, async (req, res) => {
 
     res.status(204).end();
   } catch (err) {
-    if (err.code === '23503') {
-      // foreign key violation
-      return res.status(409).json({
-        error: 'Нельзя удалить структуру, которая используется в сепараторах'
-      });
+    if (sendForeignKeyConflict(res, err, 'Нельзя удалить структуру: она связана с другими записями')) {
+      return;
     }
 
     console.error(err);

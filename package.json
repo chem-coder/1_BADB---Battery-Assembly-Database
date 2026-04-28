@@ -12,7 +12,9 @@
     "backup:plain": "node scripts/backup.js --format=plain",
     "backup:list": "node scripts/backup.js --list",
     "backup:verify": "node scripts/backup.js --verify latest",
-    "restore": "node scripts/backup.js --restore latest"
+    "restore": "node scripts/backup.js --restore latest",
+    "contract:vanilla": "node scripts/check_vanilla_api_contract.js",
+    "smoke:vanilla": "node scripts/smoke_vanilla_api.js"
   },
   "keywords": [],
   "author": "",

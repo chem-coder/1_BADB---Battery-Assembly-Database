@@ -3,6 +3,11 @@ const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
+const {
+  collectDependencyConflicts,
+  sendDependencyConflict,
+  sendForeignKeyConflict
+} = require('../utils/dependencyConflicts');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -20,14 +25,12 @@ router.post('/', auth, async (req, res) => {
     name,
     variant_label,
     notes,
-    created_by,
     lines
   } = req.body;
 
-  const createdBy = Number(created_by);
+  const createdBy = req.user.userId;
 
   if (
-    !Number.isInteger(createdBy) ||
     !name ||
     !role ||
     !Array.isArray(lines) || 
@@ -126,10 +129,9 @@ router.post('/', auth, async (req, res) => {
 // COPY: duplicate recipe + lines
 router.post('/:id/duplicate', auth, async (req, res) => {
   const sourceRecipeId = Number(req.params.id);
-  const { created_by } = req.body;
-  const createdBy = Number(created_by);
+  const createdBy = req.user.userId;
 
-  if (!Number.isInteger(sourceRecipeId) || !Number.isInteger(createdBy)) {
+  if (!Number.isInteger(sourceRecipeId)) {
     return res.status(400).json({ error: 'Некорректные данные запроса' });
   }
 
@@ -496,6 +498,29 @@ router.delete('/:id', auth, async (req, res) => {
   }
 
   try {
+    const dependencies = await collectDependencyConflicts(pool, [
+      {
+        key: 'tapes',
+        label: 'ленты с этим рецептом',
+        query: `
+          SELECT tape_id AS id, name
+          FROM tapes
+          WHERE tape_recipe_id = $1
+          ORDER BY tape_id
+          LIMIT 25
+        `,
+        params: [recipeId]
+      }
+    ]);
+
+    if (dependencies.length > 0) {
+      return sendDependencyConflict(
+        res,
+        'Нельзя удалить рецепт: он используется в лентах',
+        dependencies
+      );
+    }
+
     const result = await pool.query(
       'DELETE FROM tape_recipes WHERE tape_recipe_id = $1',
       [recipeId]
@@ -508,6 +533,9 @@ router.delete('/:id', auth, async (req, res) => {
     // lines are deleted automatically (ON DELETE CASCADE)
     res.status(204).end();
   } catch (err) {
+    if (sendForeignKeyConflict(res, err, 'Нельзя удалить рецепт: он связан с другими записями')) {
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }

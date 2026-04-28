@@ -1,0 +1,312 @@
+const { trackChanges } = require('../middleware/trackChanges');
+
+class BatteryElectrodeSourceValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'BatteryElectrodeSourceValidationError';
+    this.statusCode = 400;
+  }
+}
+
+async function assertCompatibleSidedness(queryable, cathodeCutBatchId, anodeCutBatchId) {
+  const hasCathode = !!cathodeCutBatchId;
+  const hasAnode = !!anodeCutBatchId;
+
+  if (!hasCathode || !hasAnode) return;
+
+  const sidednessResult = await queryable.query(
+    `
+    SELECT
+      cb.cut_batch_id,
+      (
+        SELECT c.coating_sidedness
+        FROM tape_process_steps ts
+        JOIN operation_types ot
+          ON ot.operation_type_id = ts.operation_type_id
+        JOIN tape_step_coating c
+          ON c.step_id = ts.step_id
+        WHERE ts.tape_id = cb.tape_id
+          AND ot.code = 'coating'
+        LIMIT 1
+      ) AS coating_sidedness
+    FROM electrode_cut_batches cb
+    WHERE cb.cut_batch_id = ANY($1::int[])
+    `,
+    [[Number(cathodeCutBatchId), Number(anodeCutBatchId)]]
+  );
+
+  const sidednessValues = [...new Set(
+    sidednessResult.rows
+      .map((row) => row.coating_sidedness || null)
+      .filter(Boolean)
+  )];
+
+  if (sidednessValues.length > 1) {
+    throw new BatteryElectrodeSourceValidationError('Нельзя смешивать 1- и 2-сторонние электроды в одной ячейке');
+  }
+}
+
+async function getBatteryFormAndCoinMode(queryable, batteryId) {
+  const batteryResult = await queryable.query(
+    `SELECT form_factor FROM batteries WHERE battery_id = $1`,
+    [batteryId]
+  );
+
+  if (batteryResult.rows.length === 0) {
+    throw new BatteryElectrodeSourceValidationError('Некорректный ID батареи');
+  }
+
+  const form = batteryResult.rows[0].form_factor;
+  let coinMode = null;
+
+  if (form === 'coin') {
+    const modeResult = await queryable.query(
+      `
+      SELECT coin_cell_mode
+      FROM battery_coin_config
+      WHERE battery_id = $1
+      `,
+      [batteryId]
+    );
+
+    if (modeResult.rows.length === 0) {
+      throw new BatteryElectrodeSourceValidationError('Конфигурация coin cell не найдена');
+    }
+
+    coinMode = modeResult.rows[0].coin_cell_mode;
+  }
+
+  return { form, coinMode };
+}
+
+function assertSourceCompleteness(form, coinMode, hasCathode, hasAnode) {
+  if (form === 'coin' && coinMode === 'half_cell') {
+    if ((hasCathode ? 1 : 0) + (hasAnode ? 1 : 0) !== 1) {
+      throw new BatteryElectrodeSourceValidationError('Для монеточной полуячейки должен быть выбран ровно один источник электродов');
+    }
+  } else if (!hasCathode || !hasAnode) {
+    throw new BatteryElectrodeSourceValidationError('Для данного элемента должны быть выбраны и катодный, и анодный источники');
+  }
+}
+
+async function fetchBatteryElectrodeSources(queryable, batteryId) {
+  const result = await queryable.query(
+    `
+    SELECT
+      battery_id,
+      role,
+      tape_id,
+      cut_batch_id,
+      source_notes,
+      (
+        SELECT c.coating_sidedness
+        FROM electrode_cut_batches cb
+        JOIN tape_process_steps ts
+          ON ts.tape_id = cb.tape_id
+        JOIN operation_types ot
+          ON ot.operation_type_id = ts.operation_type_id
+        JOIN tape_step_coating c
+          ON c.step_id = ts.step_id
+        WHERE cb.cut_batch_id = battery_electrode_sources.cut_batch_id
+          AND ot.code = 'coating'
+        LIMIT 1
+      ) AS coating_sidedness
+    FROM battery_electrode_sources
+    WHERE battery_id = $1
+    ORDER BY role;
+    `,
+    [batteryId]
+  );
+
+  return result.rows.length === 0 ? null : result.rows;
+}
+
+async function saveBatteryElectrodeSources(pool, batteryId, payload) {
+  const {
+    cathode_tape_id,
+    cathode_cut_batch_id,
+    cathode_source_notes,
+    anode_tape_id,
+    anode_cut_batch_id,
+    anode_source_notes
+  } = payload;
+
+  const { form, coinMode } = await getBatteryFormAndCoinMode(pool, batteryId);
+
+  const hasCathode = !!cathode_tape_id && !!cathode_cut_batch_id;
+  const hasAnode = !!anode_tape_id && !!anode_cut_batch_id;
+
+  if (hasCathode && hasAnode) {
+    await assertCompatibleSidedness(pool, cathode_cut_batch_id, anode_cut_batch_id);
+  }
+  assertSourceCompleteness(form, coinMode, hasCathode, hasAnode);
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    if (hasCathode) {
+      await client.query(
+        `
+        INSERT INTO battery_electrode_sources
+          (battery_id, role, tape_id, cut_batch_id, source_notes)
+        VALUES
+          ($1, 'cathode', $2, $3, $4)
+        ON CONFLICT (battery_id, role)
+        DO UPDATE SET
+          tape_id = EXCLUDED.tape_id,
+          cut_batch_id = EXCLUDED.cut_batch_id,
+          source_notes = EXCLUDED.source_notes
+        `,
+        [
+          batteryId,
+          Number(cathode_tape_id),
+          Number(cathode_cut_batch_id),
+          cathode_source_notes || null
+        ]
+      );
+    } else {
+      await client.query(
+        `
+        DELETE FROM battery_electrode_sources
+        WHERE battery_id = $1 AND role = 'cathode'
+        `,
+        [batteryId]
+      );
+    }
+
+    if (hasAnode) {
+      await client.query(
+        `
+        INSERT INTO battery_electrode_sources
+          (battery_id, role, tape_id, cut_batch_id, source_notes)
+        VALUES
+          ($1, 'anode', $2, $3, $4)
+        ON CONFLICT (battery_id, role)
+        DO UPDATE SET
+          tape_id = EXCLUDED.tape_id,
+          cut_batch_id = EXCLUDED.cut_batch_id,
+          source_notes = EXCLUDED.source_notes
+        `,
+        [
+          batteryId,
+          Number(anode_tape_id),
+          Number(anode_cut_batch_id),
+          anode_source_notes || null
+        ]
+      );
+    } else {
+      await client.query(
+        `
+        DELETE FROM battery_electrode_sources
+        WHERE battery_id = $1 AND role = 'anode'
+        `,
+        [batteryId]
+      );
+    }
+
+    const result = await client.query(
+      `
+      SELECT
+        battery_id,
+        role,
+        tape_id,
+        cut_batch_id,
+        source_notes
+      FROM battery_electrode_sources
+      WHERE battery_id = $1
+      ORDER BY role
+      `,
+      [batteryId]
+    );
+
+    await client.query('COMMIT');
+    return result.rows;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateBatteryElectrodeSources(pool, batteryId, payload, userId) {
+  const {
+    cathode_tape_id,
+    cathode_cut_batch_id,
+    cathode_source_notes,
+    anode_tape_id,
+    anode_cut_batch_id,
+    anode_source_notes
+  } = payload;
+
+  const hasCathode = !!cathode_tape_id && !!cathode_cut_batch_id;
+  const hasAnode = !!anode_tape_id && !!anode_cut_batch_id;
+
+  if (hasCathode && hasAnode) {
+    await assertCompatibleSidedness(pool, cathode_cut_batch_id, anode_cut_batch_id);
+  }
+
+  const currentSources = await pool.query(
+    'SELECT role, tape_id, cut_batch_id, source_notes FROM battery_electrode_sources WHERE battery_id = $1',
+    [batteryId]
+  );
+  const oldCathode = currentSources.rows.find((row) => row.role === 'cathode') || {};
+  const oldAnode = currentSources.rows.find((row) => row.role === 'anode') || {};
+
+  await pool.query(
+    `
+    UPDATE battery_electrode_sources
+    SET
+      tape_id = $2,
+      cut_batch_id = $3,
+      source_notes = $4
+    WHERE battery_id = $1
+      AND role = 'cathode'
+    `,
+    [
+      batteryId,
+      cathode_tape_id || null,
+      cathode_cut_batch_id || null,
+      cathode_source_notes || null
+    ]
+  );
+
+  await pool.query(
+    `
+    UPDATE battery_electrode_sources
+    SET
+      tape_id = $2,
+      cut_batch_id = $3,
+      source_notes = $4
+    WHERE battery_id = $1
+      AND role = 'anode'
+    `,
+    [
+      batteryId,
+      anode_tape_id || null,
+      anode_cut_batch_id || null,
+      anode_source_notes || null
+    ]
+  );
+
+  const cathodeNew = { tape_id: cathode_tape_id || null, cut_batch_id: cathode_cut_batch_id || null, source_notes: cathode_source_notes || null };
+  const anodeNew = { tape_id: anode_tape_id || null, cut_batch_id: anode_cut_batch_id || null, source_notes: anode_source_notes || null };
+
+  if (oldCathode.role) {
+    await trackChanges(pool, 'battery_electrode_source_cathode', 'battery_electrode_sources', 'battery_id', batteryId, oldCathode, cathodeNew, userId, null, false);
+  }
+  if (oldAnode.role) {
+    await trackChanges(pool, 'battery_electrode_source_anode', 'battery_electrode_sources', 'battery_id', batteryId, oldAnode, anodeNew, userId, null, false);
+  }
+
+  return { success: true };
+}
+
+module.exports = {
+  BatteryElectrodeSourceValidationError,
+  fetchBatteryElectrodeSources,
+  saveBatteryElectrodeSources,
+  updateBatteryElectrodeSources
+};

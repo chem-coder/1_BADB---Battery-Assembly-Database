@@ -32,7 +32,6 @@ function captureFormState() {
     mode,
     title: title.textContent,
     nameInput: nameInput.value,
-    created_by: createdBySelect.value,
     electrolyte_type: form.elements['electrolyte_type'].value,
     solvent_system: form.elements['solvent_system'].value,
     salts: form.elements['salts'].value,
@@ -357,7 +356,7 @@ async function saveElectrolyteRecord() {
   if (!validateRequiredFields()) return null;
 
   const data = formDataToObject(form);
-  data.created_by = Number(data.created_by);
+  delete data.created_by;
   data.name = title.textContent;
 
   const initialMode = mode;
@@ -414,10 +413,9 @@ async function loadUsers() {
   const res = await fetch('/api/users');
   const users = await res.json();
 
-  createdBySelect.innerHTML = '<option value="">— выбрать пользователя —</option>';
+  createdBySelect.innerHTML = '<option value="">— автоматически —</option>';
 
   users
-    .filter(u => u.active)
     .forEach(u => {
       const opt = document.createElement('option');
       opt.value = u.user_id;
@@ -456,16 +454,10 @@ function validateRequiredFields() {
   const missing = [];
 
   typeSelect.classList.remove('required-missing');
-  createdBySelect.classList.remove('required-missing');
 
   if (!typeSelect.value) {
     missing.push('Тип электролита');
     typeSelect.classList.add('required-missing');
-  }
-
-  if (!createdBySelect.value) {
-    missing.push('Кто добавил');
-    createdBySelect.classList.add('required-missing');
   }
 
   if (missing.length) {

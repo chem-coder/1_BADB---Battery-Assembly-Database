@@ -3,6 +3,11 @@ const router = express.Router();
 const pool = require('../db');
 const { auth } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
+const {
+  collectDependencyConflicts,
+  sendDependencyConflict,
+  sendForeignKeyConflict
+} = require('../utils/dependencyConflicts');
 
 router.get('/test', async (req, res) => {
   const result = await pool.query('SELECT 1 as ok');
@@ -160,6 +165,7 @@ router.post('/', auth, async (req, res) => {
   const leadId = lead_id ? Number(lead_id) : null;
   const deptId = department_id ? Number(department_id) : null;
   const confLevel = confidentiality_level || 'public';
+  const startDate = start_date || null;
 
   // 1. validate required strings
   if (!name || !name.trim()) {
@@ -198,16 +204,17 @@ router.post('/', auth, async (req, res) => {
       `
       INSERT INTO projects
         (name, created_by, lead_id, start_date, due_date, status, description,
+         created_at, updated_at,
          confidentiality_level, department_id)
       VALUES
-        ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ($1,$2,$3,COALESCE($4::date, CURRENT_DATE),$5,$6,$7,now(),now(),$8,$9)
       RETURNING project_id
       `,
       [
         name.trim(),
         createdBy,
         leadId,
-        start_date || null,
+        startDate,
         due_date || null,
         status,
         description || null,
@@ -367,7 +374,7 @@ router.put('/:id', auth, requireModify, async (req, res) => {
     const newVals = {
       name: name.trim(),
       lead_id: lead_id || null,
-      start_date: start_date || null,
+      start_date: start_date || current.rows[0].start_date,
       due_date: due_date || null,
       status: status || 'active',
       description: description || null,
@@ -425,6 +432,41 @@ router.delete('/:id', auth, requireModify, async (req, res) => {
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Некорректный ID' });
 
   try {
+    const dependencies = await collectDependencyConflicts(pool, [
+      {
+        key: 'tapes',
+        label: 'ленты в этом проекте',
+        query: `
+          SELECT tape_id AS id, name
+          FROM tapes
+          WHERE project_id = $1
+          ORDER BY tape_id
+          LIMIT 25
+        `,
+        params: [id]
+      },
+      {
+        key: 'batteries',
+        label: 'аккумуляторы в этом проекте',
+        query: `
+          SELECT battery_id AS id, battery_notes AS name
+          FROM batteries
+          WHERE project_id = $1
+          ORDER BY battery_id
+          LIMIT 25
+        `,
+        params: [id]
+      }
+    ]);
+
+    if (dependencies.length > 0) {
+      return sendDependencyConflict(
+        res,
+        'Нельзя удалить проект: в нём есть ленты или аккумуляторы',
+        dependencies
+      );
+    }
+
     const result = await pool.query(
       'DELETE FROM projects WHERE project_id = $1',
       [id]
@@ -436,6 +478,9 @@ router.delete('/:id', auth, requireModify, async (req, res) => {
 
     res.status(204).end();
   } catch (err) {
+    if (sendForeignKeyConflict(res, err, 'Нельзя удалить проект: он связан с другими записями')) {
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }

@@ -34,9 +34,9 @@
       <fieldset id="separator-meta">
         <legend>Метаданные</legend>
 
-        <label for="separator-created-by">Кто добавил</label>
-        <select id="separator-created-by" name="created_by" required>
-          <option value="">— выбрать пользователя —</option>
+        <label for="separator-created-by">Создал</label>
+        <select id="separator-created-by" name="created_by" disabled>
+          <option value="">— автоматически —</option>
         </select>
         <a href="/reference/users.html" target="_blank" class="ref-link">
           Управление пользователями
@@ -151,6 +151,7 @@
     <div class="status-feedback" aria-live="polite"></div>
     <ul id="separatorsList" class="users-list"></ul>
 
-    <script src="/js/serapators.js"></script>
+    <script src="/js/auth.js"></script>
+    <script src="/js/separators.js"></script>
   </body>
 </html>

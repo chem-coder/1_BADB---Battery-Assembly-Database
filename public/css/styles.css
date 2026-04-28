@@ -261,6 +261,84 @@ body[data-page="BAL"] #exitBatteriesBtn {
   font-size: 0.9rem;
 }
 
+#badb-auth-badge {
+  position: fixed;
+  top: 0.7rem;
+  right: 1rem;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: darkcyan;
+  font-size: 0.86rem;
+  font-weight: 400;
+  line-height: 1.2;
+}
+
+#badb-auth-badge button,
+.badb-current-user-button {
+  padding: 0.18rem 0.45rem;
+  border: 1px solid rgba(0, 139, 139, 0.35);
+  border-radius: 5px;
+  background: #f5fbfb;
+  color: #315f86;
+  font-size: 0.84rem;
+  font-weight: 400;
+}
+
+.badb-current-user-button {
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+#badb-auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1190;
+  display: grid;
+  place-items: center;
+  background: rgba(252, 252, 251, 0.92);
+}
+
+#badb-auth-overlay[hidden] {
+  display: none;
+}
+
+#badb-auth-form {
+  width: min(22rem, calc(100vw - 2rem));
+  padding: 1rem;
+  border: 1px solid #d8dee6;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(18, 27, 40, 0.12);
+}
+
+#badb-auth-form h2 {
+  margin: 0 0 0.8rem;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+#badb-auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+#badb-auth-form input {
+  border: 1px solid #cdd5df;
+  border-radius: 5px;
+  padding: 0.38rem 0.45rem;
+}
+
+#badb-auth-error {
+  min-height: 1.2em;
+  margin-top: 0.65rem;
+  color: #b00020;
+  font-size: 0.9rem;
+}
+
 .inactive {
   color: #aaa;
 }

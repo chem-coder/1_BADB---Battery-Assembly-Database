@@ -128,9 +128,9 @@
       <fieldset id="recipe-meta">
         <legend>Метаданные</legend>
 
-        <label for="recipe-created-by">Кто добавил</label>
-        <select id="recipe-created-by" name="created_by" required>
-          <option value="">— выбрать пользователя —</option>
+        <label for="recipe-created-by">Создал</label>
+        <select id="recipe-created-by" name="created_by" disabled>
+          <option value="">— автоматически —</option>
         </select>
         <a href="/reference/users.html" target="_blank" class="ref-link">
           Управление пользователями
@@ -202,6 +202,7 @@
     <div class="status-feedback" aria-live="polite"></div>
     <ul id="recipesList" class="users-list"></ul>
 
+    <script src="/js/auth.js"></script>
     <script src="/js/recipes.js"></script>
   </body>
 </html>

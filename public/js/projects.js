@@ -30,7 +30,6 @@ function captureFormState() {
     mode,
     title: title.textContent,
     nameInput: nameInput.value,
-    created_by: createdBySelect.value,
     lead_id: form.elements['lead_id'].value,
     start_date: form.elements['start_date'].value,
     due_date: form.elements['due_date'].value,
@@ -253,14 +252,15 @@ async function loadUsers() {
   const res = await fetch('/api/users');
   const users = await res.json();
   
-  createdBySelect.innerHTML = '<option value="">— выбрать пользователя —</option>';
+  createdBySelect.innerHTML = '<option value="">— автоматически —</option>';
   leadSelect.innerHTML = '<option value="">— выбрать пользователя —</option>';
   
+  users.forEach(u => {
+    createdBySelect.add(new Option(u.name, u.user_id));
+  });
+
   users.filter(u => u.active).forEach(u => {
-    const o1 = new Option(u.name, u.user_id);
-    const o2 = new Option(u.name, u.user_id);
-    createdBySelect.add(o1);
-    leadSelect.add(o2);
+    leadSelect.add(new Option(u.name, u.user_id));
   });
   
   createdBySelect.value = prevCreated;
@@ -297,24 +297,6 @@ addInput.addEventListener('keydown', (e) => {
 });
 
 function validateRequiredFields() {
-  let missing = [];
-  
-  // clear previous highlights
-  createdBySelect.classList.remove('required-missing');
-  
-  if (!createdBySelect.value) {
-    missing.push('Кто добавил');
-    createdBySelect.classList.add('required-missing');
-  }
-  
-  if (missing.length) {
-    showStatus(
-      'Заполните обязательные поля: ' + missing.join(', '),
-      true
-    );
-    return false;
-  }
-  
   return true;
 }
 
@@ -324,6 +306,7 @@ saveBtn.addEventListener('click', async () => {
   if (!validateRequiredFields()) return;
   
   const data = formDataToObject(form);
+  delete data.created_by;
   data.name = title.textContent;
   
   try {

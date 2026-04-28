@@ -38,7 +38,6 @@ function captureFormState() {
     mode,
     title: title.textContent,
     nameInput: nameInput.value,
-    created_by: createdBySelect.value,
     role: form.elements.role.value,
     variant_label: form.elements.variant_label.value,
     notes: form.elements.notes.value,
@@ -104,10 +103,9 @@ async function loadUsers() {
   const users = await res.json();
   
   createdBySelect.innerHTML =
-  '<option value="">— выбрать пользователя —</option>';
+  '<option value="">— автоматически —</option>';
   
   users
-  .filter(u => u.active)
   .forEach(u => {
     const opt = document.createElement('option');
     opt.value = u.user_id;
@@ -159,11 +157,11 @@ async function deleteRecipe(id) {
   }
 }
 
-async function duplicateRecipe(id, createdBy) {
+async function duplicateRecipe(id) {
   const res = await fetch(`/api/recipes/${id}/duplicate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ created_by: createdBy })
+    body: JSON.stringify({})
   });
   
   if (!res.ok) {
@@ -240,7 +238,7 @@ function duplicateRecipeUI(recipe) {
   form.elements['variant_label'].value = recipe.variant_label || '';
   form.elements['notes'].value = recipe.notes || '';
   
-  // created_by must be re-selected
+  // Creator is server-derived for the copied recipe.
   createdBySelect.value = '';
   
   // copy recipe lines
@@ -587,13 +585,7 @@ function validateRequiredFields() {
   let missing = [];
   const roleSelect = form.elements.role;
   
-  createdBySelect.classList.remove('required-missing');
   roleSelect.classList.remove('required-missing');
-  
-  if (!createdBySelect.value) {
-    missing.push('Кто добавил');
-    createdBySelect.classList.add('required-missing');
-  }
   
   if (!roleSelect.value) {
     missing.push('Роль электрода');
@@ -719,7 +711,6 @@ saveBtn.addEventListener('click', async () => {
     name: nameInput.value,
     variant_label: form.elements.variant_label.value || null,
     notes: form.elements.notes.value || null,
-    created_by: Number(form.elements.created_by.value),
     lines: collectRecipeLinesFromDOM()
   };
   
