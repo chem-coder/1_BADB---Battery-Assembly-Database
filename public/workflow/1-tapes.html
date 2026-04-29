@@ -142,10 +142,18 @@
             <option value="">— автоматически —</option>
           </select><br>
           
-          <label for="project_id">Проект</label>
-          <select id="project_id" name="project_id" required>
-            <option value="">— выбрать проект —</option>
-          </select><br>
+          <label for="project-multiselect-trigger">Проекты</label>
+          <div id="project-multiselect" class="multi-select">
+            <button
+              type="button"
+              id="project-multiselect-trigger"
+              class="multi-select-trigger"
+              aria-expanded="false"
+              aria-controls="project-multiselect-options"
+            >— выбрать проекты —</button>
+            <div id="project-multiselect-options" class="multi-select-options" hidden></div>
+          </div>
+          <input type="hidden" id="project_id" name="project_id" required><br>
           
           <label for="notes">Примечания: </label>
           <textarea id="notes" name="notes" placeholder="Общие комментарии о ленте и процессе ее приготовления"></textarea>

@@ -3,6 +3,7 @@ const {
   computeTapeMixtureRows,
   fetchWorkflowStatusMap
 } = require('./tapeWorkflowService');
+const { attachTapeProjects } = require('./tapeProjectService');
 
 function statusError(message, statusCode) {
   const err = new Error(message);
@@ -170,7 +171,7 @@ async function listTapesForElectrodes(pool) {
     ORDER BY finished_at DESC NULLS LAST, t.tape_id DESC;
   `);
 
-  return result.rows;
+  return attachTapeProjects(pool, result.rows);
 }
 
 async function listElectrodeCutBatchesByTape(pool, tapeId) {
@@ -385,6 +386,8 @@ async function getTapeReport(pool, tapeId) {
     throw statusError('Лента не найдена', 404);
   }
 
+  const [tape] = await attachTapeProjects(pool, tapeResult.rows);
+
   const selectedInstanceIds = recipeLinesResult.rows
     .map((row) => Number(row.material_instance_id))
     .filter((value) => Number.isInteger(value));
@@ -436,11 +439,11 @@ async function getTapeReport(pool, tapeId) {
     );
 
   return {
-    tape: tapeResult.rows[0],
+    tape,
     workflow_status: statusMap.get(tapeId) || null,
     recipe_lines: recipeLinesResult.rows,
     mixture_rows: computeTapeMixtureRows({
-      tape: tapeResult.rows[0],
+      tape,
       recipeLines: recipeLinesResult.rows,
       componentsByInstanceId
     }),
@@ -488,8 +491,10 @@ async function getTape(pool, id) {
     throw statusError('Лента не найдена', 404);
   }
 
+  const [tape] = await attachTapeProjects(pool, result.rows);
+
   return {
-    ...result.rows[0],
+    ...tape,
     ...(statusMap.get(id) || defaultWorkflowStatus())
   };
 }

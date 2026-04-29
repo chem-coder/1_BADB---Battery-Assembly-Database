@@ -440,6 +440,12 @@ router.delete('/:id', auth, requireModify, async (req, res) => {
           SELECT tape_id AS id, name
           FROM tapes
           WHERE project_id = $1
+             OR EXISTS (
+               SELECT 1
+               FROM tape_projects tp
+               WHERE tp.tape_id = tapes.tape_id
+                 AND tp.project_id = $1
+             )
           ORDER BY tape_id
           LIMIT 25
         `,

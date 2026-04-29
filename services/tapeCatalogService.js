@@ -1,6 +1,12 @@
 const { trackChanges } = require('../middleware/trackChanges');
 const { collectDependencyConflicts } = require('../utils/dependencyConflicts');
 const { fetchWorkflowStatusMap } = require('./tapeWorkflowService');
+const {
+  attachTapeProjects,
+  getPrimaryProjectId,
+  normalizeTapeProjectIds,
+  replaceTapeProjects
+} = require('./tapeProjectService');
 
 function statusError(message, statusCode) {
   const err = new Error(message);
@@ -21,37 +27,52 @@ function defaultWorkflowStatus() {
 }
 
 async function createTape(pool, payload, createdBy) {
-  const projectId = parseOptionalId(payload.project_id);
+  const projectIds = normalizeTapeProjectIds(payload);
+  const projectId = getPrimaryProjectId(projectIds);
   const recipeId = parseOptionalId(payload.tape_recipe_id);
 
-  const result = await pool.query(
-    `
-    INSERT INTO tapes (
-      name,
-      project_id,
-      tape_recipe_id,
-      created_by,
-      created_at,
-      updated_at,
-      notes,
-      calc_mode,
-      target_mass_g
-    )
-    VALUES ($1,$2,$3,$4,now(),now(),$5,$6,$7)
-    RETURNING *
-    `,
-    [
-      payload.name,
-      projectId,
-      recipeId,
-      createdBy,
-      payload.notes ?? null,
-      payload.calc_mode ?? null,
-      payload.target_mass_g ?? null
-    ]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  return result.rows[0];
+    const result = await client.query(
+      `
+      INSERT INTO tapes (
+        name,
+        project_id,
+        tape_recipe_id,
+        created_by,
+        created_at,
+        updated_at,
+        notes,
+        calc_mode,
+        target_mass_g
+      )
+      VALUES ($1,$2,$3,$4,now(),now(),$5,$6,$7)
+      RETURNING *
+      `,
+      [
+        payload.name,
+        projectId,
+        recipeId,
+        createdBy,
+        payload.notes ?? null,
+        payload.calc_mode ?? null,
+        payload.target_mass_g ?? null
+      ]
+    );
+
+    await replaceTapeProjects(client, result.rows[0].tape_id, projectIds, createdBy);
+    const [createdTape] = await attachTapeProjects(client, result.rows);
+
+    await client.query('COMMIT');
+    return createdTape;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function listTapes(pool, role) {
@@ -111,78 +132,99 @@ async function listTapes(pool, role) {
   const rows = result.rows || [];
   const statusMap = await fetchWorkflowStatusMap(pool, rows.map((row) => row.tape_id));
 
-  return rows.map((row) => ({
+  const rowsWithStatus = rows.map((row) => ({
     ...row,
     ...(statusMap.get(Number(row.tape_id)) || defaultWorkflowStatus())
   }));
+
+  return attachTapeProjects(pool, rowsWithStatus);
 }
 
 async function updateTape(pool, id, payload, userId) {
-  const projectId = parseOptionalId(payload.project_id);
+  const projectIds = normalizeTapeProjectIds(payload);
+  const projectId = getPrimaryProjectId(projectIds);
   const recipeId = parseOptionalId(payload.tape_recipe_id);
 
-  const current = await pool.query(
-    'SELECT name, project_id, tape_recipe_id, created_by, notes, calc_mode, target_mass_g FROM tapes WHERE tape_id = $1',
-    [id]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  if (current.rowCount === 0) {
-    throw statusError('Лента не найдена', 404);
+    const current = await client.query(
+      'SELECT tape_id, name, project_id, tape_recipe_id, created_by, notes, calc_mode, target_mass_g FROM tapes WHERE tape_id = $1',
+      [id]
+    );
+
+    if (current.rowCount === 0) {
+      throw statusError('Лента не найдена', 404);
+    }
+
+    const [currentWithProjects] = await attachTapeProjects(client, current.rows);
+
+    const result = await client.query(
+      `
+      UPDATE tapes
+      SET
+        name = $1,
+        project_id = $2,
+        tape_recipe_id = $3,
+        created_by = $4,
+        notes = $5,
+        calc_mode = $6,
+        target_mass_g = $7,
+        updated_by = $8,
+        updated_at = now()
+      WHERE tape_id = $9
+      RETURNING *
+      `,
+      [
+        payload.name,
+        projectId,
+        recipeId,
+        current.rows[0].created_by,
+        payload.notes ?? null,
+        payload.calc_mode ?? null,
+        payload.target_mass_g ?? null,
+        userId,
+        id
+      ]
+    );
+
+    if (result.rowCount === 0) {
+      throw statusError('Лента не найдена', 404);
+    }
+
+    await replaceTapeProjects(client, id, projectIds, userId);
+
+    await trackChanges(
+      client,
+      'tape',
+      'tapes',
+      'tape_id',
+      id,
+      currentWithProjects,
+      {
+        name: payload.name,
+        project_id: projectId,
+        project_ids: projectIds,
+        tape_recipe_id: recipeId,
+        created_by: current.rows[0].created_by,
+        notes: payload.notes ?? null,
+        calc_mode: payload.calc_mode ?? null,
+        target_mass_g: payload.target_mass_g ?? null
+      },
+      userId
+    );
+
+    const [updatedTape] = await attachTapeProjects(client, result.rows);
+
+    await client.query('COMMIT');
+    return updatedTape;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-
-  const result = await pool.query(
-    `
-    UPDATE tapes
-    SET
-      name = $1,
-      project_id = $2,
-      tape_recipe_id = $3,
-      created_by = $4,
-      notes = $5,
-      calc_mode = $6,
-      target_mass_g = $7,
-      updated_by = $8,
-      updated_at = now()
-    WHERE tape_id = $9
-    RETURNING *
-    `,
-    [
-      payload.name,
-      projectId,
-      recipeId,
-      current.rows[0].created_by,
-      payload.notes ?? null,
-      payload.calc_mode ?? null,
-      payload.target_mass_g ?? null,
-      userId,
-      id
-    ]
-  );
-
-  if (result.rowCount === 0) {
-    throw statusError('Лента не найдена', 404);
-  }
-
-  await trackChanges(
-    pool,
-    'tape',
-    'tapes',
-    'tape_id',
-    id,
-    current.rows[0],
-    {
-      name: payload.name,
-      project_id: projectId,
-      tape_recipe_id: recipeId,
-      created_by: current.rows[0].created_by,
-      notes: payload.notes ?? null,
-      calc_mode: payload.calc_mode ?? null,
-      target_mass_g: payload.target_mass_g ?? null
-    },
-    userId
-  );
-
-  return result.rows[0];
 }
 
 async function collectTapeDeleteDependencies(pool, tapeId) {
@@ -220,16 +262,28 @@ async function collectTapeDeleteDependencies(pool, tapeId) {
 }
 
 async function deleteTape(pool, tapeId) {
-  const result = await pool.query(
-    `DELETE FROM tapes WHERE tape_id = $1`,
-    [tapeId]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM tape_projects WHERE tape_id = $1', [tapeId]);
 
-  if (result.rowCount === 0) {
-    throw statusError('Лента не найдена', 404);
+    const result = await client.query(
+      `DELETE FROM tapes WHERE tape_id = $1`,
+      [tapeId]
+    );
+
+    if (result.rowCount === 0) {
+      throw statusError('Лента не найдена', 404);
+    }
+
+    await client.query('COMMIT');
+    return { success: true };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-
-  return { success: true };
 }
 
 module.exports = {

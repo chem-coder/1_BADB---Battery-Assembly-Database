@@ -9,7 +9,7 @@
  *
  * Usage:
  *   npm run smoke:vanilla
- *   node scripts/smoke_vanilla_api.js --dump=sql_backups/0424_badb_app_v1_full.sql
+ *   node scripts/smoke_vanilla_api.js --dump=sql_backups/local_only/0424_badb_app_v1_full.sql
  *   node scripts/smoke_vanilla_api.js --keep-db --verbose
  */
 
@@ -19,9 +19,14 @@ const net = require('net');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const DEFAULT_DUMP = path.join(ROOT, 'sql_backups', '0424_badb_app_v1_full.sql');
+const LOCAL_ONLY_DUMP = path.join(ROOT, 'sql_backups', 'local_only', '0424_badb_app_v1_full.sql');
+const LEGACY_DUMP = path.join(ROOT, 'sql_backups', '0424_badb_app_v1_full.sql');
+const DEFAULT_DUMP = fs.existsSync(LOCAL_ONLY_DUMP) ? LOCAL_ONLY_DUMP : LEGACY_DUMP;
 const DEFAULT_DB = 'badb_app_v1_smoke';
 const DEFAULT_LOGIN = 'dkmaraulayte';
+const POST_DUMP_MIGRATIONS = [
+  path.join(ROOT, 'migrations', 'd028_tape_projects_many_to_many.sql')
+];
 
 function parseArgs(argv) {
   const opts = {
@@ -681,9 +686,14 @@ async function runWriteSmoke(client, seed) {
       ]
     });
 
+    const tapeProjectIds = made.projectId && Number(made.projectId) !== Number(projectId)
+      ? [projectId, made.projectId]
+      : [projectId];
+
     const tape = await client.post('/api/tapes', {
       name: `Codex Smoke Tape ${suffix}`,
       project_id: projectId,
+      project_ids: tapeProjectIds,
       tape_recipe_id: existingRecipeId,
       created_by: forgedUserId,
       notes: 'smoke',
@@ -692,9 +702,16 @@ async function runWriteSmoke(client, seed) {
     });
     made.tapeId = tape.tape_id;
     client.assertEqual(tape.created_by, userId, 'tape create ignores browser-created created_by');
+    client.assertEqual(
+      Array.isArray(tape.project_ids) && tape.project_ids.map(Number).includes(Number(made.projectId)),
+      true,
+      'tape create stores secondary project link'
+    );
+    await client.expectDependencyConflict('DELETE', `/api/projects/${made.projectId}`);
     const updatedTape = await client.put(`/api/tapes/${made.tapeId}`, {
       name: `Codex Smoke Tape ${suffix} Updated`,
       project_id: projectId,
+      project_ids: [projectId],
       tape_recipe_id: existingRecipeId,
       created_by: forgedUserId,
       notes: 'smoke update',
@@ -706,6 +723,7 @@ async function runWriteSmoke(client, seed) {
     await client.put(`/api/tapes/${made.tapeId}`, {
       name: `Codex Smoke Tape ${suffix} Updated`,
       project_id: projectId,
+      project_ids: [projectId],
       tape_recipe_id: made.recipeId,
       created_by: userId,
       notes: 'smoke recipe dependency check',
@@ -716,6 +734,7 @@ async function runWriteSmoke(client, seed) {
     await client.put(`/api/tapes/${made.tapeId}`, {
       name: `Codex Smoke Tape ${suffix} Updated`,
       project_id: projectId,
+      project_ids: [projectId],
       tape_recipe_id: existingRecipeId,
       created_by: userId,
       notes: 'smoke update',
@@ -1083,6 +1102,12 @@ function restoreDatabase(opts, tools) {
 
   log(`Restoring ${path.relative(ROOT, opts.dump)} into ${opts.db}`);
   run(tools.psql, ['-d', opts.db, '-v', 'ON_ERROR_STOP=1', '-f', opts.dump], { quiet: true });
+
+  for (const migration of POST_DUMP_MIGRATIONS) {
+    if (!fs.existsSync(migration)) continue;
+    log(`Applying ${path.relative(ROOT, migration)} to ${opts.db}`);
+    run(tools.psql, ['-d', opts.db, '-v', 'ON_ERROR_STOP=1', '-f', migration], { quiet: true });
+  }
 }
 
 function dropDatabase(opts, tools) {

@@ -14,6 +14,9 @@ const tapesList = document.getElementById('tapesList');
 const createdBySelect = document.getElementById('tape-created-by');
 const dryingOperatorSelect = document.getElementById('0-drying_am-operator');
 const projectSelect   = document.getElementById('project_id');
+const projectMultiSelect = document.getElementById('project-multiselect');
+const projectMultiSelectTrigger = document.getElementById('project-multiselect-trigger');
+const projectMultiSelectOptions = document.getElementById('project-multiselect-options');
 const tapeTypeSelect  = document.getElementById('tape_type');
 const recipeSelect    = document.getElementById('tape-recipe-id'); // already added in HTML
 
@@ -26,6 +29,7 @@ const tapePageState = window.tapePageState = {
       notes: '',
       created_by: '',
       project_id: '',
+      project_ids: [],
       tape_type: '',
       tape_recipe_id: '',
       calc_mode: 'from_active_mass',
@@ -381,6 +385,7 @@ function getCurrentSnapshot(stepCode) {
       notes: state.form.fields.notes || '',
       created_by: state.form.fields.created_by || '',
       project_id: state.form.fields.project_id || '',
+      project_ids: state.form.fields.project_ids || [],
       tape_type: state.form.fields.tape_type || '',
       tape_recipe_id: state.form.fields.tape_recipe_id || '',
       calc_mode: state.form.fields.calc_mode || 'from_active_mass',
@@ -546,6 +551,41 @@ function setFormField(field, value, { render = false } = {}) {
   }, { render });
 }
 
+function normalizeProjectIds(values) {
+  const source = Array.isArray(values) ? values : [values];
+  const projectIds = [];
+
+  source.forEach((value) => {
+    if (value === null || value === undefined || value === '') return;
+    const projectId = String(value);
+    if (!projectIds.includes(projectId)) {
+      projectIds.push(projectId);
+    }
+  });
+
+  return projectIds;
+}
+
+function getTapeProjectIds(tape) {
+  if (Array.isArray(tape?.project_ids) && tape.project_ids.length) {
+    return normalizeProjectIds(tape.project_ids);
+  }
+  return normalizeProjectIds(tape?.project_id || '');
+}
+
+function setProjectIds(projectIds, { render = false } = {}) {
+  const normalized = normalizeProjectIds(projectIds);
+  setFormFields({
+    ...state.form.fields,
+    project_id: normalized[0] || '',
+    project_ids: normalized
+  }, { render });
+
+  if (!render) {
+    updateProjectMultiSelectDom();
+  }
+}
+
 function setReferenceUsers(users) {
   state.reference.users = Array.isArray(users) ? users : [];
 }
@@ -675,6 +715,7 @@ function getDefaultTopLevelFormFields() {
     notes: '',
     created_by: '',
     project_id: '',
+    project_ids: [],
     tape_type: '',
     tape_recipe_id: '',
     calc_mode: 'from_active_mass',
@@ -890,6 +931,7 @@ function writeTopLevelFormStateToDom() {
   form.elements['notes'].value = state.form.fields.notes || '';
   form.elements['created_by'].value = state.form.fields.created_by || '';
   form.elements['project_id'].value = state.form.fields.project_id || '';
+  updateProjectMultiSelectDom();
   form.elements['tape_type'].value = state.form.fields.tape_type || '';
   form.elements['tape_recipe_id'].value = state.form.fields.tape_recipe_id || '';
   form.elements['calc_mode'].value = state.form.fields.calc_mode || 'from_active_mass';
@@ -2076,14 +2118,80 @@ function renderUsersSelects() {
 }
 
 function renderProjectsSelect() {
-  fillSelect(
-    projectSelect,
-    state.reference.projects,
-    'project_id',
-    (p) => p.name,
-    '<option value="">— выбрать проект —</option>',
-    state.form.fields.project_id
-  );
+  if (!projectMultiSelectOptions) return;
+
+  projectMultiSelectOptions.innerHTML = '';
+
+  if (!state.reference.projects.length) {
+    const empty = document.createElement('div');
+    empty.className = 'field-hint';
+    empty.textContent = 'Проекты не найдены';
+    projectMultiSelectOptions.appendChild(empty);
+    updateProjectMultiSelectDom();
+    return;
+  }
+
+  const selectedProjectIds = new Set(normalizeProjectIds(state.form.fields.project_ids));
+
+  state.reference.projects.forEach((project) => {
+    const projectId = String(project.project_id);
+    const label = document.createElement('label');
+    label.className = 'multi-select-option';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = projectId;
+    checkbox.checked = selectedProjectIds.has(projectId);
+
+    checkbox.addEventListener('change', () => {
+      const nextProjectIds = Array.from(
+        projectMultiSelectOptions.querySelectorAll('input[type="checkbox"]:checked')
+      ).map((input) => input.value);
+      setProjectIds(nextProjectIds);
+    });
+
+    const text = document.createElement('span');
+    text.textContent = project.name;
+
+    label.appendChild(checkbox);
+    label.appendChild(text);
+    projectMultiSelectOptions.appendChild(label);
+  });
+
+  updateProjectMultiSelectDom();
+}
+
+function updateProjectMultiSelectDom() {
+  if (projectSelect) {
+    projectSelect.value = state.form.fields.project_id || '';
+  }
+
+  if (!projectMultiSelectTrigger || !projectMultiSelectOptions) return;
+
+  const selectedProjectIds = new Set(normalizeProjectIds(state.form.fields.project_ids));
+  const selectedNames = state.reference.projects
+    .filter((project) => selectedProjectIds.has(String(project.project_id)))
+    .map((project) => project.name);
+
+  projectMultiSelectTrigger.textContent = selectedNames.length
+    ? selectedNames.join(', ')
+    : '— выбрать проекты —';
+
+  projectMultiSelectOptions
+    .querySelectorAll('input[type="checkbox"]')
+    .forEach((input) => {
+      input.checked = selectedProjectIds.has(input.value);
+    });
+}
+
+function setProjectMultiSelectOpen(isOpen) {
+  if (!projectMultiSelectOptions || !projectMultiSelectTrigger) return;
+  projectMultiSelectOptions.hidden = !isOpen;
+  projectMultiSelectTrigger.setAttribute('aria-expanded', String(Boolean(isOpen)));
+}
+
+function toggleProjectMultiSelect() {
+  setProjectMultiSelectOpen(projectMultiSelectOptions?.hidden !== false);
 }
 
 function renderRecipesSelect() {
@@ -2457,11 +2565,18 @@ function renderTapesList() {
       : t.created_by
         ? ` — ${t.created_by}`
         : '';
+
+    const projectsSpan = document.createElement('small');
+    projectsSpan.style.color = '#666';
+    projectsSpan.textContent = t.project_names || t.project_name
+      ? ` — Проекты: ${t.project_names || t.project_name}`
+      : '';
     
     info.appendChild(nameSpan);
     info.appendChild(statusSpan);
     info.appendChild(dateSpan);
     info.appendChild(creatorSpan);
+    info.appendChild(projectsSpan);
     
     const actions = document.createElement('div');
     actions.className = 'actions';
@@ -2494,7 +2609,9 @@ function renderTapesList() {
       setTopLevelFormState({
         ...getDefaultTopLevelFormFields(),
         name: copyName,
-        notes: t.notes || ''
+        notes: t.notes || '',
+        project_id: getTapeProjectIds(t)[0] || '',
+        project_ids: getTapeProjectIds(t)
       });
       setNameEditing(false);
     };
@@ -2616,7 +2733,8 @@ function normalizeTapeRestoreDataIntoState(restoreData) {
     name: (tape?.name || '').trim(),
     notes: tape?.notes || '',
     created_by: tape?.created_by || '',
-    project_id: tape?.project_id || '',
+    project_id: getTapeProjectIds(tape)[0] || '',
+    project_ids: getTapeProjectIds(tape),
     tape_type: tape?.role || '',
     tape_recipe_id: tape?.tape_recipe_id || '',
     calc_mode: tape?.calc_mode || 'from_active_mass',
@@ -3510,7 +3628,14 @@ async function loadRecipeLinesIntoStateAndRender(recipeId, { restoringActuals = 
 
 // refresh reference dropdowns on focus (same pattern as reference pages)
 createdBySelect.addEventListener('focus', loadUsers);
-projectSelect.addEventListener('focus', loadProjects);
+projectMultiSelectTrigger.addEventListener('click', async () => {
+  await loadProjects();
+  toggleProjectMultiSelect();
+});
+document.addEventListener('click', (event) => {
+  if (!projectMultiSelect || projectMultiSelect.contains(event.target)) return;
+  setProjectMultiSelectOpen(false);
+});
 recipeSelect.addEventListener('focus', loadRecipesDropdown);
 tapeTypeSelect.addEventListener('change', loadRecipesDropdown);
 tapeTypeSelect.addEventListener('change', applyDefaultCoatingFoil);

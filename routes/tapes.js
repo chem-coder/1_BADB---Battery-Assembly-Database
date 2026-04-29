@@ -109,6 +109,9 @@ router.post('/', auth, async (req, res) => {
     res.status(201).json(await createTape(pool, req.body, req.user.userId));
 
   } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
