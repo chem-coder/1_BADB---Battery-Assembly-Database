@@ -11,14 +11,18 @@ dist/
 build/
 .claude/
 .local/
-sql_backups/auto/
-sql_backups/badb_main_sql_backups_trash/
 mempalace.yaml
 mempalace.yaml.old
 entities.json
 entities.json.old
 public-vue/
 pg_dump workflow.txt
-sql_backups/0330-badb_app_v1_reconcile-before-mergeback.sql
-sql_backups/0330-badb_app_v1-current-before-reconcile-fix.sql.local/
 ql.local/
+
+# Windows PC autobackups; may contain people/data/password hashes and sensitive data.
+sql_backups/auto/
+
+# Local full database backups; may contain people/data/password hashes.
+sql_backups/local_only/
+sql_backups/*_full*.sql
+sql_backups/*dump*.sql
