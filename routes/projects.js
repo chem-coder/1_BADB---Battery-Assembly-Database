@@ -452,6 +452,23 @@ router.delete('/:id', auth, requireModify, async (req, res) => {
         params: [id]
       },
       {
+        key: 'electrode_cut_batches',
+        label: 'партии электродов в этом проекте',
+        query: `
+          SELECT ecb.cut_batch_id AS id, ecb.comments AS name
+          FROM electrode_cut_batches ecb
+          WHERE EXISTS (
+            SELECT 1
+            FROM electrode_cut_batch_projects ecbp
+            WHERE ecbp.cut_batch_id = ecb.cut_batch_id
+              AND ecbp.project_id = $1
+          )
+          ORDER BY ecb.cut_batch_id
+          LIMIT 25
+        `,
+        params: [id]
+      },
+      {
         key: 'batteries',
         label: 'аккумуляторы в этом проекте',
         query: `
@@ -468,7 +485,7 @@ router.delete('/:id', auth, requireModify, async (req, res) => {
     if (dependencies.length > 0) {
       return sendDependencyConflict(
         res,
-        'Нельзя удалить проект: в нём есть ленты или аккумуляторы',
+        'Нельзя удалить проект: в нём есть ленты, партии электродов или аккумуляторы',
         dependencies
       );
     }

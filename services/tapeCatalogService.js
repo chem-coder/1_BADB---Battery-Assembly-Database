@@ -244,6 +244,18 @@ async function collectTapeDeleteDependencies(pool, tapeId) {
       params: [tapeId]
     },
     {
+      key: 'electrode_cut_batches',
+      label: 'партии электродов, вырезанные из этой ленты',
+      query: `
+        SELECT cut_batch_id AS id, comments AS name
+        FROM electrode_cut_batches
+        WHERE tape_id = $1
+        ORDER BY cut_batch_id
+        LIMIT 25
+      `,
+      params: [tapeId]
+    },
+    {
       key: 'battery_electrodes',
       label: 'аккумуляторы с электродами из этой ленты',
       query: `

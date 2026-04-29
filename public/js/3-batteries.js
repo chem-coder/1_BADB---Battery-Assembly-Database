@@ -686,6 +686,13 @@ async function refreshBatteryReferenceData() {
   ]);
 }
 
+async function refreshBatteryLinkedReferenceData() {
+  await Promise.all([
+    loadSeparators(),
+    loadElectrolytes()
+  ]);
+}
+
 // -------- State Actions --------
 
 function setBatteries(batteries) {
@@ -4210,7 +4217,7 @@ window.addEventListener('beforeunload', (e) => {
 // -------- Init --------
 
 async function handleBatteryPageFocus() {
-  await refreshBatteryReferenceData();
+  await refreshBatteryLinkedReferenceData();
   refreshDirtyState();
 }
 

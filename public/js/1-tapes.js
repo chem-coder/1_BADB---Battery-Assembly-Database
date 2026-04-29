@@ -3626,8 +3626,6 @@ async function loadRecipeLinesIntoStateAndRender(recipeId, { restoringActuals = 
 
 // -------- Events --------
 
-// refresh reference dropdowns on focus (same pattern as reference pages)
-createdBySelect.addEventListener('focus', loadUsers);
 projectMultiSelectTrigger.addEventListener('click', async () => {
   await loadProjects();
   toggleProjectMultiSelect();

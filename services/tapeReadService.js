@@ -4,6 +4,7 @@ const {
   fetchWorkflowStatusMap
 } = require('./tapeWorkflowService');
 const { attachTapeProjects } = require('./tapeProjectService');
+const { attachElectrodeBatchProjects } = require('./electrodeBatchProjectService');
 
 function statusError(message, statusCode) {
   const err = new Error(message);
@@ -216,7 +217,7 @@ async function listElectrodeCutBatchesByTape(pool, tapeId) {
     [tapeId]
   );
 
-  return result.rows;
+  return attachElectrodeBatchProjects(pool, result.rows);
 }
 
 async function getTapeReport(pool, tapeId) {

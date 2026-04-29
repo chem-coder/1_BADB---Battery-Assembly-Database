@@ -5,6 +5,9 @@
     const workspace = document.getElementById('electrode-workspace');
     const batchTitle = document.getElementById('batch-title');
     const printElectrodeBatchBtn = document.getElementById('printElectrodeBatchBtn');
+    const batchProjectMultiSelect = document.getElementById('electrode-batch-project-multiselect');
+    const batchProjectMultiSelectTrigger = document.getElementById('electrode-batch-project-multiselect-trigger');
+    const batchProjectMultiSelectOptions = document.getElementById('electrode-batch-project-multiselect-options');
 
     function getDefaultElectrodeFiltersState() {
       return {
@@ -21,6 +24,7 @@
         target_form_factor: null,
         target_config_code: null,
         target_config_other: null,
+        project_ids: [],
         shape: null,
         diameter_mm: null,
         length_mm: null,
@@ -174,6 +178,66 @@
       state.drafts.electrodes = Array.isArray(nextDraftRows) ? nextDraftRows : [];
     }
 
+    function normalizeProjectIds(values) {
+      const source = Array.isArray(values) ? values : [values];
+      const projectIds = [];
+
+      source.forEach((value) => {
+        if (value === null || value === undefined || value === '') return;
+        const projectId = String(value);
+        if (!projectIds.includes(projectId)) {
+          projectIds.push(projectId);
+        }
+      });
+
+      return projectIds;
+    }
+
+    function getTapeProjectIds(tape) {
+      if (Array.isArray(tape?.project_ids) && tape.project_ids.length) {
+        return normalizeProjectIds(tape.project_ids);
+      }
+      return normalizeProjectIds(tape?.project_id || '');
+    }
+
+    function getBatchProjectIds(batch) {
+      if (Array.isArray(batch?.project_ids) && batch.project_ids.length) {
+        return normalizeProjectIds(batch.project_ids);
+      }
+      return normalizeProjectIds(batch?.project_id || '');
+    }
+
+    function getSelectedTape() {
+      return state.reference.tapes.find(
+        tape => String(tape.tape_id) === String(state.form.filters.tape_id || '')
+      ) || null;
+    }
+
+    function getDefaultBatchProjectIds() {
+      const tapeProjectIds = getTapeProjectIds(getSelectedTape());
+      if (tapeProjectIds.length) return tapeProjectIds;
+      return normalizeProjectIds(state.form.filters.project_id || '');
+    }
+
+    function getBatchProjectOptions() {
+      const allowedProjectIds = new Set(getTapeProjectIds(getSelectedTape()));
+      if (!allowedProjectIds.size) return [];
+      return state.reference.projects.filter((project) =>
+        allowedProjectIds.has(String(project.project_id))
+      );
+    }
+
+    function setBatchProjectIds(projectIds, { render = true } = {}) {
+      setCutBatchFormState({
+        ...state.form.batch,
+        project_ids: normalizeProjectIds(projectIds)
+      });
+
+      if (render) {
+        renderBatchProjectMultiSelect();
+      }
+    }
+
     function cloneElectrodeSnapshot(value) {
       return JSON.parse(JSON.stringify(value));
     }
@@ -305,6 +369,7 @@
         target_form_factor: document.getElementById('electrodes-target_form_factor').value || null,
         target_config_code: document.getElementById('electrodes-target_config_code').value || null,
         target_config_other: document.getElementById('electrodes-target_config_other').value || null,
+        project_ids: state.form.batch.project_ids || [],
         shape: document.querySelector('input[name="electrodes-shape"]:checked')?.value || null,
         diameter_mm: document.getElementById('electrodes-diameter').value || null,
         length_mm: document.getElementById('electrodes-length').value || null,
@@ -371,8 +436,93 @@
       computeElectrodeArea();
     }
 
+    function renderBatchProjectMultiSelect() {
+      if (!batchProjectMultiSelectOptions || !batchProjectMultiSelectTrigger) return;
+
+      batchProjectMultiSelectOptions.innerHTML = '';
+      const batchProjectOptions = getBatchProjectOptions();
+
+      if (!state.form.filters.tape_id) {
+        const empty = document.createElement('div');
+        empty.className = 'field-hint';
+        empty.textContent = 'Сначала выберите ленту';
+        batchProjectMultiSelectOptions.appendChild(empty);
+        batchProjectMultiSelectTrigger.textContent = '— выбрать проекты —';
+        return;
+      }
+
+      if (!batchProjectOptions.length) {
+        const empty = document.createElement('div');
+        empty.className = 'field-hint';
+        empty.textContent = 'У выбранной ленты нет связанных проектов';
+        batchProjectMultiSelectOptions.appendChild(empty);
+        batchProjectMultiSelectTrigger.textContent = '— нет проектов ленты —';
+        return;
+      }
+
+      const selectedProjectIds = new Set(normalizeProjectIds(state.form.batch.project_ids));
+
+      batchProjectOptions.forEach((project) => {
+        const projectId = String(project.project_id);
+        const label = document.createElement('label');
+        label.className = 'multi-select-option';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = projectId;
+        checkbox.checked = selectedProjectIds.has(projectId);
+
+        checkbox.addEventListener('change', () => {
+          const nextProjectIds = Array.from(
+            batchProjectMultiSelectOptions.querySelectorAll('input[type="checkbox"]:checked')
+          ).map((input) => input.value);
+          setBatchProjectIds(nextProjectIds);
+          refreshElectrodeDirtyState();
+        });
+
+        const text = document.createElement('span');
+        text.textContent = project.name;
+
+        label.appendChild(checkbox);
+        label.appendChild(text);
+        batchProjectMultiSelectOptions.appendChild(label);
+      });
+
+      updateBatchProjectMultiSelectLabel();
+    }
+
+    function updateBatchProjectMultiSelectLabel() {
+      if (!batchProjectMultiSelectTrigger || !batchProjectMultiSelectOptions) return;
+
+      const selectedProjectIds = new Set(normalizeProjectIds(state.form.batch.project_ids));
+      const selectedNames = getBatchProjectOptions()
+        .filter((project) => selectedProjectIds.has(String(project.project_id)))
+        .map((project) => project.name);
+
+      batchProjectMultiSelectTrigger.textContent = selectedNames.length
+        ? selectedNames.join(', ')
+        : '— выбрать проекты —';
+
+      batchProjectMultiSelectOptions
+        .querySelectorAll('input[type="checkbox"]')
+        .forEach((input) => {
+          input.checked = selectedProjectIds.has(input.value);
+        });
+    }
+
+    function setBatchProjectMultiSelectOpen(isOpen) {
+      if (!batchProjectMultiSelectOptions || !batchProjectMultiSelectTrigger) return;
+      batchProjectMultiSelectOptions.hidden = !isOpen;
+      batchProjectMultiSelectTrigger.setAttribute('aria-expanded', String(Boolean(isOpen)));
+    }
+
+    function toggleBatchProjectMultiSelect() {
+      setBatchProjectMultiSelectOpen(batchProjectMultiSelectOptions?.hidden !== false);
+    }
+
     function renderCutBatchForm() {
       document.getElementById('electrodes-comments').value = state.form.batch.comments || '';
+      renderBatchProjectMultiSelect();
       renderElectrodeGeometryForm();
     }
 
@@ -721,9 +871,10 @@
         const targetText = formatCutBatchTarget(batch);
         const geometryText = formatCutBatchGeometry(batch);
         const sidednessText = formatElectrodesSidednessLabel(batch.tape_coating_sidedness);
+        const projectsText = batch.project_names || batch.project_name || '';
 
         btn.textContent =
-          `Партия ${batch.cut_batch_id}${sidednessText ? ` — ${sidednessText}` : ''}${targetText ? ` — ${targetText}` : ''}${geometryText ? ` — ${geometryText}` : ''} — ${dateText} — ${count} ${electrodeWord} — ${status}`;
+          `Партия ${batch.cut_batch_id}${sidednessText ? ` — ${sidednessText}` : ''}${targetText ? ` — ${targetText}` : ''}${geometryText ? ` — ${geometryText}` : ''}${projectsText ? ` — ${projectsText}` : ''} — ${dateText} — ${count} ${electrodeWord} — ${status}`;
 
         btn.onclick = () => selectBatch(batch);
 
@@ -846,8 +997,14 @@
       const selectedOption = tapeSelect.selectedOptions[0];
       
       if (selectedOption && selectedOption.value) {
+        const optionProjectIds = normalizeProjectIds(
+          (selectedOption.dataset.projectIds || selectedOption.dataset.projectId || '').split(',')
+        );
+        const currentProjectId = projectSelect.value || '';
         roleSelect.value = selectedOption.dataset.role || '';
-        projectSelect.value = selectedOption.dataset.projectId || '';
+        projectSelect.value = optionProjectIds.includes(currentProjectId)
+          ? currentProjectId
+          : optionProjectIds[0] || '';
         
         renderTapeOptions();
         tapeSelect.value = selectedOption.value;
@@ -900,6 +1057,15 @@
         addCutBatchBtn.hidden = true;
         clearElectrodeWorkspace();
       }
+    });
+
+    batchProjectMultiSelectTrigger.addEventListener('click', () => {
+      toggleBatchProjectMultiSelect();
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!batchProjectMultiSelect || batchProjectMultiSelect.contains(event.target)) return;
+      setBatchProjectMultiSelectOpen(false);
     });
     
     
@@ -992,7 +1158,10 @@
             ...batch,
             tape_name: tape.name,
             tape_role: tape.role,
-            project_id: tape.project_id,
+            project_id: getBatchProjectIds(batch)[0] || getTapeProjectIds(tape)[0] || '',
+            project_ids: getBatchProjectIds(batch).length ? getBatchProjectIds(batch) : getTapeProjectIds(tape),
+            project_name: batch.project_name || tape.project_name,
+            project_names: batch.project_names || tape.project_names || batch.project_name || tape.project_name,
             created_by_name: batch.created_by_name || batch.created_by
           }));
         })
@@ -1019,7 +1188,7 @@
 
       const filtered = state.reference.tapes.filter(t =>
         (!role || t.role === role) &&
-        (!project || t.project_id == project)
+        (!project || getTapeProjectIds(t).includes(String(project)))
       );
 
       select.innerHTML = '<option value="">— выбрать ленту —</option>';
@@ -1034,13 +1203,15 @@
         const option = document.createElement('option');
         option.value = String(t.tape_id);
         option.dataset.role = t.role;
-        option.dataset.projectId = String(t.project_id);
+        option.dataset.projectId = getTapeProjectIds(t)[0] || '';
+        option.dataset.projectIds = getTapeProjectIds(t).join(',');
 
         const date = t.finished_at || '—';          
         const roleLabel = roleRu[t.role] || t.role;
         const sidednessLabel = formatTapeSidednessLabel(t.coating_sidedness);
+        const projectText = t.project_names || t.project_name || '';
 
-        option.textContent = `#${t.tape_id} | ${t.name} (${roleLabel})${sidednessLabel ? ` | ${sidednessLabel}` : ''} | ${date} | ${t.created_by}`;
+        option.textContent = `#${t.tape_id} | ${t.name} (${roleLabel})${sidednessLabel ? ` | ${sidednessLabel}` : ''}${projectText ? ` | ${projectText}` : ''} | ${date} | ${t.created_by}`;
 
         if (t.role === 'cathode') {
           cathodeGroup.appendChild(option);
@@ -1262,7 +1433,7 @@
         const meta = document.createElement('small');
         meta.style.color = '#666';
         meta.textContent =
-          ` — ${dateText} — ${roleLabel(batch.tape_role)} — ${batch.created_by_name || batch.created_by || '—'}`;
+          ` — ${dateText} — ${roleLabel(batch.tape_role)}${batch.project_names || batch.project_name ? ` — ${batch.project_names || batch.project_name}` : ''} — ${batch.created_by_name || batch.created_by || '—'}`;
 
         info.appendChild(title);
         info.appendChild(meta);
@@ -1318,6 +1489,7 @@
         target_form_factor: batch.target_form_factor ?? null,
         target_config_code: batch.target_config_code ?? null,
         target_config_other: batch.target_config_other ?? null,
+        project_ids: getBatchProjectIds(batch),
         shape: batch.shape ?? null,
         diameter_mm: batch.diameter_mm ?? null,
         length_mm: batch.length_mm ?? null,
@@ -1343,6 +1515,7 @@
 
       return {
         tape_id: tapeId,
+        project_ids: normalizeProjectIds(batchForm.project_ids),
         comments: batchForm.comments || null,
         target_form_factor: targetFormFactor,
         target_config_code: targetConfigCode,
@@ -1627,8 +1800,11 @@
       setCurrentCutBatchId(null);
       setCurrentCutBatchDetails(null);
       clearElectrodeWorkspace();
+      setBatchProjectIds(getDefaultBatchProjectIds(), { render: false });
       workspace.hidden = false;
       batchTitle.textContent = 'Новая партия';
+      renderElectrodePage();
+      markElectrodeSectionSaved('batch');
     });
     
     /* ---------- ELECTRODE GEOMETRY ---------- */
@@ -2343,6 +2519,11 @@
       
       if (!tapeId) {
         showElectrodeInlineStatus('saveBtn', 'Не выбрана лента', true);
+        return;
+      }
+
+      if (!normalizeProjectIds(state.form.batch.project_ids).length) {
+        showElectrodeInlineStatus('saveBtn', 'Выберите хотя бы один проект партии', true);
         return;
       }
       

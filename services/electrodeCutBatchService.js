@@ -5,6 +5,13 @@ const {
   computeElectrodeDerivedValues,
   fetchCutBatchCapacityContext
 } = require('./electrodeCapacityService');
+const {
+  attachElectrodeBatchProjects,
+  getPayloadProjectIds,
+  getTapeProjectIds,
+  validateProjectIdsForTape,
+  replaceElectrodeBatchProjects
+} = require('./electrodeBatchProjectService');
 
 const ALLOWED_TARGET_FORM_FACTORS = new Set(['coin', 'pouch', 'cylindrical']);
 const ALLOWED_TARGET_CONFIG_CODES = new Set([
@@ -174,7 +181,7 @@ async function listElectrodeCutBatches(pool) {
     `
   );
 
-  return result.rows;
+  return attachElectrodeBatchProjects(pool, result.rows);
 }
 
 async function createElectrodeCutBatch(pool, payload, createdBy) {
@@ -206,6 +213,16 @@ async function createElectrodeCutBatch(pool, payload, createdBy) {
     if (tapeResult.rows[0].availability_status === 'depleted') {
       throw statusError('Лента отмечена как израсходованная', 400);
     }
+
+    const payloadProjectIds = getPayloadProjectIds(payload);
+    const projectIds = payloadProjectIds !== null
+      ? payloadProjectIds
+      : await getTapeProjectIds(client, tapeId);
+
+    if (!projectIds.length) {
+      throw statusError('Выберите хотя бы один проект партии электродов', 400);
+    }
+    await validateProjectIdsForTape(client, tapeId, projectIds);
 
     const result = await client.query(
       `
@@ -293,6 +310,8 @@ async function createElectrodeCutBatch(pool, payload, createdBy) {
       [tapeId, createdBy]
     );
 
+    await replaceElectrodeBatchProjects(client, result.rows[0].cut_batch_id, projectIds, createdBy);
+
     await client.query(
       `
       UPDATE tapes
@@ -303,7 +322,8 @@ async function createElectrodeCutBatch(pool, payload, createdBy) {
     );
 
     await client.query('COMMIT');
-    return result.rows[0];
+    const [createdBatch] = await attachElectrodeBatchProjects(client, result.rows);
+    return createdBatch;
   } catch (err) {
     try {
       await client.query('ROLLBACK');
@@ -317,100 +337,129 @@ async function createElectrodeCutBatch(pool, payload, createdBy) {
 }
 
 async function updateElectrodeCutBatch(pool, cutBatchId, payload, userId) {
-  const currentRes = await pool.query(
-    `
-    SELECT
-      target_form_factor,
-      target_config_code,
-      target_config_other,
-      shape,
-      diameter_mm,
-      length_mm,
-      width_mm,
-      comments
-    FROM electrode_cut_batches
-    WHERE cut_batch_id = $1
-    `,
-    [cutBatchId]
-  );
+  const client = await pool.connect();
 
-  if (currentRes.rowCount === 0) {
-    throw statusError('Партия не найдена', 404);
+  try {
+    await client.query('BEGIN');
+
+    const currentRes = await client.query(
+      `
+      SELECT
+        cut_batch_id,
+        tape_id,
+        target_form_factor,
+        target_config_code,
+        target_config_other,
+        shape,
+        diameter_mm,
+        length_mm,
+        width_mm,
+        comments
+      FROM electrode_cut_batches
+      WHERE cut_batch_id = $1
+      `,
+      [cutBatchId]
+    );
+
+    if (currentRes.rowCount === 0) {
+      throw statusError('Партия не найдена', 404);
+    }
+
+    const [current] = await attachElectrodeBatchProjects(client, currentRes.rows);
+    const geometry = normalizeCutBatchGeometry({
+      target_form_factor: payload.target_form_factor !== undefined ? payload.target_form_factor : current.target_form_factor,
+      target_config_code: payload.target_config_code !== undefined ? payload.target_config_code : current.target_config_code,
+      target_config_other: payload.target_config_other !== undefined ? payload.target_config_other : current.target_config_other,
+      shape: payload.shape !== undefined ? payload.shape : current.shape,
+      diameter_mm: payload.diameter_mm !== undefined ? payload.diameter_mm : current.diameter_mm,
+      length_mm: payload.length_mm !== undefined ? payload.length_mm : current.length_mm,
+      width_mm: payload.width_mm !== undefined ? payload.width_mm : current.width_mm
+    });
+
+    if (geometry.error) {
+      throw statusError(geometry.error, 400);
+    }
+
+    const payloadProjectIds = getPayloadProjectIds(payload);
+    const projectIds = payloadProjectIds !== null ? payloadProjectIds : current.project_ids;
+
+    if (!projectIds.length) {
+      throw statusError('Выберите хотя бы один проект партии электродов', 400);
+    }
+    await validateProjectIdsForTape(client, current.tape_id, projectIds);
+
+    const newVals = {
+      target_form_factor: geometry.target_form_factor,
+      target_config_code: geometry.target_config_code,
+      target_config_other: geometry.target_config_other,
+      shape: geometry.shape,
+      diameter_mm: geometry.diameter_mm,
+      length_mm: geometry.length_mm,
+      width_mm: geometry.width_mm,
+      comments: payload.comments !== undefined ? (payload.comments || null) : current.comments,
+      project_ids: projectIds
+    };
+
+    const result = await client.query(
+      `
+      UPDATE electrode_cut_batches
+      SET
+        target_form_factor = $1,
+        target_config_code = $2,
+        target_config_other = $3,
+        shape = $4,
+        diameter_mm = $5,
+        length_mm = $6,
+        width_mm = $7,
+        comments = $8,
+        updated_by = $9,
+        updated_at = now()
+      WHERE cut_batch_id = $10
+      RETURNING *
+      `,
+      [
+        newVals.target_form_factor,
+        newVals.target_config_code,
+        newVals.target_config_other,
+        newVals.shape,
+        newVals.diameter_mm,
+        newVals.length_mm,
+        newVals.width_mm,
+        newVals.comments,
+        userId,
+        cutBatchId
+      ]
+    );
+
+    if (result.rowCount === 0) {
+      throw statusError('Партия не найдена', 404);
+    }
+
+    if (payloadProjectIds !== null) {
+      await replaceElectrodeBatchProjects(client, cutBatchId, projectIds, userId);
+    }
+
+    await trackChanges(
+      client,
+      'electrode_cut_batch',
+      'electrode_cut_batches',
+      'cut_batch_id',
+      cutBatchId,
+      current,
+      newVals,
+      userId
+    );
+
+    const [updatedBatch] = await attachElectrodeBatchProjects(client, result.rows);
+
+    await client.query('COMMIT');
+    return updatedBatch;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-
-  const current = currentRes.rows[0];
-  const geometry = normalizeCutBatchGeometry({
-    target_form_factor: payload.target_form_factor !== undefined ? payload.target_form_factor : current.target_form_factor,
-    target_config_code: payload.target_config_code !== undefined ? payload.target_config_code : current.target_config_code,
-    target_config_other: payload.target_config_other !== undefined ? payload.target_config_other : current.target_config_other,
-    shape: payload.shape !== undefined ? payload.shape : current.shape,
-    diameter_mm: payload.diameter_mm !== undefined ? payload.diameter_mm : current.diameter_mm,
-    length_mm: payload.length_mm !== undefined ? payload.length_mm : current.length_mm,
-    width_mm: payload.width_mm !== undefined ? payload.width_mm : current.width_mm
-  });
-
-  if (geometry.error) {
-    throw statusError(geometry.error, 400);
-  }
-
-  const newVals = {
-    target_form_factor: geometry.target_form_factor,
-    target_config_code: geometry.target_config_code,
-    target_config_other: geometry.target_config_other,
-    shape: geometry.shape,
-    diameter_mm: geometry.diameter_mm,
-    length_mm: geometry.length_mm,
-    width_mm: geometry.width_mm,
-    comments: payload.comments !== undefined ? (payload.comments || null) : current.comments
-  };
-
-  const result = await pool.query(
-    `
-    UPDATE electrode_cut_batches
-    SET
-      target_form_factor = $1,
-      target_config_code = $2,
-      target_config_other = $3,
-      shape = $4,
-      diameter_mm = $5,
-      length_mm = $6,
-      width_mm = $7,
-      comments = $8,
-      updated_by = $9,
-      updated_at = now()
-    WHERE cut_batch_id = $10
-    RETURNING *
-    `,
-    [
-      newVals.target_form_factor,
-      newVals.target_config_code,
-      newVals.target_config_other,
-      newVals.shape,
-      newVals.diameter_mm,
-      newVals.length_mm,
-      newVals.width_mm,
-      newVals.comments,
-      userId,
-      cutBatchId
-    ]
-  );
-
-  if (result.rowCount === 0) {
-    throw statusError('Партия не найдена', 404);
-  }
-
-  await trackChanges(
-    pool,
-    'electrode_cut_batch',
-    'electrode_cut_batches',
-    'cut_batch_id',
-    cutBatchId,
-    current,
-    newVals,
-    userId
-  );
-
-  return result.rows[0];
 }
 
 async function getElectrodeCutBatch(pool, cutBatchId) {
@@ -463,8 +512,10 @@ async function getElectrodeCutBatch(pool, cutBatchId) {
     ...computeElectrodeDerivedValues(row, capacityContext)
   }));
 
+  const [batch] = await attachElectrodeBatchProjects(pool, result.rows);
+
   return {
-    ...result.rows[0],
+    ...batch,
     capacity_summary: buildBatchCapacitySummary(electrodesWithDerived, capacityContext)
   };
 }
@@ -567,8 +618,10 @@ async function getElectrodeCutBatchReport(pool, cutBatchId) {
     ...computeElectrodeDerivedValues(row, capacityContext)
   }));
 
+  const [batch] = await attachElectrodeBatchProjects(pool, batchResult.rows);
+
   return {
-    batch: batchResult.rows[0],
+    batch,
     foil_masses: foilMassesResult.rows,
     electrodes: electrodesWithDerived,
     capacity_summary: buildBatchCapacitySummary(electrodesWithDerived, capacityContext)
@@ -608,16 +661,32 @@ async function collectCutBatchDeleteDependencies(pool, cutBatchId) {
 }
 
 async function deleteElectrodeCutBatch(pool, cutBatchId) {
-  const result = await pool.query(
-    `DELETE FROM electrode_cut_batches WHERE cut_batch_id = $1`,
-    [cutBatchId]
-  );
+  const client = await pool.connect();
 
-  if (result.rowCount === 0) {
-    throw statusError('Партия электродов не найдена', 404);
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'DELETE FROM electrode_cut_batch_projects WHERE cut_batch_id = $1',
+      [cutBatchId]
+    );
+
+    const result = await client.query(
+      `DELETE FROM electrode_cut_batches WHERE cut_batch_id = $1`,
+      [cutBatchId]
+    );
+
+    if (result.rowCount === 0) {
+      throw statusError('Партия электродов не найдена', 404);
+    }
+
+    await client.query('COMMIT');
+    return { success: true };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
-
-  return { success: true };
 }
 
 module.exports = {

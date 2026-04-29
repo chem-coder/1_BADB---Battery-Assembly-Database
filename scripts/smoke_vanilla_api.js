@@ -25,7 +25,8 @@ const DEFAULT_DUMP = fs.existsSync(LOCAL_ONLY_DUMP) ? LOCAL_ONLY_DUMP : LEGACY_D
 const DEFAULT_DB = 'badb_app_v1_smoke';
 const DEFAULT_LOGIN = 'dkmaraulayte';
 const POST_DUMP_MIGRATIONS = [
-  path.join(ROOT, 'migrations', 'd028_tape_projects_many_to_many.sql')
+  path.join(ROOT, 'migrations', 'd028_tape_projects_many_to_many.sql'),
+  path.join(ROOT, 'migrations', 'd029_electrode_cut_batch_projects_many_to_many.sql')
 ];
 
 function parseArgs(argv) {
@@ -805,8 +806,19 @@ async function runWriteSmoke(client, seed) {
     });
     client.assertEqual(dryBoxState.updated_by, userId, 'dry-box update ignores browser-created updated_by');
 
+    await client.post('/api/electrodes/electrode-cut-batches', {
+      tape_id: made.tapeId,
+      project_ids: [made.projectId],
+      target_form_factor: 'coin',
+      target_config_code: '2032',
+      shape: 'circle',
+      diameter_mm: 16,
+      comments: 'smoke invalid cut project'
+    }, [400]);
+
     const cutBatch = await client.post('/api/electrodes/electrode-cut-batches', {
       tape_id: made.tapeId,
+      project_ids: [projectId],
       created_by: forgedUserId,
       target_form_factor: 'coin',
       target_config_code: '2032',
@@ -820,7 +832,13 @@ async function runWriteSmoke(client, seed) {
       userId,
       'electrode cut batch create ignores browser-created created_by'
     );
+    client.assertEqual(
+      Array.isArray(cutBatch.project_ids) && cutBatch.project_ids.map(Number).includes(Number(projectId)),
+      true,
+      'electrode cut batch create stores tape project link'
+    );
     await client.put(`/api/electrodes/electrode-cut-batches/${made.cutBatchId}`, {
+      project_ids: [projectId],
       target_form_factor: 'coin',
       target_config_code: '2032',
       shape: 'circle',

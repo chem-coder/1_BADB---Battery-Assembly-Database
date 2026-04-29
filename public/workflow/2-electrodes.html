@@ -104,20 +104,25 @@
       <!-- tape selection block -->
       <fieldset id="choose-tape">
         <legend>Параметры партии <span id="dirty-electrode-filters" class="dirty_marker">Не сохранено</span></legend>
-        <label for="electrode-role">Тип электрода: </label>
-        <select id="electrode-role" required>
-          <option value="">— выбрать —</option>
-          <option value="cathode">Катоды</option>
-          <option value="anode">Аноды</option>
-        </select><br>
-        
-        <label for="electrodes-project_id">Проект: </label>
-        <select id="electrodes-project_id" required>
-          <option value="">— выбрать проект —</option>
-        </select>
-        <a href="/reference/projects.html" target="_blank" class="ref-link">
-          Управление проектами
-        </a><br>
+        <div class="electrode-filter-row">
+          <div class="electrode-filter-field">
+            <label for="electrode-role">Фильтр по типу электрода</label>
+            <select id="electrode-role" required>
+              <option value="">— выбрать —</option>
+              <option value="cathode">Катоды</option>
+              <option value="anode">Аноды</option>
+            </select>
+          </div>
+          
+          <div class="electrode-filter-field electrode-project-filter">
+            <label for="electrodes-project_id">Фильтр по проекту ленты</label>
+            <div>
+              <select id="electrodes-project_id" required>
+                <option value="">— выбрать проект —</option>
+              </select>
+            </div>
+          </div>
+        </div>
         
         <label for="electrodes-tape_id">Лента: </label>
         <select id="electrodes-tape_id" data-source="tapes" required>
@@ -135,6 +140,18 @@
               <select id="electrodes-created_by" disabled>
                 <option value="">— автоматически —</option>
               </select><br>
+
+              <label for="electrode-batch-project-multiselect-trigger">Проекты партии</label>
+              <div id="electrode-batch-project-multiselect" class="multi-select">
+                <button
+                  type="button"
+                  id="electrode-batch-project-multiselect-trigger"
+                  class="multi-select-trigger"
+                  aria-expanded="false"
+                  aria-controls="electrode-batch-project-multiselect-options"
+                >— выбрать проекты —</button>
+                <div id="electrode-batch-project-multiselect-options" class="multi-select-options" hidden></div>
+              </div><br>
               
               <label for="electrodes-comments">Заметки/комментарии: </label>
               <textarea id="electrodes-comments" name="electrodes-comments" placeholder="Комментарии о вырезании электродов"></textarea>
