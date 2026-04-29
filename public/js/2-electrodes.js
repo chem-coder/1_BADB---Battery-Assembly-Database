@@ -1090,13 +1090,19 @@
 
       if (!data.length) {
         setReferenceUsers([]);
-        select.innerHTML = '<option value="">— автоматически —</option>';
+        select.replaceChildren(new Option(
+          window.BADB_AUTH?.getAuditUserPlaceholder?.() || '— автоматически —',
+          ''
+        ));
         return;
       }
 
       setReferenceUsers(data);
       
-      select.innerHTML = '<option value="">— автоматически —</option>';
+      select.replaceChildren(new Option(
+        window.BADB_AUTH?.getAuditUserPlaceholder?.() || '— автоматически —',
+        ''
+      ));
       
       data.forEach(u => {
         const option = document.createElement('option');
@@ -2223,6 +2229,32 @@
     function getPendingTapeDryBoxDecisionMessage() {
       return 'Для ленты ещё не указано, что делать дальше: вернуть в сушильный шкаф или отметить как израсходованную. Выйти всё равно?';
     }
+
+    function confirmElectrodeLogout() {
+      if (hasUnsavedChanges() && !confirm('Есть несохранённые изменения. Выйти без сохранения?')) {
+        return false;
+      }
+
+      if (hasPendingTapeDryBoxDecision() && !confirm(getPendingTapeDryBoxDecisionMessage())) {
+        return false;
+      }
+
+      return true;
+    }
+
+    function discardElectrodeChangesForLogout() {
+      markAllElectrodeSectionsSaved();
+      setCurrentTapeDryBoxState(null);
+    }
+
+    const electrodeLogoutGuard = {
+      hasUnsavedChanges: () => hasUnsavedChanges() || hasPendingTapeDryBoxDecision(),
+      confirmLogout: confirmElectrodeLogout,
+      discardUnsavedChanges: discardElectrodeChangesForLogout
+    };
+
+    window.BADB_PAGE_LOGOUT_GUARD = electrodeLogoutGuard;
+    window.BADB_AUTH?.registerLogoutGuard?.(electrodeLogoutGuard);
 
     function getElectrodeDirtySnapshot() {
       const currentSnapshots = getAllCurrentElectrodeSectionSnapshots();

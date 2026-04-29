@@ -453,12 +453,16 @@ async function runWriteSmoke(client, seed) {
 
     made.userId = (await client.post('/api/users', {
       name: `Codex Smoke User ${suffix}`,
+      login: `codex_smoke_${suffix}`,
+      password: `Smoke-${suffix}`,
+      active: true,
       role: 'employee',
       position: 'QA',
       department_id: 1
     })).user_id;
     await client.put(`/api/users/${made.userId}`, {
       name: `Codex Smoke User ${suffix} Updated`,
+      login: `codex_smoke_${suffix}`,
       active: true,
       role: 'employee',
       position: 'QA2',

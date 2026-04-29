@@ -638,6 +638,14 @@ function hasUnsavedBatteryChanges() {
   return BATTERY_SECTION_KEYS.some(sectionKey => Boolean(state.ui.sectionState?.[sectionKey]?.isDirty));
 }
 
+const batteryLogoutGuard = {
+  hasUnsavedChanges: hasUnsavedBatteryChanges,
+  discardUnsavedChanges: clearDirtyFlags
+};
+
+window.BADB_PAGE_LOGOUT_GUARD = batteryLogoutGuard;
+window.BADB_AUTH?.registerLogoutGuard?.(batteryLogoutGuard);
+
 function getBatteryDirtySnapshot() {
   const currentSnapshots = getAllCurrentBatterySectionSnapshots();
   const savedSnapshots = state.snapshots.savedSectionStates;
@@ -2480,7 +2488,7 @@ function renderBatteryReferenceSelect(select, items, {
   if (!select) return;
 
   const current = select.value;
-  select.innerHTML = `<option value="">${placeholder}</option>`;
+  select.replaceChildren(new Option(placeholder, ''));
 
   items.forEach(item => {
     const option = document.createElement('option');
@@ -2514,7 +2522,7 @@ async function loadUsers() {
   }
 
   renderBatteryReferenceSelect(createdBySelect, data, {
-    placeholder: '— автоматически —',
+    placeholder: window.BADB_AUTH?.getAuditUserPlaceholder?.() || '— автоматически —',
     valueKey: 'user_id',
     labelBuilder: (user) => user.full_name || user.name
   });

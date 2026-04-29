@@ -1,7 +1,7 @@
 {
   "version": 1,
   "scope": "public/js/**/*.js",
-  "updatedAt": "2026-04-24",
+  "updatedAt": "2026-04-28",
   "normalization": {
     "pathParams": ":param",
     "query": "?:query"
@@ -578,6 +578,14 @@
       "sources": ["public/js/1-tapes.js"],
       "legacyAlias": true,
       "aliasOf": "/api/tapes/:param/steps/by-code/:param"
+    },
+    {
+      "path": "/api/departments",
+      "methods": ["GET"],
+      "auth": "auth",
+      "request": "none",
+      "response": "department list JSON",
+      "sources": ["public/js/users.js"]
     },
     {
       "path": "/api/users",

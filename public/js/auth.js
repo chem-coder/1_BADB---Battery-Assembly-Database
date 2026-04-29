@@ -12,6 +12,8 @@
   let authReady = null;
   let resolveAuthReady = null;
   let authUi = null;
+  let userSelectSyncScheduled = false;
+  let pageLogoutGuard = null;
 
   function resetAuthGate() {
     authReady = new Promise((resolve) => {
@@ -125,13 +127,20 @@
 
   function renderAuthUi() {
     const ui = ensureAuthUi();
-    const label = currentUser
-      ? `${currentUser.name || currentUser.login || `#${currentUser.userId}`}`
-      : '—';
+    const label = getCurrentUserLabel() || '—';
 
     ui.user.textContent = `Пользователь: ${label}`;
     ui.logout.hidden = bypassMode || !currentUser;
-    syncCurrentUserButtons();
+    scheduleCurrentUserButtonSync();
+  }
+
+  function getCurrentUserLabel() {
+    if (!currentUser) return '';
+    return currentUser.name || currentUser.login || `#${currentUser.userId}`;
+  }
+
+  function getAuditUserPlaceholder() {
+    return getCurrentUserLabel() || '— автоматически —';
   }
 
   function showLogin(message = '') {
@@ -146,6 +155,55 @@
     ui.overlay.hidden = true;
     ui.error.textContent = '';
     ui.password.value = '';
+  }
+
+  function registerLogoutGuard(guard) {
+    pageLogoutGuard = guard && typeof guard === 'object' ? guard : null;
+    return () => {
+      if (pageLogoutGuard === guard) pageLogoutGuard = null;
+    };
+  }
+
+  function getLogoutGuard() {
+    return pageLogoutGuard || window.BADB_PAGE_LOGOUT_GUARD || null;
+  }
+
+  function confirmPageLogout() {
+    const guard = getLogoutGuard();
+    if (!guard) return true;
+
+    try {
+      if (typeof guard.confirmLogout === 'function') {
+        return guard.confirmLogout() !== false;
+      }
+
+      if (typeof guard.hasUnsavedChanges === 'function' && guard.hasUnsavedChanges()) {
+        return window.confirm(guard.message || 'Есть несохранённые изменения. Выйти без сохранения?');
+      }
+    } catch (err) {
+      console.error(err);
+      return window.confirm('Не удалось проверить несохранённые изменения. Выйти?');
+    }
+
+    return true;
+  }
+
+  function discardPageChangesForLogout() {
+    const guard = getLogoutGuard();
+
+    try {
+      guard?.discardUnsavedChanges?.();
+    } catch (err) {
+      console.error(err);
+    }
+
+    window.dispatchEvent(new CustomEvent('badb:logout-confirmed'));
+  }
+
+  function notifyLogin() {
+    window.dispatchEvent(new CustomEvent('badb:login', {
+      detail: { user: currentUser }
+    }));
   }
 
   async function handleLoginSubmit(event) {
@@ -175,12 +233,16 @@
       hideLogin();
       renderAuthUi();
       resolveAuthReady?.(currentUser);
+      notifyLogin();
     } catch {
       ui.error.textContent = 'Не удалось выполнить вход';
     }
   }
 
   function handleLogout() {
+    if (!confirmPageLogout()) return;
+
+    discardPageChangesForLogout();
     setToken('');
     currentUser = null;
     bypassMode = false;
@@ -287,22 +349,30 @@
     }
 
     select.dataset.currentUserEnhanced = 'true';
-    button.hidden = select.disabled;
-    button.disabled = select.disabled || !currentUser?.userId;
+    const shouldHide = select.disabled;
+    const shouldDisable = select.disabled || !currentUser?.userId;
+
+    if (button.hidden !== shouldHide) button.hidden = shouldHide;
+    if (button.disabled !== shouldDisable) button.disabled = shouldDisable;
   }
 
   function syncCurrentUserButtons() {
+    userSelectSyncScheduled = false;
     document.querySelectorAll('select').forEach(enhanceUserSelect);
   }
 
+  function scheduleCurrentUserButtonSync() {
+    if (userSelectSyncScheduled) return;
+    userSelectSyncScheduled = true;
+    window.requestAnimationFrame(syncCurrentUserButtons);
+  }
+
   function observeUserSelects() {
-    syncCurrentUserButtons();
-    const observer = new MutationObserver(syncCurrentUserButtons);
+    scheduleCurrentUserButtonSync();
+    const observer = new MutationObserver(scheduleCurrentUserButtonSync);
     observer.observe(document.body, {
       childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['disabled']
+      subtree: true
     });
   }
 
@@ -310,6 +380,9 @@
   window.fetch = badbAuthFetch;
   window.BADB_AUTH = {
     getCurrentUser: () => currentUser,
+    getCurrentUserLabel,
+    getAuditUserPlaceholder,
+    registerLogoutGuard,
     isReady: () => authReady
   };
 

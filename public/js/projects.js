@@ -252,7 +252,10 @@ async function loadUsers() {
   const res = await fetch('/api/users');
   const users = await res.json();
   
-  createdBySelect.innerHTML = '<option value="">— автоматически —</option>';
+  createdBySelect.replaceChildren(new Option(
+    window.BADB_AUTH?.getAuditUserPlaceholder?.() || '— автоматически —',
+    ''
+  ));
   leadSelect.innerHTML = '<option value="">— выбрать пользователя —</option>';
   
   users.forEach(u => {

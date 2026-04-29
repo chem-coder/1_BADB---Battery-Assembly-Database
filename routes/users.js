@@ -1,5 +1,7 @@
 const { Router } = require('express');
+const bcrypt = require('bcryptjs');
 const pool = require('../db/pool');
+const config = require('../config');
 const { auth, requireRole } = require('../middleware/auth');
 const { trackChanges } = require('../middleware/trackChanges');
 const {
@@ -14,23 +16,53 @@ const router = Router();
 
 // CREATE — lead: can add employees only; admin: can add any role
 router.post('/', auth, requireRole('admin', 'lead'), async (req, res) => {
-  const { name, role, position, department_id } = req.body;
+  const { name, login, password, active, role, position, department_id } = req.body;
+  const trimmedName = typeof name === 'string' ? name.trim() : '';
+  const trimmedLogin = typeof login === 'string' ? login.trim() : '';
+  const trimmedPosition = typeof position === 'string' ? position.trim() : '';
+  const hasDepartment = Object.prototype.hasOwnProperty.call(req.body, 'department_id');
 
-  if (!name) {
+  if (!trimmedName) {
     return res.status(400).json({ error: 'Имя пользователя обязательно' });
+  }
+
+  if (!trimmedLogin) {
+    return res.status(400).json({ error: 'Логин обязателен' });
+  }
+
+  if (!password || typeof password !== 'string' || password.length < 6) {
+    return res.status(400).json({ error: 'Пароль обязателен и должен быть не короче 6 символов' });
+  }
+
+  if (typeof active !== 'boolean') {
+    return res.status(400).json({ error: 'Статус пользователя обязателен' });
   }
 
   // Lead cannot create lead/admin users
   const targetRole = role || 'employee';
+  if (!config.roles.list.includes(targetRole)) {
+    return res.status(400).json({ error: `Некорректная роль пользователя` });
+  }
+
   if (req.user.role !== 'admin' && targetRole !== 'employee') {
     return res.status(403).json({ error: 'Только администратор может добавлять руководителей' });
   }
 
+  if (!trimmedPosition) {
+    return res.status(400).json({ error: 'Должность обязательна' });
+  }
+
+  if (!hasDepartment) {
+    return res.status(400).json({ error: 'Отдел обязателен' });
+  }
+
   try {
+    const passwordHash = await bcrypt.hash(password, config.bcrypt.rounds);
     const result = await pool.query(
-      `INSERT INTO users (name, role, position, department_id)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [name, targetRole, position || null, department_id || null]
+      `INSERT INTO users (name, active, login, password_hash, role, position, department_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING user_id, name, active, login, role, position, department_id`,
+      [trimmedName, active, trimmedLogin, passwordHash, targetRole, trimmedPosition, department_id || null]
     );
 
     res.status(201).json(result.rows[0]);
@@ -47,7 +79,7 @@ router.post('/', auth, requireRole('admin', 'lead'), async (req, res) => {
 router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.user_id, u.name, u.active, u.role, u.position,
+      `SELECT u.user_id, u.name, u.active, u.login, u.role, u.position,
               u.department_id, d.name AS department_name,
               (SELECT MAX(created_at) FROM auth_log
                WHERE user_id = u.user_id AND event = 'login_success') AS last_login
@@ -62,38 +94,113 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-// UPDATE — lead: can edit but not promote to lead/admin; admin: full access
-router.put('/:id', auth, requireRole('admin', 'lead'), async (req, res) => {
+// UPDATE — admin can edit anyone; non-admin users can edit only themselves.
+router.put('/:id', auth, async (req, res) => {
   const { id } = req.params;
-  const { name, active, role, position, department_id } = req.body;
+  const { name, login, password, active, role, position, department_id } = req.body;
+  const userId = Number(id);
+  const resetPassword = req.body.reset_password === true;
+  const trimmedName = typeof name === 'string' ? name.trim() : '';
+  const trimmedLogin = typeof login === 'string' ? login.trim() : '';
+  const trimmedPosition = typeof position === 'string' ? position.trim() : '';
+  const hasDepartment = Object.prototype.hasOwnProperty.call(req.body, 'department_id');
 
-  if (!name || typeof active !== 'boolean') {
-    return res.status(400).json({ error: 'Некорректные данные' });
-  }
-
-  // Lead cannot assign lead/admin role
-  if (req.user.role !== 'admin' && role && role !== 'employee') {
-    return res.status(403).json({ error: 'Только администратор может назначать роль руководителя' });
+  if (!Number.isInteger(userId)) {
+    return res.status(400).json({ error: 'Некорректный user_id' });
   }
 
   try {
-    const current = await pool.query('SELECT name, active, role, position, department_id FROM users WHERE user_id = $1', [id]);
+    const current = await pool.query('SELECT name, active, login, role, position, department_id FROM users WHERE user_id = $1', [userId]);
     if (current.rowCount === 0) {
       return res.status(404).json({ error: 'Пользователь не найден' });
     }
 
+    const isAdmin = req.user.role === 'admin';
+    const isSelf = Number(req.user.userId) === userId;
+
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({ error: 'Недостаточно прав для редактирования пользователя' });
+    }
+
+    if (!trimmedName) {
+      return res.status(400).json({ error: 'Имя пользователя обязательно' });
+    }
+
+    if (!trimmedLogin) {
+      return res.status(400).json({ error: 'Логин обязателен' });
+    }
+
+    if (!resetPassword && Object.prototype.hasOwnProperty.call(req.body, 'password')) {
+      return res.status(400).json({ error: 'Для смены пароля требуется явный сброс пароля' });
+    }
+
+    if (resetPassword && (!password || typeof password !== 'string' || password.length < 6)) {
+      return res.status(400).json({ error: 'Новый пароль должен быть не короче 6 символов' });
+    }
+
+    if (typeof active !== 'boolean') {
+      return res.status(400).json({ error: 'Статус пользователя обязателен' });
+    }
+
+    const targetRole = role || 'employee';
+    if (!config.roles.list.includes(targetRole)) {
+      return res.status(400).json({ error: 'Некорректная роль пользователя' });
+    }
+
+    if (!isAdmin && targetRole !== current.rows[0].role) {
+      return res.status(403).json({ error: 'Только администратор может менять роль пользователя' });
+    }
+
+    if (!trimmedPosition) {
+      return res.status(400).json({ error: 'Должность обязательна' });
+    }
+
+    if (!hasDepartment) {
+      return res.status(400).json({ error: 'Отдел обязателен' });
+    }
+
+    const passwordHash = resetPassword
+      ? await bcrypt.hash(password, config.bcrypt.rounds)
+      : null;
+
     const result = await pool.query(
-      `UPDATE users SET name = $1, active = $2, role = COALESCE($3, role),
-              position = COALESCE($4, position), department_id = COALESCE($5, department_id)
-       WHERE user_id = $6 RETURNING *`,
-      [name, active, role || null, position || null, department_id || null, id]
+      `UPDATE users
+       SET name = $1,
+           active = $2,
+           login = $3,
+           role = $4,
+           position = $5,
+           department_id = $6,
+           password_hash = COALESCE($7, password_hash),
+           token_version = CASE WHEN $7 IS NULL THEN token_version ELSE token_version + 1 END
+       WHERE user_id = $8
+       RETURNING user_id, name, active, login, role, position, department_id`,
+      [trimmedName, active, trimmedLogin, targetRole, trimmedPosition, department_id || null, passwordHash, userId]
     );
 
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Пользователь не найден' });
     }
 
-    await trackChanges(pool, 'user', 'users', 'user_id', Number(id), current.rows[0], { name, active, role: role || null, position: position || null, department_id: department_id || null }, req.user.userId, null, false);
+    await trackChanges(
+      pool,
+      'user',
+      'users',
+      'user_id',
+      userId,
+      current.rows[0],
+      {
+        name: trimmedName,
+        active,
+        login: trimmedLogin,
+        role: targetRole,
+        position: trimmedPosition,
+        department_id: department_id || null
+      },
+      req.user.userId,
+      null,
+      false
+    );
 
     res.json(result.rows[0]);
   } catch (err) {
@@ -105,12 +212,16 @@ router.put('/:id', auth, requireRole('admin', 'lead'), async (req, res) => {
   }
 });
 
-// DELETE — admin only
-router.delete('/:id', auth, requireRole('admin'), async (req, res) => {
+// DELETE — admin can delete anyone; non-admin users can request deletion only for themselves.
+router.delete('/:id', auth, async (req, res) => {
   const id = Number(req.params.id);
 
   if (!Number.isInteger(id)) {
     return res.status(400).json({ error: 'Некорректный user_id' });
+  }
+
+  if (req.user.role !== 'admin' && Number(req.user.userId) !== id) {
+    return res.status(403).json({ error: 'Недостаточно прав для удаления пользователя' });
   }
 
   try {

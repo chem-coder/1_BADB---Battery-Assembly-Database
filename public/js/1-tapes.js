@@ -2038,7 +2038,7 @@ function renderExpandedCalculation() {
 
 function renderUsersSelects() {
   const userPlaceholder = '<option value="">— выбрать пользователя —</option>';
-  const creatorPlaceholder = '<option value="">— автоматически —</option>';
+  const creatorPlaceholder = '<option value=""></option>';
 
   fillSelect(
     createdBySelect,
@@ -2048,6 +2048,10 @@ function renderUsersSelects() {
     creatorPlaceholder,
     state.form.fields.created_by
   );
+  if (createdBySelect.options[0]) {
+    createdBySelect.options[0].textContent =
+      window.BADB_AUTH?.getAuditUserPlaceholder?.() || '— автоматически —';
+  }
 
   const operatorSelects = Array.from(document.querySelectorAll('select[id$="-operator"]'));
   operatorSelects.forEach((sel) => {
@@ -3026,6 +3030,14 @@ function clearAllDirtySteps() {
     setStepDirty(stepCode, false);
   });
 }
+
+const tapeLogoutGuard = {
+  hasUnsavedChanges: anyDirty,
+  discardUnsavedChanges: clearAllDirtySteps
+};
+
+window.BADB_PAGE_LOGOUT_GUARD = tapeLogoutGuard;
+window.BADB_AUTH?.registerLogoutGuard?.(tapeLogoutGuard);
 
 // Warn on tab close / reload when anything is dirty
 window.addEventListener('beforeunload', (e) => {

@@ -479,7 +479,10 @@ async function loadUsers() {
   const users = await res.json();
   
   // CLEAR existing options first
-  createdBySelect.innerHTML = '<option value="">— автоматически —</option>';
+  createdBySelect.replaceChildren(new Option(
+    window.BADB_AUTH?.getAuditUserPlaceholder?.() || '— автоматически —',
+    ''
+  ));
   
   users
   .forEach(u => {

@@ -16,12 +16,76 @@
       <h1>Пользователи</h1>
     </header>
 
-    <input
-      id="addUserInput"
-      class="add-user"
-      placeholder="+ Добавить пользователя"
-      autocomplete="off"
-    />
+    <button id="showAddUserFormBtn" type="button" class="add-user">+ Добавить</button>
+
+    <fieldset id="addUserFieldset" hidden>
+      <legend><span id="userFormLegend">Новый пользователь</span> <span id="dirty-user-create" style="display:none; margin-left:8px;">● не сохранено</span></legend>
+
+      <form id="addUserForm" class="form-grid cols-2" autocomplete="off">
+        <div class="form-field">
+          <label for="newUserName">Имя</label>
+          <input id="newUserName" name="name" required autocomplete="off">
+        </div>
+
+        <div class="form-field">
+          <label for="newUserLogin">Логин</label>
+          <input id="newUserLogin" name="login" required autocomplete="off">
+        </div>
+
+        <div id="newUserPasswordField" class="form-field">
+          <label id="newUserPasswordLabel" for="newUserPassword">Пароль</label>
+          <input id="newUserPassword" name="password" type="password" required autocomplete="new-password" minlength="6">
+        </div>
+
+        <div id="confirmUserPasswordField" class="form-field" hidden>
+          <label for="confirmUserPassword">Подтвердите пароль</label>
+          <input id="confirmUserPassword" type="password" autocomplete="new-password" minlength="6">
+        </div>
+
+        <div id="resetUserPasswordField" class="form-field" hidden>
+          <label>&nbsp;</label>
+          <button id="showResetUserPasswordBtn" type="button">Сбросить пароль</button>
+        </div>
+
+        <div id="cancelUserPasswordResetField" class="form-field" hidden>
+          <label>&nbsp;</label>
+          <button id="cancelResetUserPasswordBtn" type="button">Отмена сброса пароля</button>
+        </div>
+
+        <div class="form-field">
+          <label for="newUserRole">Роль</label>
+          <select id="newUserRole" name="role" required>
+            <option value="">Выберите роль</option>
+            <option value="employee">Сотрудник</option>
+            <option value="lead">Руководитель</option>
+            <option value="admin">Администратор</option>
+          </select>
+        </div>
+
+        <div class="form-field">
+          <label for="newUserPosition">Должность</label>
+          <select id="newUserPosition" name="position" required></select>
+        </div>
+
+        <div class="form-field">
+          <label for="newUserDepartment">Отдел</label>
+          <select id="newUserDepartment" name="department_id" required></select>
+        </div>
+
+        <div class="form-field">
+          <label for="newUserActive">Статус</label>
+          <select id="newUserActive" name="active" required>
+            <option value="true">активен</option>
+            <option value="false">неактивен</option>
+          </select>
+        </div>
+      </form>
+
+      <div class="form-actions">
+        <button id="saveNewUserBtn" type="submit" form="addUserForm">Сохранить</button>
+        <button id="exitNewUserBtn" type="button">Выйти</button>
+      </div>
+    </fieldset>
 
     <ul id="usersList" class="users-list"></ul>
 
